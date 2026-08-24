@@ -1,0 +1,32 @@
+logLevel: warn
+logDestinations: [stdout]
+
+rtspAddress: :8554
+hlsAddress: :8888
+webrtcAddress: :8889
+
+hlsAlwaysRemux: yes
+hlsSegmentCount: 3
+hlsSegmentDuration: 1s
+
+paths:
+  cam1:
+    source: file:///videos/cam1.mp4
+    sourceOnDemand: no
+    loop: yes
+  cam2:
+    source: file:///videos/cam2.mp4
+    sourceOnDemand: no
+    loop: yes
+  cam3:
+    source: file:///videos/cam3.mp4
+    sourceOnDemand: no
+    loop: yes
+  cam4:
+    source: file:///videos/cam4.mp4
+    sourceOnDemand: no
+    loop: yes
+  cam5:
+    source: file:///videos/cam5.mp4
+    sourceOnDemand: no
+    loop: yes

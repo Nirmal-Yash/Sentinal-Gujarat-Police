@@ -1,0 +1,117 @@
+version: '3.9'
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --maxmemory 2gb --maxmemory-policy allkeys-lru --save 60 1
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sentinel
+      POSTGRES_USER: sentinel
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sentinelpass}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sentinel -d sentinel"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  ingestion:
+    build: ./ingestion
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://sentinel:${POSTGRES_PASSWORD:-sentinelpass}@postgres:5432/sentinel
+      - INGEST_API=${INGEST_API:-http://live.corp8.cloud/api/ingest}
+      - RTSP_HOST=${RTSP_HOST:-live.corp8.cloud}
+      - FRAME_FPS=${FRAME_FPS:-3}
+      - JPEG_QUALITY=${JPEG_QUALITY:-70}
+      - MAX_CONCURRENT_CAMERAS=${MAX_CONCURRENT_CAMERAS:-30}
+      - CATALOGUE_SYNC_INTERVAL=${CATALOGUE_SYNC_INTERVAL:-300}
+
+  ai_worker:
+    build: ./ai_engine
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - YOLO_MODEL=${YOLO_MODEL:-yolov8n.pt}
+      - DETECTION_CONF=${DETECTION_CONF:-0.4}
+      - FRAME_SKIP=${FRAME_SKIP:-3}
+      - YOLO_WORKERS=${YOLO_WORKERS:-4}
+      - ANPR_ENABLED=${ANPR_ENABLED:-true}
+      - FACE_ENABLED=${FACE_ENABLED:-true}
+      - BEHAVIOR_ENABLED=${BEHAVIOR_ENABLED:-true}
+    shm_size: '2gb'
+    deploy:
+      resources:
+        limits:
+          memory: 6g
+
+  intelligence:
+    build: ./intelligence
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://sentinel:${POSTGRES_PASSWORD:-sentinelpass}@postgres:5432/sentinel
+      - FACE_SIM_THRESHOLD=${FACE_SIM_THRESHOLD:-0.65}
+      - PLATE_MATCH_THRESHOLD=${PLATE_MATCH_THRESHOLD:-0.9}
+      - ALERT_COOLDOWN=${ALERT_COOLDOWN:-60}
+      - CROSS_CAM_WINDOW=${CROSS_CAM_WINDOW:-300}
+
+  api:
+    build: ./api
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://sentinel:${POSTGRES_PASSWORD:-sentinelpass}@postgres:5432/sentinel
+      - SECRET_KEY=${SECRET_KEY:-sentinel-change-in-production}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
+    ports:
+      - "8000:8000"
+
+  dashboard:
+    build: ./dashboard
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "3000:80"
+
+volumes:
+  redis_data:
+  postgres_data:
