@@ -33,8 +33,8 @@ def get(path, timeout=5):
 
 
 def check_redis():
-    import redis
     try:
+        import redis
         r = redis.from_url("redis://localhost:6379")
         r.ping()
         raw_len = r.xlen("raw_frames")

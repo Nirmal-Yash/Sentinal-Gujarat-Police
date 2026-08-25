@@ -3,6 +3,12 @@ import Hls from 'hls.js'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const PRIO_BORDER = { HIGH: 'var(--high)', MEDIUM: 'var(--medium)', LOW: 'var(--low)' }
+const streamMetadata = (cam) => {
+  const width = cam.effective_width ?? cam.width
+  const height = cam.effective_height ?? cam.height
+  const fps = cam.effective_fps ?? cam.fps
+  return `${cam.effective_codec || cam.codec || 'Unknown'} · ${width && height ? `${width}×${height}` : 'N/A'} · ${fps == null ? 'N/A' : `${Number(fps).toFixed(1)} fps`}`
+}
 
 // ─── CameraIcon SVG (no emoji) ────────────────────────────────────────────────
 const CamIcon = ({ size = 14, color = 'currentColor' }) => (
@@ -227,7 +233,7 @@ function FullscreenModal({ cam, alertCount, onClose }) {
           <span style={{ color:'var(--text2)', fontSize:13 }}>{cam.name}</span>
           <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:12 }}>
             <span style={{ fontSize:11, color:'var(--text2)' }}>
-              {cam.codec} &middot; {cam.width}&times;{cam.height} &middot; {cam.fps} fps
+              {streamMetadata(cam)}
             </span>
             {alertCount > 0 && (
               <span style={{
@@ -341,7 +347,7 @@ const CameraCard = memo(function CameraCard({ cam, alertCount, onFocus, animDela
           position:'absolute', bottom:5, left:7, pointerEvents:'none',
           fontSize:8, color:'rgba(255,255,255,.4)', letterSpacing:.3,
         }}>
-          {cam.codec} &middot; {cam.width}&times;{cam.height}
+          {streamMetadata(cam)}
         </div>
       </div>
 
@@ -369,13 +375,15 @@ const CameraCard = memo(function CameraCard({ cam, alertCount, onFocus, animDela
 
 // ─── CameraGrid (default export) ──────────────────────────────────────────────
 export default function CameraGrid({ cameras, alertsByCam, pipelineStats }) {
-  const [cols,    setCols]    = useState(3)
+  const [cols,    setCols]    = useState(() => {
+    const saved = Number(localStorage.getItem('sentinel.camera-grid.columns.v1'))
+    return [2, 3, 4, 5].includes(saved) ? saved : 3
+  })
   const [focused, setFocused] = useState(null)   // cam object or null
-  const [gridKey, setGridKey] = useState(0)      // changing triggers re-animation
 
   const handleColChange = (n) => {
     setCols(n)
-    setGridKey(k => k + 1)   // re-key grid so cards re-animate
+    localStorage.setItem('sentinel.camera-grid.columns.v1', String(n))
   }
 
   return (
@@ -436,7 +444,6 @@ export default function CameraGrid({ cameras, alertsByCam, pipelineStats }) {
       {/* Grid */}
       <div style={{ flex:1, overflowY:'auto', padding:10 }}>
         <div
-          key={gridKey}
           style={{
             display:'grid',
             gridTemplateColumns:`repeat(${cols}, minmax(0, 1fr))`,

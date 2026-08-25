@@ -9,20 +9,44 @@ import uuid
 router = APIRouter(prefix="/search", tags=["search"])
 
 
+@router.get("/cameras")
+async def search_cameras(
+    q: str = Query(..., min_length=1, max_length=100),
+    limit: int = Query(20, ge=1, le=100), offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    """Indexed registry search; deliberately returns a small read model."""
+    result = await db.execute(text("""
+        SELECT id, stream_id, name, location, lat, lng, department,
+               owner_organization, camera_type, status, health_status
+        FROM cameras
+        WHERE status <> 'deleted' AND (
+          name ILIKE :pattern OR location ILIKE :pattern OR department ILIKE :pattern
+          OR owner_organization ILIKE :pattern OR camera_type ILIKE :pattern
+          OR status ILIKE :pattern OR health_status ILIKE :pattern
+          OR stream_id::text ILIKE :pattern
+        )
+        ORDER BY similarity(name, :needle) DESC, stream_id
+        LIMIT :limit OFFSET :offset
+    """), {"needle": q.strip(), "pattern": f"%{q.strip()}%", "limit": limit, "offset": offset})
+    return {"query": q, "items": [dict(row) for row in result.mappings()], "limit": limit, "offset": offset}
+
+
 @router.get("/plate")
 async def search_plate(
     q:     str = Query(..., min_length=3, description="Plate number (partial OK)"),
     limit: int = Query(20, le=100),
     db: AsyncSession = Depends(get_db),
 ):
-    """Search detections and alerts by license plate number."""
+    """Search durable vehicle sightings, not transient Redis detections."""
     result = await db.execute(text("""
-        SELECT d.id, d.cam_id, d.timestamp, d.plate_text,
-               d.confidence, d.bbox, c.name AS cam_name
-        FROM detections d
-        JOIN cameras c ON c.id = d.cam_id
-        WHERE d.plate_text ILIKE :pat
-        ORDER BY d.timestamp DESC
+        SELECT s.id, s.camera_id AS cam_id, s.source_timestamp AS timestamp,
+               s.normalized_plate AS plate_text, s.confidence, c.name AS cam_name,
+               c.location, c.lat, c.lng, s.track_id, s.global_vehicle_id
+        FROM vehicle_sightings s
+        JOIN cameras c ON c.id = s.camera_id
+        WHERE s.normalized_plate ILIKE :pat
+        ORDER BY s.source_timestamp DESC
         LIMIT :limit
     """), {"pat": f"%{q.upper().replace(' ','')}%", "limit": limit})
     rows = result.mappings().all()
@@ -47,13 +71,14 @@ async def search_by_track(global_track_id: str,
                            db: AsyncSession = Depends(get_db)):
     """Get full camera journey for a global track ID."""
     result = await db.execute(text("""
-        SELECT d.id, d.cam_id, d.timestamp, d.detection_type,
-               d.confidence, d.global_track_id, c.name AS cam_name,
+        SELECT s.id, s.camera_id AS cam_id, s.source_timestamp AS timestamp,
+               s.vehicle_type AS detection_type, s.confidence,
+               s.global_vehicle_id AS global_track_id, c.name AS cam_name,
                c.lat, c.lng
-        FROM detections d
-        JOIN cameras c ON c.id = d.cam_id
-        WHERE d.global_track_id = :tid
-        ORDER BY d.timestamp ASC
+        FROM vehicle_sightings s
+        JOIN cameras c ON c.id = s.camera_id
+        WHERE s.global_vehicle_id = :tid OR s.track_id = :tid
+        ORDER BY s.source_timestamp ASC
     """), {"tid": global_track_id})
     rows = [dict(r) for r in result.mappings().all()]
     return {"global_track_id": global_track_id, "sightings": rows}

@@ -30,7 +30,8 @@ export default function App() {
   const [alerts,        setAlerts]        = useState([])
   const [counts,        setCounts]        = useState(null)
   const [pipelineStats, setPipelineStats] = useState(null)
-  const [view,          setView]          = useState('grid')
+  const [mapExpanded,   setMapExpanded]   = useState(false)
+  const [alertsCollapsed, setAlertsCollapsed] = useState(() => localStorage.getItem('sentinel.alerts.collapsed.v1') === 'true')
   const [showSearch,    setShowSearch]    = useState(false)
   const [showWatchlist, setShowWatchlist] = useState(false)
 
@@ -95,6 +96,13 @@ export default function App() {
   }, [])
 
   const unackedCount = counts?.unacknowledged || 0
+  const toggleAlerts = useCallback(() => {
+    setAlertsCollapsed(value => {
+      const next = !value
+      localStorage.setItem('sentinel.alerts.collapsed.v1', String(next))
+      return next
+    })
+  }, [])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
@@ -113,16 +121,16 @@ export default function App() {
         {/* View toggle */}
         <div style={{ display: 'flex', gap: 2, background: 'var(--surface2)', borderRadius: 6, padding: 2 }}>
           {[
-            ['grid', 'Camera Grid', GridViewIcon],
-            ['map',  'Map View',    MapViewIcon ],
-          ].map(([v, label, Icon]) => (
-            <button key={v} onClick={() => setView(v)} style={{
+            [false, 'Camera Grid', GridViewIcon],
+            [true,  'Map View',    MapViewIcon ],
+          ].map(([expanded, label, Icon]) => (
+            <button key={label} onClick={() => setMapExpanded(expanded)} style={{
               display: 'flex', alignItems: 'center', gap: 5,
               padding: '4px 12px', borderRadius: 4, border: 'none', fontSize: 11,
-              background: view === v ? 'var(--surface)' : 'transparent',
-              color: view === v ? 'var(--text)' : 'var(--text2)',
-              cursor: 'pointer', fontWeight: view === v ? 600 : 400,
-              boxShadow: view === v ? '0 1px 3px rgba(0,0,0,.3)' : 'none',
+              background: mapExpanded === expanded ? 'var(--surface)' : 'transparent',
+              color: mapExpanded === expanded ? 'var(--text)' : 'var(--text2)',
+              cursor: 'pointer', fontWeight: mapExpanded === expanded ? 600 : 400,
+              boxShadow: mapExpanded === expanded ? '0 1px 3px rgba(0,0,0,.3)' : 'none',
               transition: 'all .15s',
             }}>
               <Icon/> {label}
@@ -173,21 +181,19 @@ export default function App() {
 
       {/* Main layout */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* Left: camera grid or map */}
-        <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
-          {view === 'grid'
-            ? <CameraGrid
-                cameras={cameras}
-                alertsByCam={alertsByCam}
-                pipelineStats={pipelineStats}
-              />
-            : <MapView cameras={cameras} alerts={alerts}/>
-          }
+        {/* Map remains mounted in compact mode so viewport/selection survive expansion. */}
+        <div style={{ flex: 1, overflow: 'hidden', position: 'relative', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ flex: mapExpanded ? 1 : '0 0 210px', minHeight: 0, borderBottom: mapExpanded ? 'none' : '1px solid var(--border)' }}>
+            <MapView cameras={cameras} alerts={alerts} compact={!mapExpanded}/>
+          </div>
+          {!mapExpanded && <div style={{ flex: 1, minHeight: 0 }}>
+            <CameraGrid cameras={cameras} alertsByCam={alertsByCam} pipelineStats={pipelineStats}/>
+          </div>}
         </div>
 
-        {/* Right: alert panel (fixed 320px) */}
-        <div style={{ width: 320, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <AlertPanel alerts={alerts} onAck={ack} counts={counts}/>
+        {/* Collapse preserves the mounted alert feed and its WebSocket updates. */}
+        <div style={{ width: alertsCollapsed ? 38 : 320, transition: 'width .18s ease', flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <AlertPanel alerts={alerts} onAck={ack} counts={counts} collapsed={alertsCollapsed} onToggle={toggleAlerts}/>
         </div>
       </div>
 

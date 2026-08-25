@@ -7,7 +7,8 @@ Ingestion Worker — Live RTSP compliance build
 • Treats decoder warnings as non-fatal
 • Syncs camera list from /api/ingest before starting
 """
-import os, sys, time, base64, logging
+import os, sys, time, base64, logging, uuid
+from datetime import datetime, timezone
 from multiprocessing import Process
 
 # ── CRITICAL: must be set BEFORE cv2 is imported anywhere ────────────────────
@@ -58,6 +59,25 @@ def set_status(cam_id, status):
         log.warning(f"Status update failed: {e}")
 
 
+def update_runtime_observation(cam_id, width, height, fps, codec, status="active"):
+    """Keep measured stream observations separate from registry configuration."""
+    try:
+        conn = psycopg2.connect(DB_URL)
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE cameras SET observed_width=%s, observed_height=%s,
+                    observed_fps=%s, observed_codec=%s, observed_at=NOW(),
+                    last_frame_at=NOW(), last_seen_at=NOW(), status=%s,
+                    health_status=CASE WHEN %s='active' THEN 'healthy' ELSE %s END,
+                    connectivity_status=CASE WHEN %s='active' THEN 'connected' ELSE %s END,
+                    updated_at=NOW()
+                WHERE id=%s
+            """, (width, height, fps, codec, status, status, status, status, str(cam_id)))
+        conn.commit(); conn.close()
+    except Exception as e:
+        log.warning(f"Runtime metadata update failed: {e}")
+
+
 # ─── Per-camera worker ────────────────────────────────────────────────────────
 class CameraWorker:
     def __init__(self, cam: dict, r: redis.Redis):
@@ -94,9 +114,16 @@ class CameraWorker:
 
     def _publish(self, frame_b64: str, pts_ms: float, w: int, h: int):
         fields = {
+            b"schema_version": b"1.0",
+            b"event_id": str(uuid.uuid4()).encode(),
+            b"event_type": b"frame",
             b"cam_id":    self.cam_id.encode(),
             b"stream_id": str(self.sid).encode(),
             b"frame":     frame_b64.encode(),
+            # OpenCV does not expose a trustworthy RTSP source clock.  Do not
+            # relabel worker time as source time; downstream sees it separately.
+            b"source_ts": b"",
+            b"ingested_at": datetime.now(timezone.utc).isoformat().encode(),
             b"pts_ms":    str(int(pts_ms)).encode(),   # PTS — not wall clock
             b"width":     str(w).encode(),
             b"height":    str(h).encode(),
@@ -113,6 +140,9 @@ class CameraWorker:
         last_t      = 0.0
         fail_streak = 0
         prev_pts    = None
+        observed_started = time.monotonic()
+        observed_frames  = 0
+        last_health_write = 0.0
 
         while True:
             ret, frame = cap.read()
@@ -131,6 +161,7 @@ class CameraWorker:
                 continue
 
             fail_streak = 0
+            observed_frames += 1
 
             # ── Use PTS, not wall-clock (resource page §3) ────────────────────
             pts_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
@@ -157,6 +188,13 @@ class CameraWorker:
                 self._publish(self._encode(frame), pts_ms, w, h)
             except Exception as e:
                 log.error(f"{self.name}: publish error: {e}")
+
+            # A bounded, measured metadata refresh prevents repeated probes.
+            if now - last_health_write >= 30:
+                elapsed = max(now - observed_started, 0.001)
+                update_runtime_observation(
+                    self.cam_id, w, h, round(observed_frames / elapsed, 2), self.codec)
+                observed_started, observed_frames, last_health_write = now, 0, now
 
         cap.release()
         set_status(self.cam_id, "offline")

@@ -70,10 +70,13 @@ def sync(conn=None) -> int:
             urls["rtsp"],
             urls["hls"],
             urls["whep"],
-            str(cam.get("codec", "H.264")),
-            int(cam.get("width",  1280)),
-            int(cam.get("height", 720)),
-            float(cam.get("fps",  25)),
+            # Catalogue metadata is configured data, not an observation.  A
+            # missing value remains NULL so the UI can show N/A rather than a
+            # fabricated default.
+            str(cam["codec"]) if cam.get("codec") else None,
+            int(cam["width"]) if cam.get("width") else None,
+            int(cam["height"]) if cam.get("height") else None,
+            float(cam["fps"]) if cam.get("fps") else None,
             "active" if cam.get("live", True) else "offline",
         ))
 
@@ -91,10 +94,10 @@ def sync(conn=None) -> int:
           rtsp_url     = EXCLUDED.rtsp_url,
           hls_url      = EXCLUDED.hls_url,
           whep_url     = EXCLUDED.whep_url,
-          codec        = EXCLUDED.codec,
-          width        = EXCLUDED.width,
-          height       = EXCLUDED.height,
-          fps          = EXCLUDED.fps,
+          codec        = COALESCE(EXCLUDED.codec, cameras.codec),
+          width        = COALESCE(EXCLUDED.width, cameras.width),
+          height       = COALESCE(EXCLUDED.height, cameras.height),
+          fps          = COALESCE(EXCLUDED.fps, cameras.fps),
           status       = EXCLUDED.status,
           last_seen_at = NOW()
     """

@@ -102,6 +102,9 @@ def run():
                 try:
                     cam_id  = data.get(b"cam_id", b"").decode()
                     pts_ms  = int(data.get(b"pts_ms", b"0"))   # use PTS
+                    source_ts = data.get(b"source_ts", b"")
+                    ingested_at = data.get(b"ingested_at", b"")
+                    stream_id = data.get(b"stream_id", b"")
                     frame   = _decode_frame(data)
                     if frame is None:
                         continue
@@ -153,8 +156,14 @@ def run():
                         det_id    = str(uuid.uuid4())
 
                         r.xadd(OUT_STREAM, {
+                            b"schema_version": b"1.0",
+                            b"event_id":       det_id.encode(),
+                            b"event_type":     b"detection",
                             b"detection_id":   det_id.encode(),
                             b"cam_id":         cam_id.encode(),
+                            b"stream_id":      stream_id,
+                            b"source_ts":      source_ts,
+                            b"ingested_at":    ingested_at,
                             b"pts_ms":         str(pts_ms).encode(),
                             b"detection_type": etype.encode(),
                             b"track_id":       str(track.track_id).encode(),

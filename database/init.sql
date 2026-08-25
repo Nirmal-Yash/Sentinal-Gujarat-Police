@@ -12,10 +12,10 @@ CREATE TABLE IF NOT EXISTS cameras (
     rtsp_url     VARCHAR(512) NOT NULL,
     hls_url      VARCHAR(512) DEFAULT '',
     whep_url     VARCHAR(512) DEFAULT '',
-    codec        VARCHAR(20)  DEFAULT 'H.264',
-    width        INTEGER      DEFAULT 1280,
-    height       INTEGER      DEFAULT 720,
-    fps          FLOAT        DEFAULT 25,
+    codec        VARCHAR(20),
+    width        INTEGER,
+    height       INTEGER,
+    fps          FLOAT,
     status       VARCHAR(50)  DEFAULT 'active',
     created_at   TIMESTAMPTZ  DEFAULT NOW(),
     last_seen_at TIMESTAMPTZ  DEFAULT NOW()
@@ -101,3 +101,4 @@ CREATE INDEX IF NOT EXISTS idx_track_last    ON global_tracks(last_seen_at DESC)
 -- Note: Cameras are NOT seeded here.
 -- They are populated at runtime by ingestion/catalogue_sync.py
 -- which calls http://live.corp8.cloud/api/ingest
+\i /migrations/001_model1_registry.sql

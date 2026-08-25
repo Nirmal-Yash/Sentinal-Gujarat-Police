@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
-from sqlalchemy import select, text
+from sqlalchemy import select, text, or_, String
 from sqlalchemy.ext.asyncio import AsyncSession
-from models import Camera, CameraOut
+from models import Camera, CameraOut, CameraCreate
 from database import get_db
 import uuid, os, base64
 import redis as redis_lib
@@ -12,10 +12,70 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
 
 @router.get("/", response_model=list[CameraOut])
-async def list_cameras(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(Camera).where(Camera.status != 'deleted').order_by(Camera.stream_id))
+async def list_cameras(
+    q: str | None = Query(None, min_length=1, max_length=100),
+    department: str | None = None, status: str | None = None,
+    health_status: str | None = None, camera_type: str | None = None,
+    limit: int = Query(250, ge=1, le=500), offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    """Registry read model.  It is the only camera metadata source for UI/GIS."""
+    stmt = select(Camera).where(Camera.status != 'deleted')
+    if q:
+        term = f"%{q.strip()}%"
+        stmt = stmt.where(or_(Camera.name.ilike(term), Camera.location.ilike(term),
+                              Camera.department.ilike(term), Camera.owner_organization.ilike(term),
+                              Camera.status.ilike(term), Camera.health_status.ilike(term),
+                              Camera.camera_type.ilike(term),
+                              Camera.stream_id.cast(String).ilike(term)))
+    for column, value in ((Camera.department, department), (Camera.status, status),
+                          (Camera.health_status, health_status), (Camera.camera_type, camera_type)):
+        if value:
+            stmt = stmt.where(column.ilike(value))
+    result = await db.execute(stmt.order_by(Camera.stream_id).limit(limit).offset(offset))
     return result.scalars().all()
+
+
+@router.post("/", response_model=CameraOut, status_code=201)
+async def onboard_camera(body: CameraCreate, db: AsyncSession = Depends(get_db)):
+    """Manual/API Model-1 onboarding; catalogue sync remains the same owner for external sources."""
+    camera = Camera(**body.model_dump())
+    db.add(camera)
+    await db.flush()
+    await db.execute(text("UPDATE cameras SET geom=ST_SetSRID(ST_MakePoint(:lng, :lat), 4326), updated_at=NOW() WHERE id=:id"),
+                     {"id": str(camera.id), "lat": body.lat, "lng": body.lng})
+    await db.execute(text("""INSERT INTO camera_audit_log(camera_id, actor, action, after_value)
+        VALUES (CAST(:id AS uuid), 'api', 'create', CAST(:value AS jsonb))"""),
+        {"id": str(camera.id), "value": '{"source":"manual_api"}'})
+    await db.commit()
+    await db.refresh(camera)
+    return camera
+
+
+@router.get("/export")
+async def export_cameras(db: AsyncSession = Depends(get_db)):
+    """Export public registry metadata only; URLs/credentials are never exported."""
+    result = await db.execute(select(Camera).where(Camera.status != 'deleted').order_by(Camera.stream_id))
+    headers = "id,stream_id,name,location,latitude,longitude,department,owner,camera_type,status,health_status\n"
+    rows = [headers]
+    for c in result.scalars():
+        values = [c.id, c.stream_id, c.name, c.location, c.lat, c.lng, c.department,
+                  c.owner_organization, c.camera_type, c.status, c.health_status]
+        rows.append(",".join('"' + str(v or '').replace('"', '""') + '"' for v in values) + "\n")
+    return Response("".join(rows), media_type="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=camera-registry.csv"})
+
+
+@router.get("/geojson")
+async def cameras_geojson(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Camera).where(Camera.status != 'deleted').order_by(Camera.stream_id))
+    return {"type": "FeatureCollection", "features": [
+        {"type": "Feature", "id": str(c.id), "geometry": {"type": "Point", "coordinates": [c.lng, c.lat]},
+         "properties": {"id": str(c.id), "name": c.name, "stream_id": c.stream_id,
+                        "department": c.department, "camera_type": c.camera_type,
+                        "status": c.status, "health_status": c.health_status}}
+        for c in result.scalars()
+    ]}
 
 
 @router.get("/stats/summary")

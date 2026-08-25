@@ -2,146 +2,102 @@ import { useEffect, useRef } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
-// Fix default marker icons broken by bundlers
-delete L.Icon.Default.prototype._getIconUrl
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-  iconUrl:       'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-  shadowUrl:     'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-})
-
+const GUJARAT_BOUNDS = L.latLngBounds([20.08, 68.08], [24.8, 74.55])
+const VIEW_KEY = 'sentinel.map.viewport.v1'
+const SELECTED_KEY = 'sentinel.map.selected-camera.v1'
 const PRIO_COLOR = { HIGH: '#f85149', MEDIUM: '#d29922', LOW: '#3fb950' }
 
-function camIcon(cam) {
-  const bg = cam.status === 'active' ? '#3fb950' : '#8b949e'
-  return L.divIcon({
-    className: '',
-    html: `<div style="
-      width:22px;height:22px;border-radius:50%;
-      background:${bg};border:2px solid #fff;
-      box-shadow:0 1px 5px rgba(0,0,0,.6);
-      display:flex;align-items:center;justify-content:center;
-    ">
-      <svg width="11" height="11" viewBox="0 0 24 24" fill="#fff">
-        <path d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.36a1 1 0 01-1.447.893L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"/>
-      </svg>
-    </div>`,
-    iconSize:   [22, 22],
-    iconAnchor: [11, 11],
-    popupAnchor:[0, -12],
-  })
+function statusColor(cam) {
+  const status = cam.health_status || cam.status
+  if (status === 'healthy' || status === 'active') return '#3fb950'
+  if (status === 'degraded' || status === 'reconnecting') return '#d29922'
+  if (status === 'offline' || status === 'critical') return '#f85149'
+  return '#8b949e'
 }
 
-export default function MapView({ cameras, alerts }) {
-  const containerRef = useRef(null)
-  const mapRef       = useRef(null)
-  const markersRef   = useRef({})
+function displayMetadata(cam) {
+  const width = cam.effective_width ?? cam.width
+  const height = cam.effective_height ?? cam.height
+  const fps = cam.effective_fps ?? cam.fps
+  return `${cam.effective_codec || cam.codec || 'Unknown'} · ${width && height ? `${width}×${height}` : 'N/A'} · ${fps == null ? 'N/A' : `${Number(fps).toFixed(1)} fps`}`
+}
 
-  // ── Init map once container has height ───────────────────────────────────
+function camIcon(cam, selected = false) {
+  const color = statusColor(cam)
+  return L.divIcon({ className: '', iconSize: [24, 24], iconAnchor: [12, 12], popupAnchor: [0, -13], html: `<div style="width:20px;height:20px;border-radius:50%;background:${color};border:${selected ? '3px solid #58a6ff' : '2px solid #fff'};box-shadow:0 1px 5px rgba(0,0,0,.65);display:grid;place-items:center"><svg width="11" height="11" viewBox="0 0 24 24" fill="#fff"><path d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.36a1 1 0 01-1.447.893L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"/></svg></div>` })
+}
+
+function clusterIcon(count) {
+  return L.divIcon({ className: '', iconSize: [34, 34], iconAnchor: [17, 17], html: `<div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:#1f6feb;color:white;border:2px solid white;box-shadow:0 1px 6px #000;font:700 11px system-ui">${count}</div>` })
+}
+
+function popup(cam) {
+  return `<div style="font-family:system-ui;font-size:12px;min-width:190px"><b>CAM-${String(cam.stream_id || '?').padStart(2, '0')} · ${cam.name}</b><br/><span style="color:#555">${cam.location || 'Location unknown'}</span><br/><span style="color:#555">${cam.department || 'Unassigned'} · ${cam.camera_type || 'fixed'}</span><br/><span style="font-size:11px;color:#777">${displayMetadata(cam)}</span><br/><span style="font-size:11px;color:${statusColor(cam)};font-weight:700">${(cam.health_status || cam.status || 'unknown').toUpperCase()}</span></div>`
+}
+
+export default function MapView({ cameras, alerts, compact = false }) {
+  const containerRef = useRef(null)
+  const mapRef = useRef(null)
+  const cameraLayerRef = useRef(null)
+  const coverageLayerRef = useRef(null)
+  const alertLayerRef = useRef(null)
+  const markersRef = useRef({})
+  const camerasRef = useRef([])
+  const selectedRef = useRef(localStorage.getItem(SELECTED_KEY) || null)
+
+  const refreshVisibleLayer = () => {
+    const map = mapRef.current; const layer = cameraLayerRef.current
+    if (!map || !layer) return
+    layer.clearLayers()
+    const cameras = camerasRef.current.filter(c => Number.isFinite(Number(c.lat)) && Number.isFinite(Number(c.lng)))
+    if (map.getZoom() > 9) { cameras.forEach(cam => layer.addLayer(markersRef.current[cam.id].marker)); return }
+    const cells = new Map(); const divisor = Math.max(0.08, 1.2 / Math.max(map.getZoom(), 1))
+    cameras.forEach(cam => { const key = `${Math.floor(cam.lat / divisor)}:${Math.floor(cam.lng / divisor)}`; const cell = cells.get(key) || []; cell.push(cam); cells.set(key, cell) })
+    cells.forEach(items => {
+      if (items.length === 1) return layer.addLayer(markersRef.current[items[0].id].marker)
+      const bounds = L.latLngBounds(items.map(c => [c.lat, c.lng]))
+      const marker = L.marker(bounds.getCenter(), { icon: clusterIcon(items.length), keyboard: true, title: `${items.length} cameras` })
+      marker.on('click', () => map.fitBounds(bounds.pad(0.5), { maxZoom: 12 })); layer.addLayer(marker)
+    })
+  }
+
   useEffect(() => {
     if (mapRef.current || !containerRef.current) return
-
-    const map = L.map(containerRef.current, {
-      center:      [22.3039, 70.8022],
-      zoom:        8,
-      zoomControl: true,
-    })
-
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors',
-      maxZoom:     19,
-    }).addTo(map)
-
-    mapRef.current = map
-
-    // invalidateSize after render frame to handle flex layout
+    let saved; try { saved = JSON.parse(localStorage.getItem(VIEW_KEY) || 'null') } catch { saved = null }
+    const map = L.map(containerRef.current, { center: saved?.center || GUJARAT_BOUNDS.getCenter(), zoom: saved?.zoom || 7, zoomControl: true })
+    const streets = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors', maxZoom: 19 }).addTo(map)
+    const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { attribution: 'Tiles © Esri', maxZoom: 19 })
+    const camerasLayer = L.layerGroup().addTo(map), coverageLayer = L.layerGroup(), alertLayer = L.layerGroup().addTo(map)
+    cameraLayerRef.current = camerasLayer; coverageLayerRef.current = coverageLayer; alertLayerRef.current = alertLayer; mapRef.current = map
+    L.control.layers({ Streets: streets, Satellite: satellite }, { 'Camera clusters': camerasLayer, 'Coverage / density': coverageLayer, 'Recent alerts': alertLayer }, { collapsed: compact }).addTo(map)
+    L.control.scale({ imperial: false }).addTo(map)
+    const reset = L.Control.extend({ onAdd() { const b = L.DomUtil.create('button', 'leaflet-bar'); b.type = 'button'; b.title = 'Reset to Gujarat'; b.textContent = 'GJ'; b.style.cssText = 'width:30px;height:30px;background:#fff;border:0;font-weight:700;cursor:pointer'; L.DomEvent.on(b, 'click', e => { L.DomEvent.stop(e); map.fitBounds(GUJARAT_BOUNDS) }); return b } })
+    const fullscreen = L.Control.extend({ onAdd() { const b = L.DomUtil.create('button', 'leaflet-bar'); b.type = 'button'; b.title = 'Fullscreen map'; b.textContent = '⛶'; b.style.cssText = 'width:30px;height:30px;background:#fff;border:0;font-size:18px;cursor:pointer'; L.DomEvent.on(b, 'click', e => { L.DomEvent.stop(e); containerRef.current?.requestFullscreen?.() }); return b } })
+    map.addControl(new reset({ position: 'topleft' })); map.addControl(new fullscreen({ position: 'topleft' }))
+    const legend = L.control({ position: 'bottomright' }); legend.onAdd = () => { const d = L.DomUtil.create('div'); d.style.cssText = 'background:rgba(255,255,255,.94);padding:6px 8px;border-radius:4px;font:11px system-ui;color:#222'; d.innerHTML = '<b>Camera health</b><br><span style="color:#3fb950">●</span> Healthy &nbsp; <span style="color:#d29922">●</span> Degraded<br><span style="color:#f85149">●</span> Offline &nbsp; <span style="color:#8b949e">●</span> Unknown'; return d }; legend.addTo(map)
+    map.on('moveend', () => { const c = map.getCenter(); localStorage.setItem(VIEW_KEY, JSON.stringify({ center: [c.lat, c.lng], zoom: map.getZoom() })) }); map.on('zoomend', refreshVisibleLayer)
     requestAnimationFrame(() => map.invalidateSize())
-
-    return () => {
-      map.remove()
-      mapRef.current = null
-    }
+    return () => { map.remove(); mapRef.current = null }
   }, [])
 
-  // ── Sync camera markers ───────────────────────────────────────────────────
   useEffect(() => {
-    const map = mapRef.current
-    if (!map) return
-
+    if (!mapRef.current) return
+    const incoming = new Set(cameras.map(c => c.id))
+    Object.entries(markersRef.current).forEach(([id, item]) => { if (!incoming.has(id)) { item.marker.remove(); delete markersRef.current[id] } })
     cameras.forEach(cam => {
-      const existing = markersRef.current[cam.id]
-      if (existing) {
-        // Update icon if status changed
-        existing.setIcon(camIcon(cam))
-        return
-      }
-      const marker = L.marker([cam.lat, cam.lng], { icon: camIcon(cam) })
-        .addTo(map)
-        .bindPopup(`
-          <div style="font-family:system-ui;font-size:13px;min-width:160px">
-            <div style="font-weight:700;margin-bottom:4px">
-              CAM-${String(cam.stream_id || '?').padStart(2, '0')} &middot; ${cam.name}
-            </div>
-            <div style="color:#555;margin-bottom:2px">${cam.location || ''}</div>
-            <div style="font-size:11px;color:#777">${cam.codec} &middot; ${cam.width}&times;${cam.height}</div>
-            <div style="margin-top:6px;font-size:11px;
-              color:${cam.status === 'active' ? '#1a7f37' : '#cf222e'}">
-              ${cam.status.toUpperCase()}
-            </div>
-          </div>
-        `)
-      markersRef.current[cam.id] = marker
+      if (!Number.isFinite(Number(cam.lat)) || !Number.isFinite(Number(cam.lng))) return
+      const current = markersRef.current[cam.id]
+      if (current) { current.marker.setLatLng([cam.lat, cam.lng]).setIcon(camIcon(cam, selectedRef.current === cam.id)).bindPopup(popup(cam)); current.camera = cam; return }
+      const marker = L.marker([cam.lat, cam.lng], { icon: camIcon(cam, selectedRef.current === cam.id), title: cam.name }).bindPopup(popup(cam))
+      marker.on('click', () => { selectedRef.current = cam.id; localStorage.setItem(SELECTED_KEY, cam.id); Object.values(markersRef.current).forEach(item => item.marker.setIcon(camIcon(item.camera, item.camera.id === cam.id))) })
+      markersRef.current[cam.id] = { marker, camera: cam }
     })
-
-    // Fit bounds on first camera load
-    if (cameras.length > 0 && Object.keys(markersRef.current).length === cameras.length) {
-      try {
-        const group = L.featureGroup(Object.values(markersRef.current))
-        map.fitBounds(group.getBounds().pad(0.15))
-      } catch {}
-    }
+    camerasRef.current = cameras; coverageLayerRef.current?.clearLayers()
+    cameras.forEach(cam => coverageLayerRef.current?.addLayer(L.circle([cam.lat, cam.lng], { radius: 450, color: statusColor(cam), weight: 1, fillOpacity: .06, interactive: false })))
+    refreshVisibleLayer()
   }, [cameras])
 
-  // ── Alert pulse rings ─────────────────────────────────────────────────────
-  useEffect(() => {
-    const map = mapRef.current
-    if (!map || alerts.length === 0) return
-
-    const recent = alerts.slice(0, 15)
-    recent.forEach(alert => {
-      const cam   = cameras.find(c => c.id === alert.cam_id)
-      if (!cam) return
-      const color = PRIO_COLOR[alert.priority] || '#8b949e'
-
-      const ring = L.circle([cam.lat, cam.lng], {
-        color, weight: 2, fillColor: color, fillOpacity: 0.18, radius: 200,
-      }).addTo(map).bindPopup(`
-        <div style="font-family:system-ui;font-size:12px">
-          <b>${(alert.alert_type || '').replace(/_/g, ' ')}</b><br/>
-          Priority: <span style="color:${color};font-weight:700">${alert.priority}</span><br/>
-          Confidence: ${((alert.confidence || 0) * 100).toFixed(0)}%
-        </div>
-      `)
-
-      setTimeout(() => { try { map.removeLayer(ring) } catch {} }, 9000)
-    })
-  }, [alerts.length]) // eslint-disable-line
-
-  return (
-    <div style={{ position: 'relative', height: '100%', width: '100%' }}>
-      <div
-        ref={containerRef}
-        style={{ height: '100%', width: '100%', background: '#1a1f2e' }}
-      />
-      {cameras.length === 0 && (
-        <div style={{
-          position: 'absolute', inset: 0, pointerEvents: 'none',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: 'rgba(13,17,23,.6)', color: 'var(--text2)', fontSize: 13,
-        }}>
-          Loading cameras…
-        </div>
-      )}
-    </div>
-  )
+  useEffect(() => { const layer = alertLayerRef.current; if (!layer) return; layer.clearLayers(); alerts.slice(0, 30).forEach(alert => { const cam = camerasRef.current.find(c => c.id === alert.cam_id); if (cam) layer.addLayer(L.circle([cam.lat, cam.lng], { radius: 250, color: PRIO_COLOR[alert.priority] || '#8b949e', weight: 2, fillOpacity: .14, interactive: false })) }) }, [alerts])
+  useEffect(() => { const map = mapRef.current; if (!map) return; const observer = new ResizeObserver(() => map.invalidateSize({ pan: false })); observer.observe(containerRef.current); requestAnimationFrame(() => map.invalidateSize({ pan: false })); return () => observer.disconnect() }, [compact])
+  return <div ref={containerRef} style={{ height: '100%', width: '100%', background: '#1a1f2e' }} />
 }

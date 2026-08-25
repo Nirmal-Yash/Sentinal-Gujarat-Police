@@ -21,38 +21,25 @@ class AlertEngine:
     def fire(self, r, payload: dict):
         key = self._dedup_key(payload)
         now = time.time()
-
-        if now - self._recent.get(key, 0) < COOLDOWN_SECS:
-            return   # suppressed
-
-        self._recent[key] = now
         alert_id = str(uuid.uuid4())
         payload["alert_id"] = alert_id
 
-        # Push to Redis alerts stream (consumed by API WebSocket)
-        try:
-            r.xadd(ALERT_STREAM, {
-                b"alert_id":    alert_id.encode(),
-                b"cam_id":      payload.get("cam_id", "").encode(),
-                b"alert_type":  payload.get("alert_type", "").encode(),
-                b"priority":    payload.get("priority", "MEDIUM").encode(),
-                b"confidence":  str(payload.get("confidence", 0.0)).encode(),
-                b"entity_type": payload.get("entity_type", "").encode(),
-                b"details":     json.dumps(payload.get("details", {})).encode(),
-                b"timestamp":   str(now).encode(),
-            }, maxlen=ALERT_MAX, approximate=True)
-        except Exception as e:
-            log.error(f"Redis publish error: {e}")
+        # Include a cooldown bucket so deduplication is restart-safe while a
+        # legitimate repeat can still alert after the configured interval.
+        dedup_key = f"{key}:{int(now // COOLDOWN_SECS)}"
 
-        # Persist to PostgreSQL
+        # Persist before publishing.  A dashboard alert must always be backed
+        # by durable evidence, and the unique key handles Redis redelivery.
         try:
             conn = psycopg2.connect(DB_URL)
             with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO alerts
                       (id, detection_id, cam_id, alert_type, priority,
-                       confidence, entity_type, details)
-                    VALUES (%s, %s, %s::uuid, %s, %s, %s, %s, %s)
+                       confidence, entity_type, details, dedup_key)
+                    VALUES (%s, %s, %s::uuid, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (dedup_key) WHERE dedup_key IS NOT NULL DO NOTHING
+                    RETURNING id
                 """, (
                     alert_id,
                     payload.get("detection_id"),
@@ -62,10 +49,29 @@ class AlertEngine:
                     payload.get("confidence", 0.0),
                     payload.get("entity_type", "unknown"),
                     json.dumps(payload.get("details", {})),
+                    dedup_key,
                 ))
+                inserted = cur.fetchone()
             conn.commit()
             conn.close()
+            if not inserted:
+                return
+            self._recent[key] = now
             log.info(f"Alert fired: [{payload.get('priority')}] "
                      f"{payload.get('alert_type')} cam={payload.get('cam_id','?')[:8]}")
         except Exception as e:
             log.error(f"DB persist error: {e}")
+            return
+
+        try:
+            r.xadd(ALERT_STREAM, {
+                b"alert_id": alert_id.encode(), b"cam_id": payload.get("cam_id", "").encode(),
+                b"alert_type": payload.get("alert_type", "").encode(),
+                b"priority": payload.get("priority", "MEDIUM").encode(),
+                b"confidence": str(payload.get("confidence", 0.0)).encode(),
+                b"entity_type": payload.get("entity_type", "").encode(),
+                b"details": json.dumps(payload.get("details", {})).encode(),
+                b"timestamp": str(now).encode(),
+            }, maxlen=ALERT_MAX, approximate=True)
+        except Exception as e:
+            log.error(f"Redis publish error: {e}")

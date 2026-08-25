@@ -122,7 +122,7 @@ function AlertRow({ alert, onAck }) {
 }
 
 // ─── Main AlertPanel ──────────────────────────────────────────────────────────
-export default function AlertPanel({ alerts, onAck, counts }) {
+export default function AlertPanel({ alerts, onAck, counts, collapsed = false, onToggle }) {
   const [filter, setFilter] = useState('ALL')
   const filters = ['ALL', 'HIGH', 'MEDIUM', 'LOW']
 
@@ -130,6 +130,15 @@ export default function AlertPanel({ alerts, onAck, counts }) {
     : alerts.filter(a => a.priority === filter)
 
   const unacked = (alerts || []).filter(a => !a.acknowledged).length
+
+  if (collapsed) {
+    return (
+      <div style={{ height: '100%', background: 'var(--surface)', borderLeft: '1px solid var(--border)', display: 'flex', alignItems: 'center', flexDirection: 'column', paddingTop: 10 }}>
+        <button onClick={onToggle} title="Expand alerts" aria-label="Expand alerts" style={{ width: 26, height: 28, border: '1px solid var(--border)', borderRadius: 5, background: 'var(--surface2)', color: 'var(--text)', cursor: 'pointer' }}>‹</button>
+        {unacked > 0 && <span title={`${unacked} unacknowledged alerts`} style={{ marginTop: 8, minWidth: 20, textAlign: 'center', borderRadius: 10, background: 'var(--high)', color: '#fff', fontSize: 10, fontWeight: 700, padding: '3px 2px' }}>{unacked}</span>}
+      </div>
+    )
+  }
 
   return (
     <div style={{
@@ -142,6 +151,7 @@ export default function AlertPanel({ alerts, onAck, counts }) {
           <span style={{ fontWeight: 700, fontSize: 13, letterSpacing: .3 }}>
             Alerts
           </span>
+          <button onClick={onToggle} title="Collapse alerts" aria-label="Collapse alerts" style={{ marginLeft: 'auto', marginRight: 7, width: 24, height: 24, border: '1px solid var(--border)', borderRadius: 4, background: 'transparent', color: 'var(--text2)', cursor: 'pointer' }}>›</button>
           {unacked > 0 && (
             <span style={{
               fontSize: 10, fontWeight: 700, color: 'var(--high)',

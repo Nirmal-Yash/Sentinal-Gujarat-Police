@@ -53,6 +53,14 @@ docker-compose exec intelligence python /app/scripts/seed_watchlist.py
 **Dashboard → http://localhost:3000**  
 **API docs  → http://localhost:8000/docs**
 
+### Registry migration note
+
+The Compose database image now includes PostGIS as well as pgvector. On startup,
+the API applies the additive `database/migrations/001_model1_registry.sql` migration
+to existing volumes before serving requests. It adds the canonical Model-1 registry,
+PostGIS geometry, registry search indexes, audit log, runtime health observations and
+durable vehicle sightings; it does not remove existing camera, RTSP, Redis or AI data.
+
 ---
 
 ## Services

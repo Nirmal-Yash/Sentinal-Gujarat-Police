@@ -31,6 +31,7 @@ def main():
     from cross_camera    import CrossCameraTracker
     from watchlist_engine import WatchlistEngine
     from alert_engine    import AlertEngine
+    from sighting_store  import persist
 
     tracker   = CrossCameraTracker()
     watchlist = WatchlistEngine()
@@ -61,8 +62,13 @@ def main():
                 try:
                     dtype  = data.get(b"detection_type", b"").decode()
                     cam_id = data.get(b"cam_id", b"").decode()
-                    ts     = float(data.get(b"timestamp", b"0"))
                     det_id = data.get(b"detection_id", str(uuid.uuid4()).encode()).decode()
+                    # Persist first: search, journeys and alerts must be based
+                    # on durable evidence rather than a transient stream item.
+                    persisted = persist(data)
+                    if persisted is None:
+                        raise ValueError("detection missing a stable event id")
+                    ts = persisted["timestamp"].timestamp()
 
                     emb = None
                     if b"embedding" in data:

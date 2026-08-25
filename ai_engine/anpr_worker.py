@@ -60,7 +60,13 @@ def run():
             for msg_id, data in entries:
                 try:
                     cam_id    = data[b"cam_id"].decode()
-                    timestamp = float(data[b"timestamp"])
+                    # A source wall-clock may be unavailable for RTSP.  Carry
+                    # its explicit absence plus ingestion time; never invent it
+                    # from PTS.
+                    source_ts = data.get(b"source_ts", b"")
+                    ingested_at = data.get(b"ingested_at", b"")
+                    stream_id = data.get(b"stream_id", b"")
+                    pts_ms = data.get(b"pts_ms", b"0")
                     buf       = base64.b64decode(data[b"frame"])
                     arr       = np.frombuffer(buf, np.uint8)
                     frame     = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -85,22 +91,35 @@ def run():
                             continue
 
                         enhanced = preprocess_plate(plate_crop)
-                        ocr_res  = reader.readtext(enhanced, detail=0, paragraph=True)
-                        raw_text = " ".join(ocr_res).upper().strip()
+                        ocr_res  = reader.readtext(enhanced, detail=1, paragraph=True)
+                        raw_text = " ".join(str(row[1]) for row in ocr_res).upper().strip()
+                        ocr_conf = max((float(row[2]) for row in ocr_res), default=0.0)
                         match    = PLATE_RE.search(raw_text)
-                        plate    = re.sub(r'[\s-]', '', match.group(1)).upper() \
-                                   if match else raw_text[:15]
-
-                        if len(plate) < 4:
+                        # Only a validated Indian registration can become a
+                        # vehicle sighting.  Unmatched OCR stays rejected.
+                        if not match:
                             continue
+                        plate = re.sub(r'[\s-]', '', match.group(1)).upper()
+                        detector_conf = float(box.conf[0])
+                        combined_conf = round(detector_conf * ocr_conf, 4)
 
                         r.xadd(OUT_STREAM, {
+                            b"schema_version": b"1.0",
+                            b"event_id":       str(uuid.uuid4()).encode(),
+                            b"event_type":     b"vehicle_sighting",
                             b"detection_id":   str(uuid.uuid4()).encode(),
                             b"cam_id":         cam_id.encode(),
-                            b"timestamp":      str(timestamp).encode(),
+                            b"stream_id":      stream_id,
+                            b"source_ts":      source_ts,
+                            b"ingested_at":    ingested_at,
+                            b"pts_ms":         pts_ms,
                             b"detection_type": b"plate",
+                            b"raw_ocr":        raw_text.encode(),
                             b"plate_text":     plate.encode(),
-                            b"conf":           str(float(box.conf[0])).encode(),
+                            b"ocr_conf":        str(ocr_conf).encode(),
+                            b"detector_conf":   str(detector_conf).encode(),
+                            b"conf":           str(combined_conf).encode(),
+                            b"vehicle_type":    str(cls).encode(),
                             b"x1": str(x1).encode(), b"y1": str(y1).encode(),
                             b"x2": str(x2).encode(), b"y2": str(y2).encode(),
                         }, maxlen=OUT_MAX, approximate=True)

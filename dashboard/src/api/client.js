@@ -19,7 +19,8 @@ export const api = {
   getWatchlist:    ()            => req('/watchlist/'),
   addWatchlist:    (body)        => req('/watchlist/', { method: 'POST', body: JSON.stringify(body) }),
   removeWatchlist: (id)          => req(`/watchlist/${id}`, { method: 'DELETE' }),
-  searchPlate:     (q)           => req(`/search/plate?q=${encodeURIComponent(q)}`),
+  searchCameras:   (q, opts = {}) => req(`/search/cameras?q=${encodeURIComponent(q)}`, opts),
+  searchPlate:     (q, opts = {}) => req(`/search/plate?q=${encodeURIComponent(q)}`, opts),
   searchTrack:     (id)          => req(`/search/track/${id}`),
   recentAlerts:    (m, p)        => req(`/search/alerts/recent?minutes=${m}${p ? `&priority=${p}` : ''}`),
 }

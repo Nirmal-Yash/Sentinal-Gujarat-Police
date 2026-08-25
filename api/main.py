@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from database import engine, Base
 from websocket_manager import manager, redis_alert_consumer
 from routes import cameras, alerts, watchlist, search
+from migrations import apply_migrations
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [API][%(levelname)s] %(message)s")
@@ -22,7 +23,10 @@ CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create DB tables if not exist
+    # Apply additive, versioned schema changes before ORM startup.  This keeps
+    # existing Postgres volumes compatible rather than relying on create_all.
+    apply_migrations()
+    # Legacy tables remain supported while migrations own schema evolution.
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     # Start Redis → WebSocket bridge
