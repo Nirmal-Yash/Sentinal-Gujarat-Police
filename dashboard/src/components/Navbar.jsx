@@ -43,7 +43,7 @@ const btn = {
   letterSpacing: .2,
 }
 
-export default function Navbar({ alertCount, onSearchOpen, onWatchlistOpen }) {
+export default function Navbar({ alertCount, onSearchOpen, onWatchlistOpen, onOnboardOpen, onVendorsOpen, onTestOpen, onReportExport, principal, onLogout, mapExpanded, onMapView, onGridView }) {
   const [time, setTime] = useState(new Date())
 
   useEffect(() => {
@@ -121,6 +121,16 @@ export default function Navbar({ alertCount, onSearchOpen, onWatchlistOpen }) {
         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
         <ListIcon/> Watchlist
       </button>
+      <button style={{ ...btn, background: mapExpanded ? 'var(--surface2)' : 'transparent' }} onClick={onMapView}>Map</button>
+      <button style={{ ...btn, background: !mapExpanded ? 'var(--surface2)' : 'transparent' }} onClick={onGridView}>Feeds</button>
+      {principal && ['ADMIN', 'SUPERADMIN'].includes(principal.role) && <>
+        <button style={btn} onClick={onOnboardOpen}>Add camera</button>
+        <button style={btn} onClick={onVendorsOpen}>Vendors</button>
+        <button style={btn} onClick={onReportExport}>Export detections</button>
+      </>}
+      {principal?.role === 'SUPERADMIN' && onTestOpen && <button style={btn} onClick={onTestOpen}>Test diagnostics</button>}
+      {principal && <span style={{ padding: '4px 8px', borderRadius: 5, background: 'var(--surface2)', color: 'var(--text2)', fontSize: 10 }}>{principal.username} · {principal.role}</span>}
+      {principal?.id && <button style={btn} onClick={onLogout}>Sign out</button>}
 
       <style>{`@keyframes navPulse { 0%,100%{opacity:1} 50%{opacity:.4} }`}</style>
     </nav>

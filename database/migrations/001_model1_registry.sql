@@ -31,6 +31,8 @@ ALTER TABLE cameras ALTER COLUMN codec DROP DEFAULT;
 ALTER TABLE cameras ALTER COLUMN width DROP DEFAULT;
 ALTER TABLE cameras ALTER COLUMN height DROP DEFAULT;
 ALTER TABLE cameras ALTER COLUMN fps DROP DEFAULT;
+ALTER TABLE cameras ALTER COLUMN lat DROP DEFAULT;
+ALTER TABLE cameras ALTER COLUMN lng DROP DEFAULT;
 -- Legacy builds populated these defaults even when no probe/catalogue supplied
 -- them. Clear unobserved values so the API reports N/A until a validated
 -- configuration or runtime observation arrives.

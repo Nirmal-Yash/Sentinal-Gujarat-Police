@@ -3,45 +3,29 @@ import { api } from '../api/client'
 
 const overlay = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }
 const modal = { background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--border)', width: 'min(650px,95vw)', maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }
+const metadata = camera => {
+  const width = camera.effective_width ?? camera.width, height = camera.effective_height ?? camera.height, fps = camera.effective_fps ?? camera.fps
+  const values = []
+  if (camera.effective_codec || camera.codec) values.push(camera.effective_codec || camera.codec)
+  if (Number(width) > 0 && Number(height) > 0) values.push(`${width} x ${height}`)
+  if (Number(fps) > 0) values.push(`${Number(fps).toFixed(1)} FPS`)
+  return values.join(' · ') || 'Stream metadata unavailable'
+}
+const LiveIcon = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.36a1 1 0 01-1.447.893L15 14"/><rect x="1" y="6" width="15" height="12" rx="2"/></svg>
+const MapPinIcon = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1116 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>
+const actionButton = { width: 30, height: 28, display: 'grid', placeItems: 'center', borderRadius: 5, border: '1px solid var(--accent)', background: 'transparent', color: 'var(--accent)', cursor: 'pointer', padding: 0 }
 
-export default function SearchModal({ onClose }) {
-  const [tab, setTab] = useState('camera')
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const controllerRef = useRef(null)
-  const sequenceRef = useRef(0)
-
+export default function SearchModal({ onClose, onViewCamera, onLocateCamera, onLocateRoute }) {
+  const [tab, setTab] = useState('camera'), [query, setQuery] = useState(''), [results, setResults] = useState(null), [loading, setLoading] = useState(false), [error, setError] = useState(''), [journeyLoading, setJourneyLoading] = useState(null)
+  const controllerRef = useRef(null), sequenceRef = useRef(0)
   useEffect(() => {
-    const value = query.trim()
-    controllerRef.current?.abort()
+    const value = query.trim(); controllerRef.current?.abort()
     if ((tab === 'camera' && value.length < 1) || (tab === 'plate' && value.length < 3)) { setResults(null); setLoading(false); setError(''); return }
-    const controller = new AbortController(); controllerRef.current = controller
-    const requestNumber = ++sequenceRef.current
-    const timer = setTimeout(async () => {
-      setLoading(true); setError('')
-      try {
-        const response = tab === 'camera' ? await api.searchCameras(value, { signal: controller.signal }) : await api.searchPlate(value, { signal: controller.signal })
-        if (requestNumber === sequenceRef.current) setResults(response)
-      } catch (e) {
-        if (e.name !== 'AbortError' && requestNumber === sequenceRef.current) setError(e.message)
-      } finally { if (requestNumber === sequenceRef.current) setLoading(false) }
-    }, 250)
+    const controller = new AbortController(), request = ++sequenceRef.current; controllerRef.current = controller
+    const timer = setTimeout(async () => { setLoading(true); setError(''); try { const response = tab === 'camera' ? await api.searchCameras(value, { signal: controller.signal }) : await api.searchPlate(value, { signal: controller.signal }); if (request === sequenceRef.current) setResults(response) } catch (err) { if (err.name !== 'AbortError' && request === sequenceRef.current) setError(err.message) } finally { if (request === sequenceRef.current) setLoading(false) } }, 250)
     return () => { clearTimeout(timer); controller.abort() }
   }, [query, tab])
-
   const switchTab = next => { setTab(next); setQuery(''); setResults(null); setError('') }
-  return <div style={overlay} onClick={e => e.target === e.currentTarget && onClose()}>
-    <div style={modal}>
-      <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><span style={{ fontWeight: 700, fontSize: 15 }}>Search</span><button onClick={onClose} aria-label="Close search" style={{ background: 'none', border: 'none', color: 'var(--text2)', cursor: 'pointer', fontSize: 20 }}>×</button></div>
-      <div style={{ display: 'flex', borderBottom: '1px solid var(--border)' }}>{[['camera', 'Camera registry'], ['plate', 'License plate']].map(([key, label]) => <button key={key} onClick={() => switchTab(key)} style={{ flex: 1, padding: '9px 0', border: 'none', borderBottom: `2px solid ${tab === key ? 'var(--accent)' : 'transparent'}`, background: 'transparent', color: tab === key ? 'var(--accent)' : 'var(--text2)', cursor: 'pointer', fontSize: 13 }}>{label}</button>)}</div>
-      <div style={{ padding: '14px 18px' }}><input autoFocus value={query} onChange={e => setQuery(e.target.value)} placeholder={tab === 'camera' ? 'Camera ID, name, department, location, status…' : 'e.g. GJ03AA1234'} style={{ width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)', fontSize: 13 }} /><div style={{ color: 'var(--text2)', fontSize: 10, marginTop: 6 }}>{loading ? 'Searching…' : tab === 'camera' ? 'Searches as you type' : 'Enter at least 3 characters'}</div></div>
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0 18px 18px' }}>
-        {error && <div style={{ color: 'var(--red)', fontSize: 13 }}>{error}</div>}
-        {results && tab === 'camera' && (results.items.length ? results.items.map(c => <div key={c.id} style={{ padding: '9px 10px', marginBottom: 6, borderRadius: 6, background: 'var(--surface2)', border: '1px solid var(--border)', fontSize: 12 }}><b>CAM-{String(c.stream_id || '?').padStart(2, '0')} · {c.name}</b><br/><span style={{ color: 'var(--text2)' }}>{c.location || 'Location unknown'} · {c.department} · {(c.health_status || c.status).toUpperCase()}</span></div>) : <div style={{ color: 'var(--text2)', fontSize: 13 }}>No cameras found</div>)}
-        {results && tab === 'plate' && <>{results.watchlist_hits?.length > 0 && <div style={{ marginBottom: 12, padding: 10, borderRadius: 6, background: 'var(--red)22', border: '1px solid var(--red)', fontSize: 12 }}><b style={{ color: 'var(--red)' }}>Watchlist match</b>{results.watchlist_hits.map(h => <div key={h.id}>{h.name} — {h.description}</div>)}</div>}{results.detections?.length ? results.detections.map(d => <div key={d.id} style={{ padding: '8px 10px', marginBottom: 6, borderRadius: 6, background: 'var(--surface2)', border: '1px solid var(--border)', fontSize: 12 }}><b>{d.plate_text}</b> — {d.cam_name}<span style={{ color: 'var(--text2)', marginLeft: 8 }}>{new Date(d.timestamp).toLocaleString()}</span></div>) : <div style={{ color: 'var(--text2)', fontSize: 13 }}>No sightings found</div>}</>}
-      </div>
-    </div>
-  </div>
+  const showJourney = async sighting => { const track = sighting.global_vehicle_id || sighting.track_id; if (!track) return; setJourneyLoading(sighting.id); try { const journey = await api.searchTrack(track); onLocateRoute?.(journey.sightings || []) } catch (err) { setError(err.message) } finally { setJourneyLoading(null) } }
+  return <div style={overlay} onClick={event => event.target === event.currentTarget && onClose()}><section style={modal}><header style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><b style={{ fontSize: 15 }}>Search</b><button onClick={onClose} aria-label="Close search" style={{ background: 'none', border: 'none', color: 'var(--text2)', cursor: 'pointer', fontSize: 20 }}>×</button></header><nav style={{ display: 'flex', borderBottom: '1px solid var(--border)' }}>{[['camera', 'Camera registry'], ['plate', 'License plate']].map(([key, label]) => <button key={key} onClick={() => switchTab(key)} style={{ flex: 1, padding: '9px 0', border: 'none', borderBottom: `2px solid ${tab === key ? 'var(--accent)' : 'transparent'}`, background: 'transparent', color: tab === key ? 'var(--accent)' : 'var(--text2)', cursor: 'pointer', fontSize: 13 }}>{label}</button>)}</nav><div style={{ padding: '14px 18px' }}><input autoFocus value={query} onChange={event => setQuery(event.target.value)} placeholder={tab === 'camera' ? 'Camera ID, name, department, location, status…' : 'e.g. GJ03AA1234'} style={{ width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)', fontSize: 13 }}/><div style={{ color: 'var(--text2)', fontSize: 10, marginTop: 6 }}>{loading ? 'Searching…' : tab === 'camera' ? 'Searches as you type' : 'Enter at least 3 characters'}</div></div><main style={{ flex: 1, overflowY: 'auto', padding: '0 18px 18px' }}>{error && <div style={{ color: 'var(--red)', fontSize: 13 }}>{error}</div>}{results && tab === 'camera' && (results.items.length ? results.items.map(camera => <article key={camera.id} style={{ padding: '9px 10px', marginBottom: 6, borderRadius: 6, background: 'var(--surface2)', border: '1px solid var(--border)', fontSize: 12 }}><div style={{ display: 'flex', gap: 10 }}><div style={{ minWidth: 0, flex: 1 }}><b>CAM-{String(camera.stream_id || '?').padStart(2, '0')} · {camera.name}</b><br/><span style={{ color: 'var(--text2)' }}>{camera.location || 'Location not registered'} · {camera.department} · {(camera.health_status || camera.status).toUpperCase()}</span><br/><span style={{ color: 'var(--text2)', fontSize: 11 }}>{metadata(camera)}</span></div><div style={{ display: 'flex', alignItems: 'center', gap: 5 }}><button onClick={() => onViewCamera?.(camera)} title="View Live Feed" aria-label="View Live Feed" style={actionButton}><LiveIcon/></button><button onClick={() => onLocateCamera?.(camera)} title="Locate on Map" aria-label="Locate on Map" style={actionButton}><MapPinIcon/></button></div></div></article>) : <div style={{ color: 'var(--text2)', fontSize: 13 }}>No cameras found</div>)}{results && tab === 'plate' && <>{results.watchlist_hits?.length > 0 && <div style={{ marginBottom: 12, padding: 10, borderRadius: 6, background: 'var(--red)22', border: '1px solid var(--red)', fontSize: 12 }}><b style={{ color: 'var(--red)' }}>Watchlist match</b>{results.watchlist_hits.map(hit => <div key={hit.id}>{hit.name} — {hit.description}</div>)}</div>}{results.detections?.length ? results.detections.map(detection => <article key={detection.id} style={{ padding: '8px 10px', marginBottom: 6, borderRadius: 6, background: 'var(--surface2)', border: '1px solid var(--border)', fontSize: 12 }}><b>{detection.plate_text}</b> — {detection.cam_name}<span style={{ color: 'var(--text2)', marginLeft: 8 }}>{new Date(detection.timestamp).toLocaleString()}</span><div style={{ marginTop: 7 }}><button onClick={() => showJourney(detection)} disabled={(!detection.global_vehicle_id && !detection.track_id) || journeyLoading === detection.id} style={{ padding: '4px 7px', borderRadius: 4, border: '1px solid var(--accent)', background: 'transparent', color: 'var(--accent)', cursor: 'pointer', fontSize: 11 }}>{journeyLoading === detection.id ? 'Loading route…' : 'Show vehicle journey'}</button></div></article>) : <div style={{ color: 'var(--text2)', fontSize: 13 }}>No sightings found</div>}</>}</main></section></div>
 }

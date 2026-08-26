@@ -104,6 +104,9 @@ services:
       - DATABASE_URL=postgresql://sentinel:${POSTGRES_PASSWORD:-sentinelpass}@postgres:5432/sentinel
       - SECRET_KEY=${SECRET_KEY:-sentinel-change-in-production}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
+      - AUTH_REQUIRED=${AUTH_REQUIRED:-false}
+      - JWT_TOKEN_HOURS=${JWT_TOKEN_HOURS:-8}
+      - TEST_ENDPOINT_ENABLED=${TEST_ENDPOINT_ENABLED:-false}
     ports:
       - "8000:8000"
 

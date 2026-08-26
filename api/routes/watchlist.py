@@ -2,10 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from models import WatchlistEntry, WatchlistOut, WatchlistCreate
+from auth import require_authenticated, require_role, Principal
 from database import get_db
 import uuid
 
-router = APIRouter(prefix="/watchlist", tags=["watchlist"])
+router = APIRouter(prefix="/watchlist", tags=["watchlist"], dependencies=[Depends(require_authenticated)])
 
 
 @router.get("/", response_model=list[WatchlistOut])
@@ -19,7 +20,7 @@ async def list_watchlist(active_only: bool = True,
 
 
 @router.post("/", response_model=WatchlistOut)
-async def add_to_watchlist(body: WatchlistCreate,
+async def add_to_watchlist(body: WatchlistCreate, _: Principal = Depends(require_role("ADMIN")),
                             db: AsyncSession = Depends(get_db)):
     entry = WatchlistEntry(
         name=body.name,
@@ -35,7 +36,7 @@ async def add_to_watchlist(body: WatchlistCreate,
 
 
 @router.delete("/{entry_id}")
-async def deactivate(entry_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def deactivate(entry_id: uuid.UUID, _: Principal = Depends(require_role("ADMIN")), db: AsyncSession = Depends(get_db)):
     entry = await db.get(WatchlistEntry, entry_id)
     if not entry:
         raise HTTPException(404, "Not found")

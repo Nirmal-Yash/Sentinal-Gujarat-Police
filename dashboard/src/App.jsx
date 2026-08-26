@@ -7,61 +7,86 @@ import AlertPanel     from './components/AlertPanel'
 import MapView        from './components/MapView'
 import SearchModal    from './components/SearchModal'
 import WatchlistModal from './components/WatchlistModal'
+import OnboardCameraModal from './components/OnboardCameraModal'
+import LoginModal     from './components/LoginModal'
+import VendorModal    from './components/VendorModal'
+import TestDiagnosticsModal from './components/TestDiagnosticsModal'
 
 const MAX_LIVE_ALERTS = 300
-
-// ─── SVG view toggle icons ────────────────────────────────────────────────────
-const GridViewIcon = () => (
-  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
-    <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
-  </svg>
-)
-
-const MapViewIcon = () => (
-  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/>
-    <line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/>
-  </svg>
-)
 
 export default function App() {
   const [cameras,       setCameras]       = useState([])
   const [alerts,        setAlerts]        = useState([])
   const [counts,        setCounts]        = useState(null)
   const [pipelineStats, setPipelineStats] = useState(null)
+  const [analytics,     setAnalytics]     = useState([])
   const [mapExpanded,   setMapExpanded]   = useState(false)
+  const [mapFocus,      setMapFocus]      = useState({ id: null, nonce: 0 })
+  const [cameraFocus,   setCameraFocus]   = useState({ id: null, nonce: 0 })
+  const [vehicleRoute,  setVehicleRoute]  = useState({ sightings: [], nonce: 0 })
   const [alertsCollapsed, setAlertsCollapsed] = useState(() => localStorage.getItem('sentinel.alerts.collapsed.v1') === 'true')
   const [showSearch,    setShowSearch]    = useState(false)
   const [showWatchlist, setShowWatchlist] = useState(false)
+  const [showOnboard,  setShowOnboard]    = useState(false)
+  const [showVendors,  setShowVendors]    = useState(false)
+  const [authRequired, setAuthRequired]   = useState(null)
+  const [testEnabled,  setTestEnabled]    = useState(false)
+  const [principal,    setPrincipal]      = useState(null)
+  const [authReady,    setAuthReady]      = useState(false)
+  const [showTestDiagnostics, setShowTestDiagnostics] = useState(false)
+
+  useEffect(() => {
+    api.getAuthConfig().then(async config => {
+      setAuthRequired(config.auth_required)
+      setTestEnabled(Boolean(config.test_enabled))
+      try { setPrincipal(await api.getMe()); setAuthReady(true) }
+      catch { setAuthReady(!config.auth_required) }
+    }).catch(() => { setAuthRequired(false); setAuthReady(true) })
+  }, [])
 
   // Alerts indexed by cam_id for fast badge lookup
   const alertsByCam = (alerts || []).reduce((acc, a) => {
     if (a.cam_id && !a.acknowledged) acc[a.cam_id] = (acc[a.cam_id] || 0) + 1
     return acc
   }, {})
+  const analyticsByCam = (analytics || []).reduce((acc, item) => {
+    if (item.cam_id) acc[item.cam_id] = item
+    return acc
+  }, {})
 
   // ── Initial load ─────────────────────────────────────────────────────────
   useEffect(() => {
+    if (!authReady) return
     api.getCameras().then(setCameras).catch(console.warn)
     api.getAlertCounts().then(setCounts).catch(console.warn)
+    api.getRecentAnalytics().then(setAnalytics).catch(console.warn)
     api.getAlerts({ limit: 80 }).then(rows =>
       setAlerts(rows.map(r => ({ ...r, _new: false })))
     ).catch(console.warn)
-  }, [])
+  }, [authReady])
 
   // ── Periodic refresh ──────────────────────────────────────────────────────
   useEffect(() => {
+    if (!authReady) return
     const t = setInterval(() => {
       api.getAlertCounts().then(setCounts).catch(console.warn)
       // Refresh pipeline stats every 10 s to show ingestion/AI health
       fetch('/api/cameras/pipeline/stats')
         .then(r => r.json()).then(setPipelineStats).catch(console.warn)
-      // Refresh camera list every 60 s (catalogue sync may add cameras)
-      api.getCameras().then(setCameras).catch(console.warn)
+      api.getRecentAnalytics().then(setAnalytics).catch(console.warn)
     }, 10_000)
     return () => clearInterval(t)
-  }, [])
+  }, [authReady])
+
+  // Registry records change more slowly than operational counters.  Keeping
+  // this independent prevents a status refresh from remounting/reloading every
+  // camera player while an operator is watching a feed.
+  useEffect(() => {
+    if (!authReady) return
+    const refreshRegistry = () => api.getCameras().then(setCameras).catch(console.warn)
+    const t = setInterval(refreshRegistry, 60_000)
+    return () => clearInterval(t)
+  }, [authReady])
 
   // ── WebSocket — real-time alerts ──────────────────────────────────────────
   const onMessage = useCallback((msg) => {
@@ -82,7 +107,12 @@ export default function App() {
     } : c)
   }, [])
 
-  useWebSocket(WS_URL, onMessage)
+  const websocketUrl = (() => {
+    if (!authReady || (authRequired && !principal)) return null
+    const token = localStorage.getItem('sentinel.jwt')
+    return token ? `${WS_URL}?access_token=${encodeURIComponent(token)}` : WS_URL
+  })()
+  useWebSocket(websocketUrl, onMessage)
 
   // ── Acknowledge ───────────────────────────────────────────────────────────
   const ack = useCallback(async (id) => {
@@ -103,6 +133,47 @@ export default function App() {
       return next
     })
   }, [])
+  const locateCamera = useCallback((camera) => {
+    if (!camera?.id) return
+    setMapExpanded(true)
+    setMapFocus(previous => ({ id: camera.id, nonce: previous.nonce + 1 }))
+  }, [])
+  const openCamera = useCallback((camera) => {
+    if (!camera?.id) return
+    setMapExpanded(false)
+    setCameraFocus(previous => ({ id: camera.id, nonce: previous.nonce + 1 }))
+  }, [])
+  const locateRoute = useCallback((sightings) => {
+    if (!Array.isArray(sightings) || !sightings.length) return
+    setMapExpanded(true)
+    setVehicleRoute(previous => ({ sightings, nonce: previous.nonce + 1 }))
+  }, [])
+  const login = useCallback(async credentials => {
+    const response = await api.login(credentials)
+    localStorage.setItem('sentinel.jwt', response.access_token)
+    setPrincipal(response.user); setAuthReady(true)
+  }, [])
+  const logout = useCallback(async () => {
+    try { await api.logout() } catch { /* local token still must be cleared */ }
+    localStorage.removeItem('sentinel.jwt'); setPrincipal(null); setAlerts([]); setCounts(null); setAuthReady(!authRequired)
+  }, [authRequired])
+  const onboard = useCallback(async body => {
+    const camera = await api.onboardCamera(body)
+    setCameras(current => [...current, camera].sort((a, b) => (a.stream_id || 0) - (b.stream_id || 0)))
+    return camera
+  }, [])
+  const importCameras = useCallback(async file => {
+    const result = await api.importCameras(file)
+    setCameras(await api.getCameras())
+    return result
+  }, [])
+  const exportDetections = useCallback(async () => {
+    const blob = await api.downloadDetections(); const url = URL.createObjectURL(blob)
+    const link = document.createElement('a'); link.href = url; link.download = 'sentinel-detections.csv'; link.click(); URL.revokeObjectURL(url)
+  }, [])
+
+  if (authRequired === null) return null
+  if (authRequired && !principal) return <LoginModal onLogin={login}/>
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
@@ -110,36 +181,25 @@ export default function App() {
         alertCount={unackedCount}
         onSearchOpen={() => setShowSearch(true)}
         onWatchlistOpen={() => setShowWatchlist(true)}
+        onOnboardOpen={() => setShowOnboard(true)}
+        onVendorsOpen={() => setShowVendors(true)}
+        onTestOpen={testEnabled ? () => setShowTestDiagnostics(true) : null}
+        onReportExport={exportDetections}
+        principal={principal}
+        onLogout={logout}
+        mapExpanded={mapExpanded}
+        onMapView={() => setMapExpanded(true)}
+        onGridView={() => setMapExpanded(false)}
       />
 
-      {/* Toolbar: view toggle + status bar */}
+      {/* Operational status strip; primary navigation is in the main header. */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8,
         padding: '6px 14px', background: 'var(--surface)',
         borderBottom: '1px solid var(--border)', flexShrink: 0,
       }}>
-        {/* View toggle */}
-        <div style={{ display: 'flex', gap: 2, background: 'var(--surface2)', borderRadius: 6, padding: 2 }}>
-          {[
-            [false, 'Camera Grid', GridViewIcon],
-            [true,  'Map View',    MapViewIcon ],
-          ].map(([expanded, label, Icon]) => (
-            <button key={label} onClick={() => setMapExpanded(expanded)} style={{
-              display: 'flex', alignItems: 'center', gap: 5,
-              padding: '4px 12px', borderRadius: 4, border: 'none', fontSize: 11,
-              background: mapExpanded === expanded ? 'var(--surface)' : 'transparent',
-              color: mapExpanded === expanded ? 'var(--text)' : 'var(--text2)',
-              cursor: 'pointer', fontWeight: mapExpanded === expanded ? 600 : 400,
-              boxShadow: mapExpanded === expanded ? '0 1px 3px rgba(0,0,0,.3)' : 'none',
-              transition: 'all .15s',
-            }}>
-              <Icon/> {label}
-            </button>
-          ))}
-        </div>
-
         {/* Status indicators */}
-        <div style={{ marginLeft: 8, display: 'flex', gap: 14, fontSize: 11 }}>
+        <div style={{ display: 'flex', gap: 14, fontSize: 11 }}>
           <span style={{ color: 'var(--text2)' }}>
             {cameras.length} cameras
           </span>
@@ -179,16 +239,17 @@ export default function App() {
         )}
       </div>
 
-      {/* Main layout */}
+      {/* Main layout.  The map is a distinct operational view, not a second
+          miniature map embedded above every live-feed grid. */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* Map remains mounted in compact mode so viewport/selection survive expansion. */}
         <div style={{ flex: 1, overflow: 'hidden', position: 'relative', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ flex: mapExpanded ? 1 : '0 0 210px', minHeight: 0, borderBottom: mapExpanded ? 'none' : '1px solid var(--border)' }}>
-            <MapView cameras={cameras} alerts={alerts} compact={!mapExpanded}/>
-          </div>
-          {!mapExpanded && <div style={{ flex: 1, minHeight: 0 }}>
-            <CameraGrid cameras={cameras} alertsByCam={alertsByCam} pipelineStats={pipelineStats}/>
-          </div>}
+          {mapExpanded ? (
+            <MapView cameras={cameras} alerts={alerts} focusCameraId={mapFocus.id} focusNonce={mapFocus.nonce} route={vehicleRoute.sightings} routeFocusNonce={vehicleRoute.nonce}/>
+          ) : (
+            <div style={{ flex: 1, minHeight: 0 }}>
+            <CameraGrid cameras={cameras} alertsByCam={alertsByCam} analyticsByCam={analyticsByCam} pipelineStats={pipelineStats} onLocate={locateCamera} focusCameraId={cameraFocus.id} focusNonce={cameraFocus.nonce}/>
+            </div>
+          )}
         </div>
 
         {/* Collapse preserves the mounted alert feed and its WebSocket updates. */}
@@ -197,8 +258,11 @@ export default function App() {
         </div>
       </div>
 
-      {showSearch    && <SearchModal    onClose={() => setShowSearch(false)}/>}
+      {showSearch    && <SearchModal    onClose={() => setShowSearch(false)} onViewCamera={openCamera} onLocateCamera={locateCamera} onLocateRoute={locateRoute}/>}
       {showWatchlist && <WatchlistModal onClose={() => setShowWatchlist(false)}/>}
+      {showOnboard && <OnboardCameraModal onClose={() => setShowOnboard(false)} onSaved={onboard} onImport={importCameras}/>}
+      {showVendors && <VendorModal onClose={() => setShowVendors(false)}/>}
+      {showTestDiagnostics && <TestDiagnosticsModal onClose={() => setShowTestDiagnostics(false)}/>}
     </div>
   )
 }

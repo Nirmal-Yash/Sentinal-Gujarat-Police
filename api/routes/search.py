@@ -2,11 +2,12 @@ from fastapi import APIRouter, Depends, Query, UploadFile, File, HTTPException
 from sqlalchemy import select, desc, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from models import Detection, Alert
+from auth import require_authenticated
 from database import get_db
 from typing import Optional
 import uuid
 
-router = APIRouter(prefix="/search", tags=["search"])
+router = APIRouter(prefix="/search", tags=["search"], dependencies=[Depends(require_authenticated)])
 
 
 @router.get("/cameras")
@@ -17,8 +18,13 @@ async def search_cameras(
 ):
     """Indexed registry search; deliberately returns a small read model."""
     result = await db.execute(text("""
-        SELECT id, stream_id, name, location, lat, lng, department,
-               owner_organization, camera_type, status, health_status
+        SELECT id, stream_id, name, location, lat, lng, hls_url, whep_url,
+               ('https://live.corp8.cloud/stream/' || stream_id::text) AS stream_url, department,
+               owner_organization, camera_type, status, health_status,
+               COALESCE(observed_codec, codec) AS effective_codec,
+               COALESCE(observed_width, width) AS effective_width,
+               COALESCE(observed_height, height) AS effective_height,
+               COALESCE(observed_fps, fps) AS effective_fps
         FROM cameras
         WHERE status <> 'deleted' AND (
           name ILIKE :pattern OR location ILIKE :pattern OR department ILIKE :pattern

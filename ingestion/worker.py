@@ -19,6 +19,7 @@ import numpy as np
 import redis
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from stream_adapters import adapter_for
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [INGEST][%(levelname)s] %(message)s")
@@ -29,6 +30,7 @@ DB_URL      = os.getenv("DATABASE_URL","")
 FRAME_FPS   = float(os.getenv("FRAME_FPS",  "3"))
 JPEG_Q      = int(os.getenv("JPEG_QUALITY", "70"))
 MAX_CAMS    = int(os.getenv("MAX_CONCURRENT_CAMERAS", "30"))
+CATALOGUE_SYNC_INTERVAL = int(os.getenv("CATALOGUE_SYNC_INTERVAL", "300"))
 STREAM_KEY  = "raw_frames"
 STREAM_MAX  = 3000
 ENCODE_PARAMS = [cv2.IMWRITE_JPEG_QUALITY, JPEG_Q]
@@ -40,7 +42,8 @@ def get_cameras():
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
             "SELECT id, name, stream_id, rtsp_url, codec "
-            "FROM cameras WHERE status = 'active' ORDER BY stream_id LIMIT %s",
+            "FROM cameras WHERE status = 'active' AND rtsp_url IS NOT NULL AND rtsp_url <> '' "
+            "ORDER BY stream_id LIMIT %s",
             (MAX_CAMS,)
         )
         cams = [dict(r) for r in cur.fetchall()]
@@ -49,11 +52,16 @@ def get_cameras():
 
 
 def set_status(cam_id, status):
+    """Record observed connection health without changing registry lifecycle state."""
+    health = {"active": "healthy", "reconnecting": "reconnecting", "offline": "offline"}.get(status, "unknown")
+    connectivity = {"active": "connected", "reconnecting": "reconnecting", "offline": "disconnected"}.get(status, "unknown")
     try:
         conn = psycopg2.connect(DB_URL)
         with conn.cursor() as cur:
-            cur.execute("UPDATE cameras SET status=%s, last_seen_at=NOW() "
-                        "WHERE id=%s", (status, str(cam_id)))
+            cur.execute("""UPDATE cameras SET connectivity_status=%s, health_status=%s,
+                           last_seen_at=CASE WHEN %s='active' THEN NOW() ELSE last_seen_at END,
+                           updated_at=NOW() WHERE id=%s""",
+                        (connectivity, health, status, str(cam_id)))
         conn.commit(); conn.close()
     except Exception as e:
         log.warning(f"Status update failed: {e}")
@@ -85,15 +93,14 @@ class CameraWorker:
         self.sid      = cam["stream_id"]
         self.name     = cam["name"]
         self.url      = cam["rtsp_url"]
-        self.codec    = cam.get("codec", "H.264")
+        self.codec    = cam.get("codec") or "unknown"
+        self.adapter  = adapter_for(cam)
         self.r        = r
         self.interval = 1.0 / FRAME_FPS
 
     # ── Open with TCP forced ──────────────────────────────────────────────────
     def _open(self) -> cv2.VideoCapture:
-        cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
-        return cap
+        return self.adapter.open()
 
     # ── Reconnect with exponential backoff ────────────────────────────────────
     def _reconnect(self) -> cv2.VideoCapture:
@@ -206,6 +213,13 @@ def run_worker(cam: dict):
     CameraWorker(cam, r).run()
 
 
+def start_camera_worker(cam: dict) -> Process:
+    process = Process(target=run_worker, args=(cam,), daemon=True)
+    process.start()
+    log.info("Started ingestion worker for %s (%s)", cam["name"], str(cam["id"])[:8])
+    return process
+
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 def main():
     log.info("Ingestion service starting …")
@@ -234,23 +248,48 @@ def main():
 
     log.info(f"Starting {len(cams)} camera workers …")
 
-    # 3. Spawn one process per camera
-    procs = []
+    # 3. Spawn one process per active registry camera.  The supervisor below
+    # reconciles this set, so approved onboarding does not require a restart.
+    procs = {}
     for cam in cams:
-        p = Process(target=run_worker, args=(cam,), daemon=True)
-        p.start()
-        procs.append((cam, p))
+        procs[str(cam["id"])] = (cam, start_camera_worker(cam))
         time.sleep(0.3)   # stagger to avoid thundering herd on RTSP server
 
-    # 4. Monitor + restart dead workers
+    # 4. Monitor/restart workers and reconcile registry source changes.
+    last_catalogue_sync = time.monotonic()
     while True:
         time.sleep(30)
-        for i, (cam, p) in enumerate(procs):
-            if not p.is_alive():
-                log.warning(f"Worker {cam['name']} died (exit {p.exitcode}). Restarting …")
-                np2 = Process(target=run_worker, args=(cam,), daemon=True)
-                np2.start()
-                procs[i] = (cam, np2)
+        if time.monotonic() - last_catalogue_sync >= CATALOGUE_SYNC_INTERVAL:
+            try:
+                catalogue_sync()
+            except Exception as exc:
+                log.warning("Catalogue sync during reconcile failed: %s", exc)
+            last_catalogue_sync = time.monotonic()
+        try:
+            wanted = {str(cam["id"]): cam for cam in get_cameras()}
+        except Exception as exc:
+            log.warning("Registry reconcile skipped: %s", exc)
+            continue
+
+        for cam_id, (cam, process) in list(procs.items()):
+            replacement = wanted.get(cam_id)
+            if replacement is None:
+                log.info("Stopping worker for deactivated/removed camera %s", cam["name"])
+                process.terminate(); process.join(timeout=5)
+                del procs[cam_id]
+                continue
+            if replacement["rtsp_url"] != cam["rtsp_url"]:
+                log.info("Restarting worker for updated source %s", cam["name"])
+                process.terminate(); process.join(timeout=5)
+                procs[cam_id] = (replacement, start_camera_worker(replacement))
+                continue
+            if not process.is_alive():
+                log.warning(f"Worker {cam['name']} died (exit {process.exitcode}). Restarting …")
+                procs[cam_id] = (replacement, start_camera_worker(replacement))
+            wanted.pop(cam_id, None)
+
+        for cam_id, cam in wanted.items():
+            procs[cam_id] = (cam, start_camera_worker(cam))
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ export function useWebSocket(url, onMessage) {
   const mountedRef = useRef(true)
 
   const connect = useCallback(() => {
-    if (!mountedRef.current) return
+    if (!mountedRef.current || !url) return
     const ws = new WebSocket(url)
     wsRef.current = ws
 
@@ -27,7 +27,7 @@ export function useWebSocket(url, onMessage) {
 
   useEffect(() => {
     mountedRef.current = true
-    connect()
+    if (url) connect()
     return () => {
       mountedRef.current = false
       clearTimeout(retryRef.current)

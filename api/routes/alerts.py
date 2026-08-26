@@ -2,11 +2,12 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, update, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from models import Alert, AlertOut
+from auth import require_authenticated, require_role, Principal
 from database import get_db
 from typing import Optional
 import uuid
 
-router = APIRouter(prefix="/alerts", tags=["alerts"])
+router = APIRouter(prefix="/alerts", tags=["alerts"], dependencies=[Depends(require_authenticated)])
 
 
 @router.get("/", response_model=list[AlertOut])
@@ -33,7 +34,7 @@ async def list_alerts(
 
 
 @router.post("/{alert_id}/acknowledge")
-async def acknowledge(alert_id: uuid.UUID, operator: str = "operator",
+async def acknowledge(alert_id: uuid.UUID, operator: str = "operator", _: Principal = Depends(require_role("OPERATOR")),
                        db: AsyncSession = Depends(get_db)):
     from datetime import datetime, timezone
     await db.execute(

@@ -31,7 +31,7 @@ def main():
     from cross_camera    import CrossCameraTracker
     from watchlist_engine import WatchlistEngine
     from alert_engine    import AlertEngine
-    from sighting_store  import persist
+    from sighting_store  import persist, set_global_track_id
 
     tracker   = CrossCameraTracker()
     watchlist = WatchlistEngine()
@@ -98,6 +98,7 @@ def main():
                     # ── Cross-camera tracking (face embeddings) ──────────
                     if dtype == "face" and emb is not None:
                         global_id = tracker.assign(cam_id, det_id, emb, ts)
+                        set_global_track_id(det_id, global_id)
                         if tracker.is_new_camera(global_id, cam_id):
                             alerter.fire(r, {
                                 "detection_id": det_id,

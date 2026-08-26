@@ -77,3 +77,19 @@ def persist(data: dict):
     finally:
         conn.close()
     return {"timestamp": timestamp, "plate": plate, "global_vehicle_id": f"plate:{plate}" if plate else None}
+
+
+def set_global_track_id(detection_id: str, global_track_id: str):
+    """Attach a FAISS result before the stream item is acknowledged.
+
+    The detection exists first so it remains durable if the tracker fails; this
+    small follow-up update makes the durable record queryable for a successful
+    cross-camera association without introducing a second event contract.
+    """
+    conn = psycopg2.connect(DB_URL)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE detections SET global_track_id=%s WHERE id=%s::uuid", (global_track_id, detection_id))
+        conn.commit()
+    finally:
+        conn.close()

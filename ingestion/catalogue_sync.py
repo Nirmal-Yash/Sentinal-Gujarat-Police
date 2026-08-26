@@ -21,9 +21,20 @@ def _build_urls(cam: dict) -> dict:
     """Build all three stream URLs from catalogue entry."""
     sid = cam.get("id")
     rtsp = cam.get("rtsp_url") or f"rtsp://{RTSP_HOST}:8554/stream/{sid}"
-    hls  = cam.get("hls_url")  or f"http://{RTSP_HOST}/live/stream/{sid}/index.m3u8"
+    hls  = cam.get("hls_url")  or f"https://{RTSP_HOST}/live/stream/{sid}/index.m3u8"
     whep = cam.get("whep_url") or f"http://{RTSP_HOST}:8889/stream/{sid}/whep"
     return {"rtsp": rtsp, "hls": hls, "whep": whep}
+
+
+def _coordinates(cam: dict) -> tuple[float | None, float | None]:
+    """Accept only supplied, valid coordinates; never manufacture a map point."""
+    try:
+        lat, lng = float(cam["lat"]), float(cam["lng"])
+    except (KeyError, TypeError, ValueError):
+        return None, None
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180) or (lat == 0 and lng == 0):
+        return None, None
+    return lat, lng
 
 
 def fetch_catalogue(retries: int = 5) -> list:
@@ -57,16 +68,22 @@ def sync(conn=None) -> int:
         conn = psycopg2.connect(DB_URL)
 
     rows = []
+    coordinate_counts = {}
     for cam in cameras:
         sid  = int(cam.get("id", 0))
         urls = _build_urls(cam)
         name = cam.get("location") or cam.get("name") or f"Camera {sid}"
+        lat, lng = _coordinates(cam)
+        if lat is None:
+            log.warning("Catalogue camera %s has no valid coordinates; retaining existing registry point if any", sid)
+        else:
+            coordinate_counts[(lat, lng)] = coordinate_counts.get((lat, lng), 0) + 1
         rows.append((
             sid,
             name,
             cam.get("location", ""),
-            float(cam.get("lat", 22.3039)),
-            float(cam.get("lng",  70.8022)),
+            lat,
+            lng,
             urls["rtsp"],
             urls["hls"],
             urls["whep"],
@@ -80,6 +97,10 @@ def sync(conn=None) -> int:
             "active" if cam.get("live", True) else "offline",
         ))
 
+    for coordinates, count in coordinate_counts.items():
+        if count > 1:
+            log.warning("Catalogue has %s cameras at the same coordinates %s; verify source metadata", count, coordinates)
+
     sql = """
         INSERT INTO cameras
           (stream_id, name, location, lat, lng,
@@ -89,8 +110,8 @@ def sync(conn=None) -> int:
         ON CONFLICT (stream_id) DO UPDATE SET
           name         = EXCLUDED.name,
           location     = EXCLUDED.location,
-          lat          = EXCLUDED.lat,
-          lng          = EXCLUDED.lng,
+          lat          = COALESCE(EXCLUDED.lat, cameras.lat),
+          lng          = COALESCE(EXCLUDED.lng, cameras.lng),
           rtsp_url     = EXCLUDED.rtsp_url,
           hls_url      = EXCLUDED.hls_url,
           whep_url     = EXCLUDED.whep_url,

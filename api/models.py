@@ -1,7 +1,7 @@
-import uuid
-from datetime import datetime
+import uuid, os
+from datetime import datetime, date
 from typing import Any, Optional
-from sqlalchemy import Column, String, Float, Boolean, DateTime, Text, Integer, BigInteger
+from sqlalchemy import Column, String, Float, Boolean, DateTime, Date, Text, Integer, BigInteger
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from pgvector.sqlalchemy import Vector
 from pydantic import BaseModel, ConfigDict, Field
@@ -14,9 +14,9 @@ class Camera(Base):
     stream_id    = Column(Integer, unique=True)
     name         = Column(String(255), nullable=False)
     location     = Column(String(255), default="")
-    lat          = Column(Float, default=22.3039)
-    lng          = Column(Float, default=70.8022)
-    rtsp_url     = Column(String(512), nullable=False)
+    lat          = Column(Float)
+    lng          = Column(Float)
+    rtsp_url     = Column(String(512))
     hls_url      = Column(String(512), default="")
     whep_url     = Column(String(512), default="")
     codec        = Column(String(20))
@@ -47,6 +47,14 @@ class Camera(Base):
     reconnect_count = Column(Integer, default=0)
     decode_failure_count = Column(Integer, default=0)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    external_id = Column(String(255))
+    installation_date = Column(Date)
+    ptz_capable = Column(Boolean, default=False)
+    night_vision_capable = Column(Boolean, default=False)
+    coord_source = Column(String(32), default="unknown")
+    coord_confidence = Column(Float)
+    vendor_id = Column(UUID(as_uuid=True))
+    model_id = Column(UUID(as_uuid=True))
 
     # API read-model precedence: current ingestion observation first, then an
     # explicitly configured value, otherwise None (shown as N/A by the UI).
@@ -65,6 +73,14 @@ class Camera(Base):
     @property
     def effective_fps(self):
         return self.observed_fps if self.observed_fps is not None else self.fps
+
+    @property
+    def stream_url(self):
+        """Browser-playable MP4 fallback derived from the canonical stream ID."""
+        if self.stream_id is None:
+            return None
+        host = os.getenv("PLAYBACK_HOST", "live.corp8.cloud")
+        return f"https://{host}/stream/{self.stream_id}"
 
 
 class Alert(Base):
@@ -120,7 +136,7 @@ class Detection(Base):
 class CameraOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID; stream_id: Optional[int]; name: str; location: str
-    lat: float; lng: float; hls_url: str; whep_url: str
+    lat: Optional[float]; lng: Optional[float]; hls_url: str; whep_url: str; stream_url: Optional[str]
     codec: Optional[str]; width: Optional[int]; height: Optional[int]; fps: Optional[float]
     effective_codec: Optional[str]; effective_width: Optional[int]
     effective_height: Optional[int]; effective_fps: Optional[float]
@@ -129,6 +145,10 @@ class CameraOut(BaseModel):
     source_system: str; storage_type: str; retention_days: Optional[int]
     analytics_capabilities: Any; maintenance_status: str
     observed_at: Optional[datetime]; last_frame_at: Optional[datetime]
+    external_id: Optional[str]; installation_date: Optional[date]
+    ptz_capable: bool; night_vision_capable: bool
+    coord_source: str; coord_confidence: Optional[float]
+    vendor_id: Optional[uuid.UUID]; model_id: Optional[uuid.UUID]
     created_at: datetime; updated_at: datetime
 
 
@@ -137,9 +157,9 @@ class CameraCreate(BaseModel):
     stream_id: Optional[int] = Field(None, ge=0)
     name: str = Field(min_length=1, max_length=255)
     location: str = ""
-    lat: float = Field(ge=-90, le=90)
-    lng: float = Field(ge=-180, le=180)
-    rtsp_url: str = Field(min_length=1, max_length=512)
+    lat: Optional[float] = Field(None, ge=-90, le=90)
+    lng: Optional[float] = Field(None, ge=-180, le=180)
+    rtsp_url: Optional[str] = Field(None, max_length=512)
     hls_url: str = ""
     whep_url: str = ""
     department: str = "Unassigned"
@@ -147,9 +167,17 @@ class CameraCreate(BaseModel):
     camera_type: str = "fixed"
     protocol: str = "rtsp"
     source_system: str = ""
+    external_id: Optional[str] = Field(None, max_length=255)
     storage_type: str = ""
     retention_days: Optional[int] = Field(None, ge=0)
     analytics_capabilities: list[str] = Field(default_factory=list)
+    installation_date: Optional[date] = None
+    ptz_capable: bool = False
+    night_vision_capable: bool = False
+    coord_source: str = "manual"
+    coord_confidence: Optional[float] = Field(1.0, ge=0, le=1)
+    vendor_id: Optional[uuid.UUID] = None
+    model_id: Optional[uuid.UUID] = None
 
 
 class AlertOut(BaseModel):

@@ -7,9 +7,9 @@ CREATE TABLE IF NOT EXISTS cameras (
     stream_id    INTEGER      UNIQUE,
     name         VARCHAR(255) NOT NULL,
     location     VARCHAR(255) DEFAULT '',
-    lat          DOUBLE PRECISION DEFAULT 22.3039,
-    lng          DOUBLE PRECISION DEFAULT 70.8022,
-    rtsp_url     VARCHAR(512) NOT NULL,
+    lat          DOUBLE PRECISION,
+    lng          DOUBLE PRECISION,
+    rtsp_url     VARCHAR(512),
     hls_url      VARCHAR(512) DEFAULT '',
     whep_url     VARCHAR(512) DEFAULT '',
     codec        VARCHAR(20),
@@ -102,3 +102,8 @@ CREATE INDEX IF NOT EXISTS idx_track_last    ON global_tracks(last_seen_at DESC)
 -- They are populated at runtime by ingestion/catalogue_sync.py
 -- which calls http://live.corp8.cloud/api/ingest
 \i /migrations/001_model1_registry.sql
+\i /migrations/002_registry_onboarding_and_integrity.sql
+\i /migrations/003_clear_legacy_default_coordinates.sql
+\i /migrations/004_operations_security_and_test_isolation.sql
+\i /migrations/005_vendor_registry.sql
+\i /migrations/006_seed_verified_camera_coordinates.sql

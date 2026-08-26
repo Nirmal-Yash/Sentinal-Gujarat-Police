@@ -4,5 +4,6 @@ WORKDIR /app
 COPY api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY api/ .
+COPY scripts/seed_admin.py /app/seed_admin.py
 COPY database/migrations /migrations
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

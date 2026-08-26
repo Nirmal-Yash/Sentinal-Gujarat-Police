@@ -16,6 +16,14 @@ const TYPE_LABEL = {
   anomaly_abandoned_object:'Abandoned Object',
 }
 
+const BellIcon = ({ muted = false }) => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+    <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+    {muted && <path d="m4 4 16 16"/>}
+  </svg>
+)
+
 // ─── Type badge indicator bar ─────────────────────────────────────────────────
 const TypeBadge = ({ type }) => {
   const colors = {
@@ -134,7 +142,7 @@ export default function AlertPanel({ alerts, onAck, counts, collapsed = false, o
   if (collapsed) {
     return (
       <div style={{ height: '100%', background: 'var(--surface)', borderLeft: '1px solid var(--border)', display: 'flex', alignItems: 'center', flexDirection: 'column', paddingTop: 10 }}>
-        <button onClick={onToggle} title="Expand alerts" aria-label="Expand alerts" style={{ width: 26, height: 28, border: '1px solid var(--border)', borderRadius: 5, background: 'var(--surface2)', color: 'var(--text)', cursor: 'pointer' }}>‹</button>
+        <button onClick={onToggle} title="Expand alerts" aria-label="Expand alerts" style={{ width: 28, height: 28, border: '1px solid var(--border)', borderRadius: 5, background: 'var(--surface2)', color: 'var(--text)', cursor: 'pointer', display: 'grid', placeItems: 'center' }}><BellIcon/></button>
         {unacked > 0 && <span title={`${unacked} unacknowledged alerts`} style={{ marginTop: 8, minWidth: 20, textAlign: 'center', borderRadius: 10, background: 'var(--high)', color: '#fff', fontSize: 10, fontWeight: 700, padding: '3px 2px' }}>{unacked}</span>}
       </div>
     )
@@ -151,7 +159,7 @@ export default function AlertPanel({ alerts, onAck, counts, collapsed = false, o
           <span style={{ fontWeight: 700, fontSize: 13, letterSpacing: .3 }}>
             Alerts
           </span>
-          <button onClick={onToggle} title="Collapse alerts" aria-label="Collapse alerts" style={{ marginLeft: 'auto', marginRight: 7, width: 24, height: 24, border: '1px solid var(--border)', borderRadius: 4, background: 'transparent', color: 'var(--text2)', cursor: 'pointer' }}>›</button>
+          <button onClick={onToggle} title="Collapse alerts" aria-label="Collapse alerts" style={{ marginLeft: 'auto', marginRight: 7, width: 26, height: 24, border: '1px solid var(--border)', borderRadius: 4, background: 'transparent', color: 'var(--text2)', cursor: 'pointer', display: 'grid', placeItems: 'center' }}><BellIcon muted/></button>
           {unacked > 0 && (
             <span style={{
               fontSize: 10, fontWeight: 700, color: 'var(--high)',

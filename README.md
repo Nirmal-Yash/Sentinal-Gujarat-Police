@@ -61,6 +61,10 @@ to existing volumes before serving requests. It adds the canonical Model-1 regis
 PostGIS geometry, registry search indexes, audit log, runtime health observations and
 durable vehicle sightings; it does not remove existing camera, RTSP, Redis or AI data.
 
+See [architecture decisions and extension points](docs/architecture-decisions.md)
+for the deliberately deferred enterprise capabilities and their activation
+criteria. This keeps the PoC extensible without adding unused infrastructure.
+
 ---
 
 ## Services

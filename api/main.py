@@ -9,9 +9,10 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from database import engine, Base
+from database import engine, Base, Session
+from auth import AUTH_REQUIRED, principal_from_token
 from websocket_manager import manager, redis_alert_consumer
-from routes import cameras, alerts, watchlist, search
+from routes import cameras, alerts, watchlist, search, auth, reports, test, vendors
 from migrations import apply_migrations
 
 logging.basicConfig(level=logging.INFO,
@@ -57,11 +58,29 @@ app.include_router(cameras.router)
 app.include_router(alerts.router)
 app.include_router(watchlist.router)
 app.include_router(search.router)
+app.include_router(auth.router)
+app.include_router(reports.router)
+app.include_router(test.router)
+app.include_router(vendors.router)
 
 
 # ─── WebSocket ────────────────────────────────────────────────────────────────
 @app.websocket("/ws/alerts")
 async def ws_alerts(ws: WebSocket):
+    # Browsers cannot attach an Authorization header during the WebSocket
+    # handshake, so an expiring JWT is supplied as a query parameter only when
+    # auth is enabled.  Validate the backing server-side session before accept.
+    if AUTH_REQUIRED:
+        token = ws.query_params.get("access_token")
+        if not token:
+            await ws.close(code=1008)
+            return
+        try:
+            async with Session() as db:
+                await principal_from_token(token, db)
+        except Exception:
+            await ws.close(code=1008)
+            return
     await manager.connect(ws)
     try:
         while True:
