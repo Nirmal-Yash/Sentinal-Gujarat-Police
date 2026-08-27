@@ -99,7 +99,13 @@ def run():
     log.info("Behavior worker ready.")
 
     while True:
-        msgs = r.xreadgroup(GROUP, consumer, {IN_STREAM: ">"}, count=4, block=200)
+        try:
+            msgs = r.xreadgroup(GROUP, consumer, {IN_STREAM: ">"}, count=4, block=200)
+        except redis.exceptions.ResponseError as exc:
+            if "NOGROUP" in str(exc):
+                _ensure_group(r)
+                continue
+            raise
         if not msgs:
             continue
 

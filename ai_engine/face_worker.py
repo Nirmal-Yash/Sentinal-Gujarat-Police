@@ -47,7 +47,13 @@ def run():
     log.info("Face worker ready.")
 
     while True:
-        msgs = r.xreadgroup(GROUP, consumer, {IN_STREAM: ">"}, count=2, block=500)
+        try:
+            msgs = r.xreadgroup(GROUP, consumer, {IN_STREAM: ">"}, count=2, block=500)
+        except redis.exceptions.ResponseError as exc:
+            if "NOGROUP" in str(exc):
+                _ensure_group(r)
+                continue
+            raise
         if not msgs:
             continue
 

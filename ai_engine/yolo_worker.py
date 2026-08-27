@@ -27,6 +27,7 @@ GROUP        = "test_ai_workers" if TEST_MODE else "ai_workers"
 IN_STREAM    = f"{PREFIX}raw_frames"
 RESET_STREAM = f"{PREFIX}cam_resets"
 OUT_STREAM   = f"{PREFIX}detections"
+TRACK_HASH_PREFIX = f"{PREFIX}vehicle_tracks:"
 OUT_MAX      = 5000
 
 TARGET_CLS = {0: "person", 2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
@@ -86,7 +87,9 @@ def run():
 
     while True:
         # ── Poll cam_resets stream for discontinuity signals ─────────────────
-        resets = r.xread({RESET_STREAM: last_reset_id}, count=20, block=0)
+        # A zero timeout blocks forever when no reset exists, starving frame
+        # consumption. Poll briefly so reset handling remains non-blocking.
+        resets = r.xread({RESET_STREAM: last_reset_id}, count=20, block=1)
         if resets:
             for _, entries in resets:
                 for msg_id, data in entries:
@@ -96,7 +99,15 @@ def run():
                     last_reset_id = msg_id
 
         # ── Read frames ───────────────────────────────────────────────────────
-        msgs = r.xreadgroup(GROUP, consumer, {IN_STREAM: ">"}, count=4, block=200)
+        try:
+            msgs = r.xreadgroup(GROUP, consumer, {IN_STREAM: ">"}, count=4, block=200)
+        except redis.exceptions.ResponseError as exc:
+            # Test-session cleanup removes streams/groups; recreate lazily
+            # when the next session publishes its first frame.
+            if "NOGROUP" in str(exc):
+                _ensure_group(r, IN_STREAM, GROUP)
+                continue
+            raise
         if not msgs:
             continue
 
@@ -162,6 +173,14 @@ def run():
                             frame_w=w_orig, frame_h=h_orig,
                         )
                         r.xadd(OUT_STREAM, event, maxlen=OUT_MAX, approximate=True)
+                        if etype in ("car", "motorcycle", "bus", "truck"):
+                            cx, cy = (l + r2) // 2, (t + b) // 2
+                            track_key = f"{TRACK_HASH_PREFIX}{cam_id}"
+                            r.hset(track_key, str(track.track_id), f"{cx}:{cy}:{pts_ms}")
+                            # Keep a short-lived PTS-indexed position so the
+                            # slower OCR worker can join the same source frame.
+                            r.hset(track_key, f"pts:{pts_ms}:{track.track_id}", f"{cx}:{cy}:{pts_ms}")
+                            r.expire(track_key, 10)
 
                 except Exception as e:
                     log.error(f"YOLO error: {e}")

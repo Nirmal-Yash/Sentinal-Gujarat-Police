@@ -42,7 +42,7 @@ export const api = {
     getActiveTestSession: ()       => req('/test/sessions/active'),
   getTestStatus: (id)            => req(`/test/sessions/${id}/status`),
   getTestCameras: (id)           => req(`/test/sessions/${id}/cameras`),
-  getTestResults: (id)           => req(`/test/sessions/${id}/results`),
+  getTestResults: (id, params = {}) => req(`/test/sessions/${id}/results?${new URLSearchParams(params)}`),
   closeTestSession: (id)         => req(`/test/sessions/${id}`, { method: 'DELETE' }),
   downloadTestResults: async (id) => {
     const token = localStorage.getItem('sentinel.jwt'); const res = await fetch(`${BASE}/test/sessions/${id}/results/export`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })

@@ -42,8 +42,10 @@ const TypeBadge = ({ type }) => {
 }
 
 // ─── Alert row ────────────────────────────────────────────────────────────────
-function AlertRow({ alert, onAck }) {
+function AlertRow({ alert, onAck, onOpenSearch }) {
   const prio = PRIO[alert.priority] || PRIO.MEDIUM
+  const ageMs = Date.now() - new Date(alert.created_at || (parseFloat(alert.timestamp || 0) * 1000)).getTime()
+  const escalated = !alert.acknowledged && Number.isFinite(ageMs) && ageMs > 5 * 60 * 1000
   const ts   = (() => {
     try {
       const d = alert.timestamp
@@ -65,6 +67,8 @@ function AlertRow({ alert, onAck }) {
       display: 'flex', gap: 8, padding: '8px 12px',
       borderBottom: '1px solid var(--border)',
       background: alert._new ? 'rgba(88,166,255,.04)' : 'transparent',
+      border: escalated ? '1px solid var(--high)' : 'none',
+      animation: escalated ? 'sentinel-alert-escalate 2s ease-in-out infinite' : 'none',
       transition: 'background 1.5s',
       alignItems: 'flex-start',
     }}>
@@ -82,10 +86,14 @@ function AlertRow({ alert, onAck }) {
           <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text)' }}>
             {TYPE_LABEL[alert.alert_type] || (alert.alert_type || '').replace(/_/g, ' ')}
           </span>
+          {alert._count > 1 && <span style={{ fontSize: 9, fontWeight: 800, color: '#fff', background: 'var(--text2)', borderRadius: 8, padding: '1px 5px' }}>×{alert._count}</span>}
           <span style={{ fontSize: 10, color: 'var(--text2)', marginLeft: 'auto', flexShrink: 0 }}>
             {ts}
           </span>
         </div>
+
+        {alert.details?.plate_text && <div style={{ display: 'inline-block', marginTop: 4, background: '#f5e642', color: '#000', fontFamily: 'monospace', fontWeight: 900, fontSize: 13, letterSpacing: 2, padding: '2px 10px', borderRadius: 4, border: '2px solid #222' }}>{alert.details.plate_text}</div>}
+        {alert.details?.global_track_id && <button onClick={() => onOpenSearch?.({ tab: 'track', query: alert.details.global_track_id })} style={{ display: 'block', fontSize: 10, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginTop: 3, textDecoration: 'underline' }}>View journey →</button>}
 
         {/* Subtitle */}
         <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 2, wordBreak: 'break-word' }}>
@@ -109,6 +117,8 @@ function AlertRow({ alert, onAck }) {
         )}
       </div>
 
+      {alert.cam_id && <img src={`/api/cameras/${alert.cam_id}/snapshot?t=${encodeURIComponent(alert.id || alert.alert_id || '')}`} alt="Alert camera snapshot" style={{ width: 100, height: 56, objectFit: 'cover', borderRadius: 4, flexShrink: 0, border: '1px solid var(--border)' }} onError={event => { event.currentTarget.style.display = 'none' }} />}
+
       {/* Ack button */}
       {!alert.acknowledged && (
         <button
@@ -130,12 +140,19 @@ function AlertRow({ alert, onAck }) {
 }
 
 // ─── Main AlertPanel ──────────────────────────────────────────────────────────
-export default function AlertPanel({ alerts, onAck, counts, collapsed = false, onToggle }) {
+export default function AlertPanel({ alerts, onAck, counts, collapsed = false, onToggle, onOpenSearch }) {
   const [filter, setFilter] = useState('ALL')
   const filters = ['ALL', 'HIGH', 'MEDIUM', 'LOW']
 
-  const visible = filter === 'ALL' ? alerts
-    : alerts.filter(a => a.priority === filter)
+  const grouped = (alerts || []).reduce((acc, alert) => {
+    const key = `${alert.alert_type || ''}|${alert.cam_id || ''}|${alert.details?.plate_text || alert.details?.watchlist_name || ''}`
+    if (!acc[key]) acc[key] = { ...alert, _count: 1 }
+    else acc[key]._count += 1
+    return acc
+  }, {})
+  const visible = Object.values(grouped)
+    .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
+    .filter(a => filter === 'ALL' || a.priority === filter)
 
   const unacked = (alerts || []).filter(a => !a.acknowledged).length
 
@@ -153,6 +170,7 @@ export default function AlertPanel({ alerts, onAck, counts, collapsed = false, o
       display: 'flex', flexDirection: 'column', height: '100%',
       background: 'var(--surface)', borderLeft: '1px solid var(--border)',
     }}>
+      <style>{'@keyframes sentinel-alert-escalate{0%,100%{border-color:var(--high)}50%{border-color:transparent}}'}</style>
       {/* Header */}
       <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -224,7 +242,7 @@ export default function AlertPanel({ alerts, onAck, counts, collapsed = false, o
           </div>
         ) : (
           visible.map((a, i) => (
-            <AlertRow key={a.alert_id || a.id || i} alert={a} onAck={onAck}/>
+            <AlertRow key={a.alert_id || a.id || i} alert={a} onAck={onAck} onOpenSearch={onOpenSearch}/>
           ))
         )}
       </div>

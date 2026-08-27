@@ -47,6 +47,9 @@ async def search_plate(
     db: AsyncSession = Depends(get_db),
 ):
     """Search durable vehicle sightings, not transient Redis detections."""
+    normalized = re.sub(r"[^A-Z0-9]", "", q.upper())
+    if len(normalized) < 3:
+        return {"query": q, "detections": [], "watchlist_hits": []}
     result = await db.execute(text("""
         SELECT s.id, s.camera_id AS cam_id, s.source_timestamp AS timestamp,
                s.normalized_plate AS plate_text, s.confidence, c.name AS cam_name,

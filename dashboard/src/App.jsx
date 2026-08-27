@@ -27,6 +27,7 @@ export default function App() {
   const [vehicleRoute,  setVehicleRoute]  = useState({ sightings: [], nonce: 0 })
   const [alertsCollapsed, setAlertsCollapsed] = useState(() => localStorage.getItem('sentinel.alerts.collapsed.v1') === 'true')
   const [showSearch,    setShowSearch]    = useState(false)
+  const [searchInit,   setSearchInit]   = useState(null)
   const [showWatchlist, setShowWatchlist] = useState(false)
   const [showOnboard,  setShowOnboard]    = useState(false)
   const [showVendors,  setShowVendors]    = useState(false)
@@ -293,11 +294,15 @@ export default function App() {
 
         {/* Collapse preserves the mounted alert feed and its WebSocket updates. */}
         <div style={{ width: alertsCollapsed ? 38 : 320, transition: 'width .18s ease', flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <AlertPanel alerts={alerts} onAck={testMode ? (() => {}) : ack} counts={counts} collapsed={alertsCollapsed} onToggle={toggleAlerts}/>
+          <AlertPanel alerts={alerts} onAck={testMode ? (() => {}) : ack} counts={counts} collapsed={alertsCollapsed} onToggle={toggleAlerts} onOpenSearch={async init => {
+            if (init?.tab === 'track' && init.query) {
+              try { const result = await api.searchTrack(init.query); locateRoute(result.sightings || []) } catch (error) { console.warn('journey lookup:', error) }
+            } else { setSearchInit(init); setShowSearch(true) }
+          }}/>
         </div>
       </div>
 
-      {showSearch    && <SearchModal    onClose={() => setShowSearch(false)} onViewCamera={openCamera} onLocateCamera={locateCamera} onLocateRoute={locateRoute}/>}
+      {showSearch    && <SearchModal    init={searchInit} testMode={testMode} testSession={testSession} onClose={() => { setShowSearch(false); setSearchInit(null) }} onViewCamera={openCamera} onLocateCamera={locateCamera} onLocateRoute={locateRoute}/>}
       {showWatchlist && <WatchlistModal onClose={() => setShowWatchlist(false)}/>}
       {showOnboard && <OnboardCameraModal onClose={() => setShowOnboard(false)} onSaved={onboard} onImport={importCameras}/>}
       {showVendors && <VendorModal onClose={() => setShowVendors(false)}/>}

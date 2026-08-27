@@ -23,7 +23,7 @@ const GridIcon = ({ n }) => <svg width="14" height="14" viewBox="0 0 12 12" fill
 // then the locally cached frame.
 function LivePlayer({ cam, muted = true, onLiveStatus, onAspectChange, fit = 'contain' }) {
   const videoRef = useRef(null), hlsRef = useRef(null), timerRef = useRef(null)
-  const [mode, setMode] = useState(cam.hls_url ? 'hls' : 'snapshot')
+  const [mode, setMode] = useState(cam.hls_url ? 'hls' : cam.stream_url ? 'stream' : 'snapshot')
   const [snapshot, setSnapshot] = useState(null), [live, setLive] = useState(false)
   const snapshotUrl = `/api/cameras/${cam.id}/snapshot`
   const advance = useCallback(from => { setMode(from === 'hls' && cam.stream_url ? 'stream' : from === 'stream' ? 'snapshot' : 'error'); setLive(false) }, [cam.stream_url])

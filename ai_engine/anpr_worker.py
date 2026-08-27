@@ -16,7 +16,11 @@ PREFIX     = "test:" if TEST_MODE else ""
 GROUP      = "test_anpr_workers" if TEST_MODE else "anpr_workers"
 IN_STREAM  = f"{PREFIX}raw_frames"
 OUT_STREAM = f"{PREFIX}detections"
+TRACK_HASH_PREFIX = f"{PREFIX}vehicle_tracks:"
+RESET_STREAM = f"{PREFIX}cam_resets"
 OUT_MAX    = 5000
+CONFIRM_FRAMES = int(os.getenv("ANPR_CONFIRM_FRAMES", "3"))
+TRACK_EXPIRY_SECS = float(os.getenv("ANPR_TRACK_EXPIRY_SECS", "30"))
 
 # Regex for Indian plates: GJxx AB 1234 or GJxxAB1234
 PLATE_RE = re.compile(
@@ -26,14 +30,29 @@ PLATE_RE = re.compile(
 VEHICLE_CLS = {2, 3, 5, 7}
 
 
-def preprocess_plate(crop):
-    """Enhance plate image for better OCR."""
+def preprocess_plate(crop: np.ndarray) -> np.ndarray:
+    """Enhance plate crops for varied outdoor lighting conditions."""
+    h, w = crop.shape[:2]
+    scale = max(200 / w, 60 / h, 1.0)
+    if scale > 1.0:
+        crop = cv2.resize(crop, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-    gray = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-    gray = cv2.GaussianBlur(gray, (3, 3), 0)
-    _, thresh = cv2.threshold(gray, 0, 255,
-                              cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    return thresh
+    gray = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(4, 4)).apply(gray)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    gray = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel)
+    return cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                  cv2.THRESH_BINARY, 15, 8)
+
+
+def _plate_candidates(frame, x1, y1, x2, y2):
+    """Generate crops covering common front/rear plate positions."""
+    bw, bh = x2 - x1, y2 - y1
+    candidates = [
+        (frame[y1 + int(bh * .65):y2, x1 + int(bw * .15):x2 - int(bw * .15)], (x1 + int(bw * .15), y1 + int(bh * .65), x2 - int(bw * .15), y2)),
+        (frame[y1 + int(bh * .80):y2, x1:x2], (x1, y1 + int(bh * .80), x2, y2)),
+        (frame[y1 + int(bh * .45):y1 + int(bh * .70), x1 + int(bw * .10):x2 - int(bw * .10)], (x1 + int(bw * .10), y1 + int(bh * .45), x2 - int(bw * .10), y1 + int(bh * .70))),
+    ]
+    return [(crop, bbox) for crop, bbox in candidates if crop.size and crop.shape[0] >= 10 and crop.shape[1] >= 20]
 
 
 def _ensure_group(r):
@@ -52,10 +71,32 @@ def run():
     r      = redis.from_url(REDIS_URL, decode_responses=False)
     _ensure_group(r)
     consumer = f"anpr-{uuid.uuid4().hex[:8]}"
+    plate_registry = {}
+    last_reset_id = b"0"
+    last_expiry = time.monotonic()
     log.info("ANPR worker ready.")
 
     while True:
-        msgs = r.xreadgroup(GROUP, consumer, {IN_STREAM: ">"}, count=2, block=500)
+        now = time.monotonic()
+        if now - last_expiry >= 10:
+            for key, state in list(plate_registry.items()):
+                if now - state["last_seen"] > TRACK_EXPIRY_SECS:
+                    del plate_registry[key]
+            last_expiry = now
+        resets = r.xread({RESET_STREAM: last_reset_id}, count=20, block=1)
+        for _, reset_entries in resets or []:
+            for reset_id, reset_data in reset_entries:
+                reset_cam = reset_data.get(b"cam_id", b"").decode()
+                for key in [key for key in plate_registry if key.startswith(f"{reset_cam}:")]:
+                    del plate_registry[key]
+                last_reset_id = reset_id
+        try:
+            msgs = r.xreadgroup(GROUP, consumer, {IN_STREAM: ">"}, count=2, block=500)
+        except redis.exceptions.ResponseError as exc:
+            if "NOGROUP" in str(exc):
+                _ensure_group(r)
+                continue
+            raise
         if not msgs:
             continue
 
@@ -86,44 +127,95 @@ def run():
                         x1,y1,x2,y2 = [int(v) for v in box.xyxy[0].tolist()]
                         if (x2 - x1) < 80 or (y2 - y1) < 60:
                             continue
-                        # plate is typically bottom 25% of vehicle
-                        py1 = y1 + int((y2 - y1) * 0.65)
-                        py2 = y2
-                        px1 = x1 + int((x2 - x1) * 0.15)
-                        px2 = x2 - int((x2 - x1) * 0.15)
-                        plate_crop = frame[py1:py2, px1:px2]
-                        if plate_crop.size == 0 or plate_crop.shape[0] < 10 or plate_crop.shape[1] < 20:
+                        # Spatially join this YOLO box with the latest DeepSORT
+                        # track published by the parallel YOLO worker.
+                        box_cx, box_cy = (x1 + x2) // 2, (y1 + y2) // 2
+                        track_id = None
+                        # ANPR and DeepSORT consume the same stream at
+                        # different speeds; allow motion between their latest
+                        # sampled frames while keeping the join camera-local.
+                        match_limit = max(120, int(max(w, h) * 0.35))
+                        target_pts = int(pts_ms or 0)
+                        for tid, value in r.hgetall(f"{TRACK_HASH_PREFIX}{cam_id}").items():
+                            try:
+                                tid_text = tid.decode() if isinstance(tid, bytes) else str(tid)
+                                parts = value.decode().split(":") if isinstance(value, bytes) else str(value).split(":")
+                                if tid_text.startswith("pts:"):
+                                    _, hash_pts, hash_track = tid_text.split(":", 2)
+                                    if abs(int(hash_pts) - target_pts) > 1000:
+                                        continue
+                                    tid_text = hash_track
+                                dist = abs(int(parts[0]) - box_cx) + abs(int(parts[1]) - box_cy)
+                                if dist < match_limit and (track_id is None or dist < best_dist):
+                                    best_dist, track_id = dist, tid_text
+                            except (ValueError, IndexError):
+                                continue
+
+                        best_plate, best_ocr_conf, best_raw, best_validated = None, 0.0, "", False
+                        best_bbox = (x1, y1, x2, y2)
+                        for crop, crop_bbox in _plate_candidates(frame, x1, y1, x2, y2):
+                            # Prefer the enhanced crop, but retain the source
+                            # crop as a fallback: thresholding can erase
+                            # low-contrast synthetic plates.
+                            ocr_res = reader.readtext(preprocess_plate(crop), detail=1, paragraph=False)
+                            if not ocr_res:
+                                ocr_res = reader.readtext(crop, detail=1, paragraph=False)
+                            ocr_rows = [row for row in ocr_res if isinstance(row, (list, tuple)) and len(row) >= 3]
+                            if not ocr_rows:
+                                continue
+                            raw_text = " ".join(str(row[1]) for row in ocr_rows).upper().strip()
+                            ocr_conf = max((float(row[2]) for row in ocr_rows), default=0.0)
+                            candidate = re.sub(r"[^A-Z0-9]", "", raw_text)
+                            match = PLATE_RE.search(raw_text)
+                            if match and (not best_validated or ocr_conf > best_ocr_conf):
+                                best_plate, best_ocr_conf, best_raw, best_validated = re.sub(r"[\s-]", "", match.group(1)).upper(), ocr_conf, raw_text, True
+                                best_bbox = crop_bbox
+                            elif not best_validated and len(candidate) >= 3 and (best_plate is None or ocr_conf > best_ocr_conf):
+                                best_plate, best_ocr_conf, best_raw = candidate[:15], ocr_conf, raw_text
+                                best_bbox = crop_bbox
+                        # Some wide-angle/4K views place the plate outside
+                        # the usual lower-third heuristic; use the complete
+                        # vehicle crop as a final OCR fallback.
+                        if not best_plate:
+                            vehicle_crop = frame[y1:y2, x1:x2]
+                            if vehicle_crop.size:
+                                ocr_res = reader.readtext(vehicle_crop, detail=1, paragraph=False)
+                                ocr_rows = [row for row in ocr_res if isinstance(row, (list, tuple)) and len(row) >= 3]
+                                if ocr_rows:
+                                    raw_text = " ".join(str(row[1]) for row in ocr_rows).upper().strip()
+                                    candidate_text = re.sub(r"[^A-Z0-9]", "", raw_text)
+                                    if len(candidate_text) >= 3:
+                                        best_plate = candidate_text[:15]
+                                        best_ocr_conf = max(float(row[2]) for row in ocr_rows)
+                                        best_raw = raw_text
+                        if not best_plate:
                             continue
 
-                        enhanced = preprocess_plate(plate_crop)
-                        # Paragraph mode may return non-standard/short rows on
-                        # some EasyOCR versions.  Parse only complete OCR rows
-                        # so a malformed candidate cannot stop this worker.
-                        ocr_res = reader.readtext(enhanced, detail=1, paragraph=False)
-                        ocr_rows = [row for row in ocr_res if isinstance(row, (list, tuple)) and len(row) >= 3]
-                        raw_text = " ".join(str(row[1]) for row in ocr_rows).upper().strip()
-                        ocr_conf = max((float(row[2]) for row in ocr_rows), default=0.0)
-                        match = PLATE_RE.search(raw_text)
-                        if match:
-                            plate = re.sub(r'[\s-]', '', match.group(1)).upper()
-                            plate_validated = True
-                        else:
-                            # Synthetic, non-standard, or partially occluded
-                            # OCR is retained as evidence but marked invalid.
-                            plate = re.sub(r'[^A-Z0-9]', '', raw_text)
-                            if len(plate) < 3:
-                                continue
-                            plate = plate[:15]
-                            plate_validated = False
                         detector_conf = float(box.conf[0])
-                        combined_conf = round(detector_conf * ocr_conf, 4)
+                        candidate = {"plate": best_plate, "confidence": best_ocr_conf, "raw": best_raw,
+                                     "validated": best_validated, "bbox": best_bbox, "detector_conf": detector_conf}
+                        if track_id:
+                            key = f"{cam_id}:{track_id}"
+                            state = plate_registry.setdefault(key, {"frame_count": 0, "last_seen": now, "event_fired": False, "candidates": {}})
+                            state["frame_count"] += 1; state["last_seen"] = now
+                            observed = state["candidates"].setdefault(best_plate, {**candidate, "score": 0.0})
+                            observed["score"] += best_ocr_conf
+                            if best_ocr_conf > observed["confidence"]: observed.update(candidate)
+                            if state["event_fired"] or state["frame_count"] < CONFIRM_FRAMES:
+                                continue
+                            candidate = max(state["candidates"].values(), key=lambda value: (value["score"], len(value["plate"])))
+                            state["event_fired"] = True
 
+                        plate, ocr_conf, raw_text = candidate["plate"], candidate["confidence"], candidate["raw"]
+                        detector_conf = candidate["detector_conf"]
+                        px1, py1, px2, py2 = candidate["bbox"]
+                        combined_conf = round(detector_conf * ocr_conf, 4)
                         event = detection_event(data, "plate", raw_ocr=raw_text, plate_text=plate,
                                                 ocr_conf=ocr_conf, detector_conf=detector_conf,
                                                 conf=combined_conf, vehicle_type=cls,
-                                                x1=px1, y1=py1, x2=px2, y2=py2)
+                                                track_id=track_id or "", x1=px1, y1=py1, x2=px2, y2=py2)
                         event[b"event_type"] = b"vehicle_sighting"
-                        event[b"plate_validated"] = b"1" if plate_validated else b"0"
+                        event[b"plate_validated"] = b"1" if candidate["validated"] else b"0"
                         r.xadd(OUT_STREAM, event, maxlen=OUT_MAX, approximate=True)
 
                 except Exception as e:
