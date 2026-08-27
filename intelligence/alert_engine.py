@@ -65,7 +65,7 @@ class AlertEngine:
 
         try:
             r.xadd(ALERT_STREAM, {
-                b"alert_id": alert_id.encode(), b"cam_id": payload.get("cam_id", "").encode(),
+                b"alert_id": alert_id.encode(), b"id": alert_id.encode(), b"cam_id": payload.get("cam_id", "").encode(),
                 b"alert_type": payload.get("alert_type", "").encode(),
                 b"priority": payload.get("priority", "MEDIUM").encode(),
                 b"confidence": str(payload.get("confidence", 0.0)).encode(),

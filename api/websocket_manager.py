@@ -63,6 +63,7 @@ async def redis_alert_consumer():
                         payload = {
                             "type":        "alert",
                             "alert_id":    data.get("alert_id", ""),
+                            "id":           data.get("id") or data.get("alert_id", ""),
                             "cam_id":      data.get("cam_id", ""),
                             "alert_type":  data.get("alert_type", ""),
                             "priority":    data.get("priority", "MEDIUM"),

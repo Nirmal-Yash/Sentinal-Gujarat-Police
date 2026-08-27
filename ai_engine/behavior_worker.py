@@ -3,13 +3,16 @@
 import os, base64, uuid, time, logging, collections
 import cv2, numpy as np
 import redis
+from event_schema import detection_event
 
 log = logging.getLogger("behavior_worker")
 
 REDIS_URL  = os.getenv("REDIS_URL", "redis://localhost:6379")
-GROUP      = "behavior_workers"
-IN_STREAM  = "raw_frames"
-OUT_STREAM = "detections"
+TEST_MODE  = os.getenv("TEST_MODE", "false").lower() == "true"
+PREFIX     = "test:" if TEST_MODE else ""
+GROUP      = "test_behavior_workers" if TEST_MODE else "behavior_workers"
+IN_STREAM  = f"{PREFIX}raw_frames"
+OUT_STREAM = f"{PREFIX}detections"
 OUT_MAX    = 5000
 
 # Thresholds
@@ -104,7 +107,6 @@ def run():
             for msg_id, data in entries:
                 try:
                     cam_id    = data[b"cam_id"].decode()
-                    timestamp = float(data[b"timestamp"])
                     frame     = _decode(data)
                     if frame is None:
                         continue
@@ -115,15 +117,9 @@ def run():
                     anomaly, score = states[cam_id].analyse(frame)
 
                     if anomaly and score > 0.2:
-                        r.xadd(OUT_STREAM, {
-                            b"detection_id":   str(uuid.uuid4()).encode(),
-                            b"cam_id":         cam_id.encode(),
-                            b"timestamp":      str(timestamp).encode(),
-                            b"detection_type": b"anomaly",
-                            b"anomaly_type":   anomaly.encode(),
-                            b"anomaly_score":  str(score).encode(),
-                            b"conf":           str(score).encode(),
-                        }, maxlen=OUT_MAX, approximate=True)
+                        r.xadd(OUT_STREAM, detection_event(
+                            data, "anomaly", anomaly_type=anomaly,
+                            anomaly_score=score, conf=score), maxlen=OUT_MAX, approximate=True)
 
                 except Exception as e:
                     log.error(f"Behavior error: {e}")

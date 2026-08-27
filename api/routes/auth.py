@@ -20,8 +20,9 @@ class UserCreate(Login):
 async def config():
     return {
         "auth_required": AUTH_REQUIRED,
-        # The dashboard only renders diagnostics when both guards are on.
-        "test_enabled": AUTH_REQUIRED and os.getenv("TEST_ENDPOINT_ENABLED", "false").lower() == "true",
+        # In local no-auth mode the principal is an in-process SUPERADMIN;
+        # production still requires an authenticated ADMIN/SUPERADMIN role.
+        "test_enabled": os.getenv("TEST_ENDPOINT_ENABLED", "false").lower() == "true",
     }
 
 @router.post("/login")

@@ -3,6 +3,7 @@ import os, time, threading, logging
 import numpy as np
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from sighting_store import normalize_plate
 
 log = logging.getLogger("watchlist")
 
@@ -27,7 +28,7 @@ class WatchlistEngine:
         with self._lock:
             # Plate match (fast exact substring)
             if plate_text:
-                plate_clean = plate_text.upper().replace(" ", "")
+                plate_clean = normalize_plate(plate_text)
                 for stored, entry in self._plates.items():
                     if stored in plate_clean or plate_clean in stored:
                         return {**entry, "score": 1.0}
@@ -70,7 +71,7 @@ class WatchlistEngine:
                     "priority":    row["alert_priority"] or "HIGH",
                 }
                 if row["plate_number"]:
-                    plates[row["plate_number"].upper().replace(" ", "")] = entry
+                    plates[normalize_plate(row["plate_number"])] = entry
                 if row["embedding"] is not None:
                     raw = bytes(row["embedding"])
                     emb = np.frombuffer(raw, dtype=np.float32).copy()

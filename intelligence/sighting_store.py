@@ -1,11 +1,14 @@
-"""Durable detection and vehicle-sighting persistence for the Redis pipeline."""
-import json
-import os
+"""Durable detection, vehicle journey and person re-identification persistence."""
+import json, os
 from datetime import datetime, timezone
-
 import psycopg2
 
 DB_URL = os.getenv("DATABASE_URL", "")
+
+
+def normalize_plate(value: str | None) -> str | None:
+    normalized = "".join(char for char in (value or "").upper() if char.isalnum())
+    return normalized or None
 
 
 def _text(data, key, default=""):
@@ -14,82 +17,75 @@ def _text(data, key, default=""):
 
 
 def _timestamp(data):
-    """Use camera source time where supplied; preserve ingestion fallback explicitly."""
     value = _text(data, "source_ts") or _text(data, "ingested_at")
     if not value:
         return datetime.now(timezone.utc), "worker_received"
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc), (
-            "source" if _text(data, "source_ts") else "ingested")
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc), ("source" if _text(data, "source_ts") else "ingested")
     except ValueError:
         return datetime.now(timezone.utc), "worker_received"
 
 
 def persist(data: dict):
-    """Persist before intelligence decisions; duplicate delivery is idempotent."""
+    """Persist an idempotent canonical event before alert/re-ID decisions."""
     detection_id = _text(data, "detection_id") or _text(data, "event_id")
     if not detection_id:
         return None
     camera_id = _text(data, "cam_id") or None
     timestamp, timestamp_origin = _timestamp(data)
-    plate = _text(data, "plate_text").upper().replace(" ", "").replace("-", "") or None
+    plate = normalize_plate(_text(data, "plate_text"))
     confidence = float(_text(data, "conf", "0") or 0)
-    bbox = {k: _text(data, k) for k in ("x1", "y1", "x2", "y2") if k.encode() in data}
-    metadata = {
-        "schema_version": _text(data, "schema_version", "1.0"),
-        "event_id": _text(data, "event_id", detection_id),
-        "source_timestamp_origin": timestamp_origin,
-        "raw_ocr": _text(data, "raw_ocr"),
-        "ocr_confidence": _text(data, "ocr_conf", ""),
-        "detector_confidence": _text(data, "detector_conf", ""),
-    }
+    vehicle_id = f"plate:{plate}" if plate else None
+    bbox = {key: _text(data, key) for key in ("x1", "y1", "x2", "y2") if key.encode() in data}
+    metadata = {"schema_version": _text(data, "schema_version", "1.0"), "event_id": _text(data, "event_id", detection_id),
+                "source_timestamp_origin": timestamp_origin, "raw_ocr": _text(data, "raw_ocr"),
+                "ocr_confidence": _text(data, "ocr_conf", ""), "detector_confidence": _text(data, "detector_conf", ""),
+                "plate_validated": _text(data, "plate_validated", "")}
     conn = psycopg2.connect(DB_URL)
     try:
         with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO detections
-                    (id, cam_id, timestamp, pts_ms, detection_type, bbox,
-                     confidence, track_id, global_track_id, plate_text, metadata)
-                VALUES (%s::uuid, %s::uuid, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s::jsonb)
-                ON CONFLICT (id) DO NOTHING
-            """, (detection_id, camera_id, timestamp, int(_text(data, "pts_ms", "0") or 0),
-                  _text(data, "detection_type"), json.dumps(bbox), confidence,
-                  _text(data, "track_id") or None,
-                  _text(data, "global_track_id") or None, plate, json.dumps(metadata)))
+            cur.execute("""INSERT INTO detections
+              (id,cam_id,timestamp,pts_ms,detection_type,bbox,confidence,track_id,global_track_id,plate_text,metadata)
+              VALUES (%s::uuid,%s::uuid,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s::jsonb) ON CONFLICT (id) DO NOTHING""",
+              (detection_id, camera_id, timestamp, int(_text(data, "pts_ms", "0") or 0), _text(data, "detection_type"),
+               json.dumps(bbox), confidence, _text(data, "track_id") or None, vehicle_id, plate, json.dumps(metadata)))
             if plate:
                 event_id = _text(data, "event_id", detection_id)
-                # Plate identity is intentionally separate from a local DeepSORT
-                # ID, enabling deterministic journey reconstruction across cameras.
-                global_vehicle_id = _text(data, "global_track_id") or f"plate:{plate}"
-                cur.execute("""
-                    INSERT INTO vehicle_sightings
-                      (event_id, detection_id, raw_plate, normalized_plate, camera_id,
-                       source_timestamp, confidence, vehicle_type, track_id,
-                       global_vehicle_id, model_versions)
-                    VALUES (%s::uuid, %s::uuid, %s, %s, %s::uuid, %s, %s, %s, %s, %s, %s::jsonb)
-                    ON CONFLICT (event_id) DO NOTHING
-                """, (event_id, detection_id, _text(data, "raw_ocr") or plate, plate, camera_id,
-                      timestamp, confidence, _text(data, "vehicle_type") or _text(data, "detection_type"),
-                      _text(data, "track_id") or None, global_vehicle_id,
-                      json.dumps({"detector": "yolov8", "ocr": "easyocr"})))
+                cur.execute("""INSERT INTO vehicle_sightings
+                  (event_id,detection_id,raw_plate,normalized_plate,camera_id,source_timestamp,confidence,vehicle_type,track_id,global_vehicle_id,model_versions)
+                  VALUES (%s::uuid,%s::uuid,%s,%s,%s::uuid,%s,%s,%s,%s,%s,%s::jsonb) ON CONFLICT (event_id) DO NOTHING""",
+                  (event_id, detection_id, _text(data, "raw_ocr") or plate, plate, camera_id, timestamp, confidence,
+                   _text(data, "vehicle_type") or _text(data, "detection_type"), _text(data, "track_id") or None,
+                   vehicle_id, json.dumps({"detector": "yolov8", "ocr": "easyocr"})))
+                cur.execute("""INSERT INTO global_tracks
+                  (id,entity_type,first_seen_cam,last_seen_cam,first_seen_at,last_seen_at,cam_history,plate_text,identity_source,last_confidence,metadata)
+                  VALUES (%s,'vehicle',%s::uuid,%s::uuid,%s,%s,jsonb_build_array(jsonb_build_object('camera_id',%s,'timestamp',%s)),%s,'plate_ocr',%s,%s::jsonb)
+                  ON CONFLICT (id) DO UPDATE SET last_seen_cam=EXCLUDED.last_seen_cam,last_seen_at=EXCLUDED.last_seen_at,
+                    cam_history=global_tracks.cam_history || EXCLUDED.cam_history,last_confidence=EXCLUDED.last_confidence,updated_at=NOW()""",
+                  (vehicle_id, camera_id, camera_id, timestamp, timestamp, camera_id, timestamp.isoformat(), plate, confidence,
+                   json.dumps({"identity_type": "plate_first"})))
         conn.commit()
     finally:
         conn.close()
-    return {"timestamp": timestamp, "plate": plate, "global_vehicle_id": f"plate:{plate}" if plate else None}
+    return {"timestamp": timestamp, "plate": plate, "global_vehicle_id": vehicle_id}
 
 
-def set_global_track_id(detection_id: str, global_track_id: str):
-    """Attach a FAISS result before the stream item is acknowledged.
-
-    The detection exists first so it remains durable if the tracker fails; this
-    small follow-up update makes the durable record queryable for a successful
-    cross-camera association without introducing a second event contract.
-    """
+def persist_person_track(detection_id: str, global_track_id: str, camera_id: str, timestamp: datetime, confidence: float, embedding):
+    """Store durable person identity/history; FAISS remains an acceleration index."""
+    vector = "[" + ",".join(str(float(value)) for value in embedding) + "]"
     conn = psycopg2.connect(DB_URL)
     try:
         with conn.cursor() as cur:
             cur.execute("UPDATE detections SET global_track_id=%s WHERE id=%s::uuid", (global_track_id, detection_id))
+            cur.execute("""INSERT INTO global_tracks
+              (id,entity_type,first_seen_cam,last_seen_cam,first_seen_at,last_seen_at,cam_history,embedding,identity_source,last_confidence,metadata)
+              VALUES (%s,'person',%s::uuid,%s::uuid,%s,%s,jsonb_build_array(jsonb_build_object('camera_id',%s,'timestamp',%s)),%s::vector,'faiss_face_embedding',%s,%s::jsonb)
+              ON CONFLICT (id) DO UPDATE SET last_seen_cam=EXCLUDED.last_seen_cam,last_seen_at=EXCLUDED.last_seen_at,
+                cam_history=global_tracks.cam_history || EXCLUDED.cam_history,embedding=EXCLUDED.embedding,
+                identity_source=EXCLUDED.identity_source,last_confidence=EXCLUDED.last_confidence,updated_at=NOW()""",
+              (global_track_id, camera_id, camera_id, timestamp, timestamp, camera_id, timestamp.isoformat(), vector,
+               confidence, json.dumps({"identity_type": "face_reidentification"})))
         conn.commit()
     finally:
         conn.close()

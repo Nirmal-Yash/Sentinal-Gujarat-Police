@@ -1,23 +1,41 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '../api/client'
 
-export default function TestDiagnosticsModal({ onClose }) {
-  const [session, setSession] = useState(null), [plate, setPlate] = useState('TEST0001'), [status, setStatus] = useState(null), [error, setError] = useState(''), [busy, setBusy] = useState(false)
-  const create = async () => { setBusy(true); setError(''); try { setSession(await api.createTestSession({ name: `Dashboard diagnostic ${new Date().toISOString()}` })) } catch (err) { setError(err.message) } finally { setBusy(false) } }
-  const inject = async () => { if (!session) return; setBusy(true); setError(''); try { await api.injectTestEvent(session.id, { camera_label: 'dashboard-synthetic-only', detection_type: 'plate', plate_text: plate, confidence: .91, create_alert: true }); setStatus(await api.getTestStatus(session.id)) } catch (err) { setError(err.message) } finally { setBusy(false) } }
-  const close = async () => { try { if (session) await api.closeTestSession(session.id) } finally { onClose() } }
-  return <div style={overlay} onClick={event => event.target === event.currentTarget && close()}><section style={modal}><header style={header}><div><b>Isolated test diagnostics</b><small style={sub}>Writes only to test tables and test Redis streams.</small></div><button onClick={close} style={closeButton}>x</button></header><div style={{ padding: 16 }}><p style={note}>This does not access live feeds, production alerts, detections, or watchlists.</p>{!session ? <button disabled={busy} onClick={create} style={primary}>{busy ? 'Creating...' : 'Start isolated session'}</button> : <><div style={sessionStyle}>Session active: {session.id}</div><label style={label}>Synthetic plate<input value={plate} maxLength="100" onChange={event => setPlate(event.target.value.toUpperCase())} style={input}/></label><button disabled={busy || !plate} onClick={inject} style={primary}>{busy ? 'Injecting...' : 'Inject test plate event'}</button>{status && <div style={result}>Session results: {status.detections} detections, {status.alerts} alerts. Production data affected: No.</div>}</>}{error && <p style={{ color: 'var(--red)', fontSize: 12 }}>{error}</p>}</div><footer style={footer}><button onClick={close} style={secondary}>Close session</button></footer></section></div>
+const bytes = n => n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`
+
+export default function TestDiagnosticsModal({ onClose, onStarted }) {
+  const [assets, setAssets] = useState([]), [selected, setSelected] = useState([]), [loop, setLoop] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState('')
+  useEffect(() => { api.getTestAssets().then(rows => { setAssets(rows); setSelected(rows.slice(0, 8).map(asset => asset.id)) }).catch(error => setError(error.message)) }, [])
+  const upload = async event => {
+    const files = Array.from(event.target.files || []); if (!files.length) return
+    setBusy(true); setError('')
+    try {
+      const uploaded = []
+      for (const file of files) uploaded.push(await api.uploadTestVideo(file))
+      setAssets(current => [...uploaded, ...current.filter(item => !uploaded.some(asset => asset.id === item.id))])
+      setSelected(current => [...new Set([...current, ...uploaded.map(asset => asset.id)])].slice(0, 8))
+    } catch (err) { setError(err.message || 'Video upload failed') } finally { setBusy(false); event.target.value = '' }
+  }
+  const toggle = id => setSelected(current => current.includes(id) ? current.filter(value => value !== id) : [...current, id].slice(0, 8))
+  const run = async () => {
+    if (!selected.length) return
+    setBusy(true); setError('')
+    try {
+      const session = await api.createTestSession({ name: `Video test ${new Date().toLocaleString('en-IN')}`, cameras: selected.map((asset_id, index) => ({ asset_id, camera_label: `Test Camera ${index + 1}`, loop })) })
+      onStarted(session); onClose()
+    } catch (err) { setError(err.message || 'Could not start test') } finally { setBusy(false) }
+  }
+  return <div style={overlay} onClick={event => event.target === event.currentTarget && onClose()}><section style={modal}><header style={header}><div><b>Isolated video test mode</b><small style={sub}>Uses only test streams, tables, and MediaMTX paths. Production CCTV is never read.</small></div><button onClick={onClose} style={close}>×</button></header><main style={{ padding: 16, overflowY: 'auto' }}><div style={uploadBox}><b>Upload test video</b><small>MP4, MKV, MOV, WebM, AVI or M4V · FFmpeg probes resolution (360p–2160p).</small><input type="file" accept="video/*,.mkv,.avi,.m4v" disabled={busy} onChange={upload}/></div><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '14px 0 8px' }}><b style={{ fontSize: 12 }}>Available local videos</b><label style={{ fontSize: 11, color: 'var(--text2)' }}><input type="checkbox" checked={loop} onChange={event => setLoop(event.target.checked)}/> Loop feeds</label></div><div style={assetGrid}>{assets.map(asset => <label key={asset.id} style={{ ...assetCard, borderColor: selected.includes(asset.id) ? 'var(--accent)' : 'var(--border)' }}><input type="checkbox" checked={selected.includes(asset.id)} onChange={() => toggle(asset.id)}/><span><b>{asset.display_name}</b><small>{asset.source_kind} · {asset.width || '?'}×{asset.height || '?'} · {asset.fps ? `${Number(asset.fps).toFixed(1)} FPS` : 'FPS N/A'} · {bytes(asset.size_bytes || 0)}</small></span></label>)}</div>{!assets.length && <p style={note}>No readable local video was found. Upload a test video to continue.</p>}{error && <p style={{ color: 'var(--red)', fontSize: 12 }}>{error}</p>}</main><footer style={footer}><span style={{ marginRight: 'auto', color: 'var(--text2)', fontSize: 11 }}>{selected.length}/8 feeds selected</span><button onClick={onClose} style={secondary}>Cancel</button><button disabled={busy || !selected.length} onClick={run} style={primary}>{busy ? 'Starting…' : 'Run test'}</button></footer></section></div>
 }
-const overlay = { position: 'fixed', inset: 0, zIndex: 3100, display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,.7)' }
-const modal = { width: 'min(500px,94vw)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 9, overflow: 'hidden' }
-const header = { display: 'flex', justifyContent: 'space-between', padding: '12px 14px', borderBottom: '1px solid var(--border)' }
+const overlay = { position: 'fixed', inset: 0, zIndex: 3100, display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,.72)' }
+const modal = { width: 'min(760px,95vw)', maxHeight: '88vh', display: 'flex', flexDirection: 'column', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 9, overflow: 'hidden' }
+const header = { display: 'flex', justifyContent: 'space-between', gap: 14, padding: '12px 14px', borderBottom: '1px solid var(--border)' }
 const sub = { display: 'block', marginTop: 3, color: 'var(--text2)', fontSize: 11, fontWeight: 400 }
-const closeButton = { border: 0, background: 'transparent', color: 'var(--text)', cursor: 'pointer', fontSize: 20 }
-const note = { marginTop: 0, color: 'var(--text2)', fontSize: 12, lineHeight: 1.5 }
-const label = { display: 'grid', gap: 5, margin: '12px 0', fontSize: 11, color: 'var(--text2)' }
-const input = { padding: '8px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)' }
-const primary = { padding: '8px 11px', border: 0, borderRadius: 5, background: 'var(--accent)', color: '#fff', cursor: 'pointer' }
+const close = { border: 0, background: 'transparent', color: 'var(--text)', cursor: 'pointer', fontSize: 22 }
+const uploadBox = { display: 'grid', gap: 6, padding: 12, border: '1px dashed var(--accent)', borderRadius: 7, color: 'var(--text2)', fontSize: 11 }
+const assetGrid = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 8 }
+const assetCard = { display: 'flex', gap: 8, padding: 9, border: '1px solid', borderRadius: 6, background: 'var(--surface2)', fontSize: 11, cursor: 'pointer' }
+const note = { color: 'var(--text2)', fontSize: 12 }
+const footer = { display: 'flex', gap: 8, alignItems: 'center', padding: 12, borderTop: '1px solid var(--border)' }
 const secondary = { padding: '7px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text)', cursor: 'pointer' }
-const footer = { display: 'flex', justifyContent: 'flex-end', padding: 12, borderTop: '1px solid var(--border)' }
-const sessionStyle = { padding: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', borderRadius: 4, background: 'var(--surface2)', color: 'var(--text2)', fontSize: 11 }
-const result = { marginTop: 12, padding: 9, borderRadius: 5, background: 'rgba(63,185,80,.10)', border: '1px solid rgba(63,185,80,.3)', color: 'var(--green)', fontSize: 12 }
+const primary = { ...secondary, border: 0, background: 'var(--accent)', color: '#fff' }

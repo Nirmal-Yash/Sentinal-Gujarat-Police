@@ -36,10 +36,18 @@ export const api = {
   createVendor:    (body)        => req('/vendors/', { method: 'POST', body: JSON.stringify(body) }),
   getVendorModels: (id)          => req(`/vendors/${id}/models`),
   createVendorModel: (id, body)  => req(`/vendors/${id}/models`, { method: 'POST', body: JSON.stringify(body) }),
-  createTestSession: (body)      => req('/test/sessions', { method: 'POST', body: JSON.stringify(body) }),
-  injectTestEvent: (id, body)    => req(`/test/sessions/${id}/events`, { method: 'POST', body: JSON.stringify(body) }),
+  getTestAssets: ()              => req('/test/assets'),
+  uploadTestVideo: (file)        => { const data = new FormData(); data.append('file', file); return req('/test/feeds/upload', { method: 'POST', body: data, headers: {} }) },
+    createTestSession: (body)      => req('/test/sessions', { method: 'POST', body: JSON.stringify(body) }),
+    getActiveTestSession: ()       => req('/test/sessions/active'),
   getTestStatus: (id)            => req(`/test/sessions/${id}/status`),
+  getTestCameras: (id)           => req(`/test/sessions/${id}/cameras`),
+  getTestResults: (id)           => req(`/test/sessions/${id}/results`),
   closeTestSession: (id)         => req(`/test/sessions/${id}`, { method: 'DELETE' }),
+  downloadTestResults: async (id) => {
+    const token = localStorage.getItem('sentinel.jwt'); const res = await fetch(`${BASE}/test/sessions/${id}/results/export`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`); return res.blob()
+  },
   downloadDetections: async ()   => {
     const token = localStorage.getItem('sentinel.jwt'); const res = await fetch(`${BASE}/reports/detections?format=csv`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`); return res.blob()

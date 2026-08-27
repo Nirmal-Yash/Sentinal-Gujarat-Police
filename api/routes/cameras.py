@@ -7,6 +7,7 @@ from models import Camera, CameraOut, CameraCreate
 from auth import require_authenticated, require_role, Principal
 from database import get_db
 import uuid, os, base64, csv, io, json
+from openpyxl import load_workbook
 from pydantic import ValidationError
 import redis as redis_lib
 
@@ -17,6 +18,15 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 def _validate_coordinates(body: CameraCreate):
     if (body.lat is None) != (body.lng is None):
         raise HTTPException(422, "latitude and longitude must be supplied together")
+
+
+def _audit_state(camera: Camera | None):
+    if camera is None:
+        return None
+    value = CameraOut.model_validate(camera).model_dump(mode="json")
+    for key in ("rtsp_url", "hls_url", "whep_url", "stream_url"):
+        value.pop(key, None)
+    return value
 
 
 async def _validate_vendor_model(body: CameraCreate, db: AsyncSession):
@@ -111,9 +121,10 @@ async def onboard_camera(body: CameraCreate, principal: Principal = Depends(requ
     if body.lat is not None:
         await db.execute(text("UPDATE cameras SET geom=ST_SetSRID(ST_MakePoint(:lng, :lat), 4326), updated_at=NOW() WHERE id=:id"),
                          {"id": str(camera.id), "lat": body.lat, "lng": body.lng})
-    await db.execute(text("""INSERT INTO camera_audit_log(camera_id, actor, action, after_value)
-        VALUES (CAST(:id AS uuid), :actor, 'create', CAST(:value AS jsonb))"""),
-        {"id": str(camera.id), "actor": principal.username, "value": '{"source":"manual_api"}'})
+    await db.refresh(camera)
+    await db.execute(text("""INSERT INTO camera_audit_log(camera_id, actor, action, before_value, after_value, correlation_id)
+        VALUES (CAST(:id AS uuid), :actor, 'create', NULL, CAST(:value AS jsonb), CAST(:correlation AS uuid))"""),
+        {"id": str(camera.id), "actor": principal.username, "value": json.dumps(_audit_state(camera)), "correlation": str(uuid.uuid4())})
     await db.commit()
     await db.refresh(camera)
     return camera
@@ -125,15 +136,27 @@ async def import_cameras_csv(
     db: AsyncSession = Depends(get_db),
 ):
     """Controlled Model-1 bulk onboarding; invalid rows are reported, never dropped."""
-    if not (file.filename or "").lower().endswith(".csv"):
-        raise HTTPException(415, "CSV is supported for this deployment; XLSX requires an approved parser dependency")
+    suffix = os.path.splitext(file.filename or "")[1].lower()
+    if suffix not in {".csv", ".xlsx"}:
+        raise HTTPException(415, "Upload a CSV or XLSX registry file")
     raw = await file.read()
     if len(raw) > 5 * 1024 * 1024:
-        raise HTTPException(413, "CSV import exceeds the 5 MiB PoC limit")
+        raise HTTPException(413, "Registry import exceeds the 5 MiB PoC limit")
     try:
-        rows = list(csv.DictReader(io.StringIO(raw.decode("utf-8-sig"))))
-    except UnicodeDecodeError as exc:
-        raise HTTPException(422, "CSV must be UTF-8 encoded") from exc
+        if suffix == ".csv":
+            rows = list(csv.DictReader(io.StringIO(raw.decode("utf-8-sig"))))
+        else:
+            sheet = load_workbook(io.BytesIO(raw), read_only=True, data_only=True).active
+            values = sheet.iter_rows(values_only=True)
+            headers = next(values, None)
+            if not headers:
+                rows = []
+            else:
+                header_names = [str(value).strip() if value is not None else "" for value in headers]
+                rows = [{header_names[index]: value for index, value in enumerate(row) if index < len(header_names) and header_names[index]}
+                        for row in values if any(value is not None and str(value).strip() for value in row)]
+    except (UnicodeDecodeError, ValueError, OSError) as exc:
+        raise HTTPException(422, "Registry file could not be parsed; CSV must be UTF-8 and XLSX must have a header row") from exc
     if not rows:
         raise HTTPException(422, "CSV contains no data rows")
 
@@ -169,6 +192,7 @@ async def import_cameras_csv(
             values = body.model_dump(exclude_none=True, exclude_unset=True)
             if existing and not source_supplied:
                 values.pop("source_system", None)
+            before_value = _audit_state(existing)
             async with db.begin_nested():
                 if existing:
                     # Imported coordinates never replace a manually verified point.
@@ -181,10 +205,12 @@ async def import_cameras_csv(
                     camera, action = Camera(**values), "bulk_create"
                     db.add(camera)
                 await db.flush()
-                await db.execute(text("""INSERT INTO camera_audit_log(camera_id, actor, action, after_value)
-                    VALUES (CAST(:id AS uuid), :actor, :action, CAST(:value AS jsonb))"""),
+                await db.refresh(camera)
+                await db.execute(text("""INSERT INTO camera_audit_log(camera_id, actor, action, before_value, after_value, correlation_id)
+                    VALUES (CAST(:id AS uuid), :actor, :action, CAST(:before AS jsonb), CAST(:after AS jsonb), CAST(:correlation AS uuid))"""),
                     {"id": str(camera.id), "actor": principal.username, "action": action,
-                     "value": json.dumps({"import_id": str(import_id), "stream_id": body.stream_id, "column_map": mapping})})
+                     "before": json.dumps(before_value), "after": json.dumps({**_audit_state(camera), "import_id": str(import_id), "column_map": mapping}),
+                     "correlation": str(import_id)})
             accepted += 1
         except (ValidationError, ValueError, TypeError, IntegrityError) as exc:
             errors.append({"row": row_number, "error": str(exc)})
@@ -203,14 +229,23 @@ async def list_camera_imports(limit: int = Query(20, ge=1, le=100), _: Principal
 
 
 @router.get("/export")
-async def export_cameras(db: AsyncSession = Depends(get_db)):
+async def export_cameras(profile: str = Query("registry", pattern="^(registry|health|audit)$"), db: AsyncSession = Depends(get_db)):
     """Export public registry metadata only; URLs/credentials are never exported."""
     result = await db.execute(select(Camera).where(Camera.status != 'deleted').order_by(Camera.stream_id))
-    headers = "id,stream_id,name,location,latitude,longitude,department,owner,camera_type,status,health_status\n"
+    if profile == "audit":
+        result = await db.execute(text("SELECT camera_id,actor,action,before_value,after_value,correlation_id,created_at FROM camera_audit_log ORDER BY created_at DESC"))
+        headers, values_rows = "camera_id,actor,action,before_value,after_value,correlation_id,created_at\n", result.mappings().all()
+        rows = [headers] + [",".join('"' + str(value or '').replace('"', '""') + '"' for value in row.values()) + "\n" for row in values_rows]
+        return Response("".join(rows), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=camera-audit.csv"})
+    headers = ("id,stream_id,name,location,latitude,longitude,coord_source,coord_confidence,department,owner,camera_type,status,health_status,maintenance_status,retention_days,analytics_capabilities,vendor_id,model_id\n"
+               if profile == "registry" else "id,stream_id,name,status,health_status,connectivity_status,last_frame_at,observed_at,source_fps,decode_fps,published_fps,reconnect_count,decode_failure_count\n")
     rows = [headers]
     for c in result.scalars():
-        values = [c.id, c.stream_id, c.name, c.location, c.lat, c.lng, c.department,
-                  c.owner_organization, c.camera_type, c.status, c.health_status]
+        values = ([c.id, c.stream_id, c.name, c.location, c.lat, c.lng, c.coord_source, c.coord_confidence, c.department,
+                   c.owner_organization, c.camera_type, c.status, c.health_status, c.maintenance_status, c.retention_days,
+                   c.analytics_capabilities, c.vendor_id, c.model_id] if profile == "registry" else
+                  [c.id, c.stream_id, c.name, c.status, c.health_status, c.connectivity_status, c.last_frame_at, c.observed_at,
+                   c.observed_source_fps, c.observed_decode_fps, c.observed_published_fps, c.reconnect_count, c.decode_failure_count])
         rows.append(",".join('"' + str(v or '').replace('"', '""') + '"' for v in values) + "\n")
     return Response("".join(rows), media_type="text/csv",
                     headers={"Content-Disposition": "attachment; filename=camera-registry.csv"})
@@ -218,13 +253,13 @@ async def export_cameras(db: AsyncSession = Depends(get_db)):
 
 @router.get("/geojson")
 async def cameras_geojson(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Camera).where(Camera.status != 'deleted').order_by(Camera.stream_id))
+    result = await db.execute(text("""SELECT id, stream_id, name, department, camera_type, status, health_status,
+        coord_source, coord_confidence, ST_AsGeoJSON(geom)::json AS geometry
+        FROM cameras WHERE status <> 'deleted' AND geom IS NOT NULL ORDER BY stream_id"""))
     return {"type": "FeatureCollection", "features": [
-        {"type": "Feature", "id": str(c.id), "geometry": {"type": "Point", "coordinates": [c.lng, c.lat]},
-         "properties": {"id": str(c.id), "name": c.name, "stream_id": c.stream_id,
-                        "department": c.department, "camera_type": c.camera_type,
-                        "status": c.status, "health_status": c.health_status}}
-        for c in result.scalars() if c.lat is not None and c.lng is not None
+        {"type": "Feature", "id": str(c["id"]), "geometry": json.loads(c["geometry"]) if isinstance(c["geometry"], str) else c["geometry"],
+         "properties": {key: c[key] for key in ("id", "name", "stream_id", "department", "camera_type", "status", "health_status", "coord_source", "coord_confidence")}}
+        for c in result.mappings()
     ]}
 
 

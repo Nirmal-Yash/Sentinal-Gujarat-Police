@@ -1,0 +1,8 @@
+# Local test media (never commit government or synthetic CCTV videos)
+/videos/
+/test_videos/
+
+# Generated Python and frontend artifacts
+__pycache__/
+*.py[cod]
+dashboard/dist/

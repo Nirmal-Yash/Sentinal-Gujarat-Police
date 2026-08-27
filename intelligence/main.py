@@ -8,6 +8,7 @@ log = logging.getLogger(__name__)
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 DB_URL    = os.getenv("DATABASE_URL", "")
+TEST_MODE = os.getenv("TEST_MODE", "false").lower() == "true"
 
 
 def wait_for_services():
@@ -28,10 +29,13 @@ def main():
     log.info("Intelligence engine starting …")
     wait_for_services()
 
+    if TEST_MODE:
+        return test_main()
+
     from cross_camera    import CrossCameraTracker
     from watchlist_engine import WatchlistEngine
     from alert_engine    import AlertEngine
-    from sighting_store  import persist, set_global_track_id
+    from sighting_store  import persist, persist_person_track, normalize_plate
 
     tracker   = CrossCameraTracker()
     watchlist = WatchlistEngine()
@@ -77,7 +81,7 @@ def main():
 
                     # ── Watchlist match (face or plate) ─────────────────
                     if dtype in ("face", "plate") and (emb is not None or b"plate_text" in data):
-                        plate = data.get(b"plate_text", b"").decode() or None
+                        plate = normalize_plate(data.get(b"plate_text", b"").decode() or None)
                         hit   = watchlist.match(emb, plate)
                         if hit:
                             alerter.fire(r, {
@@ -98,7 +102,8 @@ def main():
                     # ── Cross-camera tracking (face embeddings) ──────────
                     if dtype == "face" and emb is not None:
                         global_id = tracker.assign(cam_id, det_id, emb, ts)
-                        set_global_track_id(det_id, global_id)
+                        persist_person_track(det_id, global_id, cam_id, persisted["timestamp"],
+                                             float(data.get(b"conf", b"0") or 0), emb)
                         if tracker.is_new_camera(global_id, cam_id):
                             alerter.fire(r, {
                                 "detection_id": det_id,
@@ -132,6 +137,26 @@ def main():
                     log.error(f"Intelligence error: {e}", exc_info=True)
                 finally:
                     r.xack(STREAM, GROUP, msg_id)
+
+
+def test_main():
+    """Consume only test:detections and persist only test tables/streams."""
+    from test_sighting_store import persist
+    import redis, json, uuid
+    r = redis.from_url(REDIS_URL, decode_responses=False); stream, group = "test:detections", "test_intelligence"
+    try: r.xgroup_create(stream, group, id="$", mkstream=True)
+    except redis.exceptions.ResponseError: pass
+    consumer = f"test-intel-{uuid.uuid4().hex[:8]}"; log.info("Test intelligence ready — isolated streams only")
+    while True:
+        messages = r.xreadgroup(group, consumer, {stream: ">"}, count=20, block=500)
+        for _, entries in messages:
+            for message_id, data in entries:
+                try:
+                    outcome = persist(data)
+                    if outcome["alert_id"]:
+                        r.xadd("test:alerts", {b"alert_id": outcome["alert_id"].encode(), b"session_id": outcome["session_id"].encode(), b"detection_id": outcome["detection_id"].encode(), b"camera_label": outcome["camera_label"].encode(), b"priority": b"LOW", b"alert_type": b"test_plate_detected", b"test": b"true"}, maxlen=5000, approximate=True)
+                except Exception as exc: log.error("Test intelligence error: %s", exc, exc_info=True)
+                finally: r.xack(stream, group, message_id)
 
 
 if __name__ == "__main__":

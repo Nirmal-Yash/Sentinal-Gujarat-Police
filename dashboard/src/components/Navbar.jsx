@@ -43,7 +43,7 @@ const btn = {
   letterSpacing: .2,
 }
 
-export default function Navbar({ alertCount, onSearchOpen, onWatchlistOpen, onOnboardOpen, onVendorsOpen, onTestOpen, onReportExport, principal, onLogout, mapExpanded, onMapView, onGridView }) {
+export default function Navbar({ alertCount, onSearchOpen, onWatchlistOpen, onOnboardOpen, onVendorsOpen, onTestOpen, testMode, onReportExport, principal, onLogout, mapExpanded, onMapView, onGridView }) {
   const [time, setTime] = useState(new Date())
 
   useEffect(() => {
@@ -128,7 +128,7 @@ export default function Navbar({ alertCount, onSearchOpen, onWatchlistOpen, onOn
         <button style={btn} onClick={onVendorsOpen}>Vendors</button>
         <button style={btn} onClick={onReportExport}>Export detections</button>
       </>}
-      {principal?.role === 'SUPERADMIN' && onTestOpen && <button style={btn} onClick={onTestOpen}>Test diagnostics</button>}
+      {principal && ['ADMIN', 'SUPERADMIN'].includes(principal.role) && onTestOpen && <button style={{ ...btn, borderColor: testMode ? 'var(--accent)' : 'var(--border)', background: testMode ? 'var(--accent)22' : 'transparent', color: testMode ? 'var(--accent)' : 'var(--text)' }} onClick={onTestOpen}>{testMode ? 'Exit test mode' : 'Test mode'}</button>}
       {principal && <span style={{ padding: '4px 8px', borderRadius: 5, background: 'var(--surface2)', color: 'var(--text2)', fontSize: 10 }}>{principal.username} · {principal.role}</span>}
       {principal?.id && <button style={btn} onClick={onLogout}>Sign out</button>}
 

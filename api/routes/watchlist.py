@@ -5,6 +5,7 @@ from models import WatchlistEntry, WatchlistOut, WatchlistCreate
 from auth import require_authenticated, require_role, Principal
 from database import get_db
 import uuid
+import re
 
 router = APIRouter(prefix="/watchlist", tags=["watchlist"], dependencies=[Depends(require_authenticated)])
 
@@ -26,7 +27,7 @@ async def add_to_watchlist(body: WatchlistCreate, _: Principal = Depends(require
         name=body.name,
         entity_type=body.entity_type,
         description=body.description,
-        plate_number=body.plate_number.upper().replace(" ", "") if body.plate_number else None,
+        plate_number=re.sub(r"[^A-Z0-9]", "", body.plate_number.upper()) if body.plate_number else None,
         alert_priority=body.alert_priority.upper(),
     )
     db.add(entry)

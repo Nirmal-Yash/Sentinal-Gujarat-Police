@@ -6,6 +6,7 @@ from auth import require_authenticated
 from database import get_db
 from typing import Optional
 import uuid
+import re
 
 router = APIRouter(prefix="/search", tags=["search"], dependencies=[Depends(require_authenticated)])
 
@@ -17,6 +18,7 @@ async def search_cameras(
     db: AsyncSession = Depends(get_db),
 ):
     """Indexed registry search; deliberately returns a small read model."""
+    normalized = re.sub(r"[^A-Z0-9]", "", q.upper())
     result = await db.execute(text("""
         SELECT id, stream_id, name, location, lat, lng, hls_url, whep_url,
                ('https://live.corp8.cloud/stream/' || stream_id::text) AS stream_url, department,
@@ -54,7 +56,7 @@ async def search_plate(
         WHERE s.normalized_plate ILIKE :pat
         ORDER BY s.source_timestamp DESC
         LIMIT :limit
-    """), {"pat": f"%{q.upper().replace(' ','')}%", "limit": limit})
+    """), {"pat": f"%{normalized}%", "limit": limit})
     rows = result.mappings().all()
 
     # Also check watchlist
@@ -62,7 +64,7 @@ async def search_plate(
         SELECT id, name, description, alert_priority
         FROM watchlist
         WHERE plate_number ILIKE :pat AND is_active = TRUE
-    """), {"pat": f"%{q.upper().replace(' ','')}%"})
+    """), {"pat": f"%{normalized}%"})
     watchlist_hits = [dict(r) for r in wl_result.mappings().all()]
 
     return {
@@ -87,6 +89,12 @@ async def search_by_track(global_track_id: str,
         ORDER BY s.source_timestamp ASC
     """), {"tid": global_track_id})
     rows = [dict(r) for r in result.mappings().all()]
+    if not rows:
+        result = await db.execute(text("""SELECT d.id, d.cam_id, d.timestamp, d.detection_type,
+            d.confidence, d.global_track_id, c.name AS cam_name, c.lat, c.lng
+            FROM detections d JOIN cameras c ON c.id=d.cam_id
+            WHERE d.global_track_id=:tid ORDER BY d.timestamp ASC"""), {"tid": global_track_id})
+        rows = [dict(row) for row in result.mappings().all()]
     return {"global_track_id": global_track_id, "sightings": rows}
 
 

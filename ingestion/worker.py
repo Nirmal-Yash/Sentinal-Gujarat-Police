@@ -7,7 +7,7 @@ Ingestion Worker — Live RTSP compliance build
 • Treats decoder warnings as non-fatal
 • Syncs camera list from /api/ingest before starting
 """
-import os, sys, time, base64, logging, uuid
+import os, sys, time, base64, logging, uuid, threading
 from datetime import datetime, timezone
 from multiprocessing import Process
 
@@ -29,7 +29,7 @@ REDIS_URL   = os.getenv("REDIS_URL",   "redis://localhost:6379")
 DB_URL      = os.getenv("DATABASE_URL","")
 FRAME_FPS   = float(os.getenv("FRAME_FPS",  "3"))
 JPEG_Q      = int(os.getenv("JPEG_QUALITY", "70"))
-MAX_CAMS    = int(os.getenv("MAX_CONCURRENT_CAMERAS", "30"))
+MAX_CAMS    = int(os.getenv("MAX_CONCURRENT_CAMERAS", "50"))
 CATALOGUE_SYNC_INTERVAL = int(os.getenv("CATALOGUE_SYNC_INTERVAL", "300"))
 STREAM_KEY  = "raw_frames"
 STREAM_MAX  = 3000
@@ -67,20 +67,26 @@ def set_status(cam_id, status):
         log.warning(f"Status update failed: {e}")
 
 
-def update_runtime_observation(cam_id, width, height, fps, codec, status="active"):
-    """Keep measured stream observations separate from registry configuration."""
+def update_runtime_observation(cam_id, width, height, source_fps, decode_fps, published_fps, codec, status="active"):
+    """Persist source/decode/publish rates as distinct operational facts."""
     try:
         conn = psycopg2.connect(DB_URL)
         with conn.cursor() as cur:
             cur.execute("""
                 UPDATE cameras SET observed_width=%s, observed_height=%s,
-                    observed_fps=%s, observed_codec=%s, observed_at=NOW(),
+                    observed_fps=%s, observed_source_fps=%s, observed_decode_fps=%s,
+                    observed_published_fps=%s, observed_codec=%s, observed_at=NOW(),
                     last_frame_at=NOW(), last_seen_at=NOW(), status=%s,
                     health_status=CASE WHEN %s='active' THEN 'healthy' ELSE %s END,
                     connectivity_status=CASE WHEN %s='active' THEN 'connected' ELSE %s END,
                     updated_at=NOW()
                 WHERE id=%s
-            """, (width, height, fps, codec, status, status, status, status, str(cam_id)))
+            """, (width, height, source_fps, source_fps, decode_fps, published_fps,
+                  codec, status, status, status, status, status, str(cam_id)))
+            cur.execute("""INSERT INTO camera_health_observations
+                (camera_id, health_status, source_fps, decode_fps, published_fps, reconnect_count, decode_failure_count)
+                SELECT id, %s, %s, %s, %s, reconnect_count, decode_failure_count FROM cameras WHERE id=%s
+            """, (status, source_fps, decode_fps, published_fps, str(cam_id)))
         conn.commit(); conn.close()
     except Exception as e:
         log.warning(f"Runtime metadata update failed: {e}")
@@ -144,11 +150,14 @@ class CameraWorker:
         log.info(f"Starting {self.name} → {self.url}")
         set_status(self.cam_id, "active")
         cap         = self._open()
+        reported_fps = cap.get(cv2.CAP_PROP_FPS) if cap.isOpened() else 0.0
+        source_fps = reported_fps if 0 < reported_fps <= 120 else None
         last_t      = 0.0
         fail_streak = 0
         prev_pts    = None
         observed_started = time.monotonic()
         observed_frames  = 0
+        published_frames = 0
         last_health_write = 0.0
 
         while True:
@@ -161,6 +170,8 @@ class CameraWorker:
                     cap.release()
                     set_status(self.cam_id, "reconnecting")
                     cap         = self._reconnect()
+                    reported_fps = cap.get(cv2.CAP_PROP_FPS) if cap.isOpened() else 0.0
+                    source_fps = reported_fps if 0 < reported_fps <= 120 else None
                     fail_streak = 0
                     prev_pts    = None  # reset PTS tracking after reconnect
                     set_status(self.cam_id, "active")
@@ -193,6 +204,7 @@ class CameraWorker:
             h, w = frame.shape[:2]
             try:
                 self._publish(self._encode(frame), pts_ms, w, h)
+                published_frames += 1
             except Exception as e:
                 log.error(f"{self.name}: publish error: {e}")
 
@@ -200,8 +212,9 @@ class CameraWorker:
             if now - last_health_write >= 30:
                 elapsed = max(now - observed_started, 0.001)
                 update_runtime_observation(
-                    self.cam_id, w, h, round(observed_frames / elapsed, 2), self.codec)
-                observed_started, observed_frames, last_health_write = now, 0, now
+                    self.cam_id, w, h, source_fps, round(observed_frames / elapsed, 2),
+                    round(published_frames / elapsed, 2), self.codec)
+                observed_started, observed_frames, published_frames, last_health_write = now, 0, 0, now
 
         cap.release()
         set_status(self.cam_id, "offline")
@@ -223,6 +236,11 @@ def start_camera_worker(cam: dict) -> Process:
 # ─── Main ─────────────────────────────────────────────────────────────────────
 def main():
     log.info("Ingestion service starting …")
+    # This isolated supervisor only watches test_sessions in the same
+    # PostgreSQL instance and launches a child decoder for a test session.
+    # It never reads or mutates the production camera registry/streams.
+    from test_runner import supervise as supervise_test_sessions
+    threading.Thread(target=supervise_test_sessions, name="test-session-supervisor", daemon=True).start()
 
     # 1. Sync camera catalogue first
     from catalogue_sync import sync as catalogue_sync

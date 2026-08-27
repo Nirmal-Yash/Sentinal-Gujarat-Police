@@ -9,24 +9,9 @@ hlsAlwaysRemux: yes
 hlsSegmentCount: 3
 hlsSegmentDuration: 1s
 
+# Test sessions publish only to /test/<session>/camN.  Production camera
+# paths are never declared here, so MediaMTX cannot replace live sources.
+pathDefaults:
+  source: publisher
 paths:
-  cam1:
-    source: file:///videos/cam1.mp4
-    sourceOnDemand: no
-    loop: yes
-  cam2:
-    source: file:///videos/cam2.mp4
-    sourceOnDemand: no
-    loop: yes
-  cam3:
-    source: file:///videos/cam3.mp4
-    sourceOnDemand: no
-    loop: yes
-  cam4:
-    source: file:///videos/cam4.mp4
-    sourceOnDemand: no
-    loop: yes
-  cam5:
-    source: file:///videos/cam5.mp4
-    sourceOnDemand: no
-    loop: yes
+  "~^test/": {}

@@ -5,14 +5,17 @@ import cv2, numpy as np
 import redis
 import easyocr
 from ultralytics import YOLO
+from event_schema import detection_event
 
 log = logging.getLogger("anpr_worker")
 
 REDIS_URL  = os.getenv("REDIS_URL", "redis://localhost:6379")
 CONF       = float(os.getenv("DETECTION_CONF", "0.4"))
-GROUP      = "anpr_workers"
-IN_STREAM  = "raw_frames"
-OUT_STREAM = "detections"
+TEST_MODE  = os.getenv("TEST_MODE", "false").lower() == "true"
+PREFIX     = "test:" if TEST_MODE else ""
+GROUP      = "test_anpr_workers" if TEST_MODE else "anpr_workers"
+IN_STREAM  = f"{PREFIX}raw_frames"
+OUT_STREAM = f"{PREFIX}detections"
 OUT_MAX    = 5000
 
 # Regex for Indian plates: GJxx AB 1234 or GJxxAB1234
@@ -81,50 +84,49 @@ def run():
                         if cls not in VEHICLE_CLS:
                             continue
                         x1,y1,x2,y2 = [int(v) for v in box.xyxy[0].tolist()]
+                        if (x2 - x1) < 80 or (y2 - y1) < 60:
+                            continue
                         # plate is typically bottom 25% of vehicle
                         py1 = y1 + int((y2 - y1) * 0.65)
                         py2 = y2
                         px1 = x1 + int((x2 - x1) * 0.15)
                         px2 = x2 - int((x2 - x1) * 0.15)
                         plate_crop = frame[py1:py2, px1:px2]
-                        if plate_crop.size == 0:
+                        if plate_crop.size == 0 or plate_crop.shape[0] < 10 or plate_crop.shape[1] < 20:
                             continue
 
                         enhanced = preprocess_plate(plate_crop)
-                        ocr_res  = reader.readtext(enhanced, detail=1, paragraph=True)
-                        raw_text = " ".join(str(row[1]) for row in ocr_res).upper().strip()
-                        ocr_conf = max((float(row[2]) for row in ocr_res), default=0.0)
-                        match    = PLATE_RE.search(raw_text)
-                        # Only a validated Indian registration can become a
-                        # vehicle sighting.  Unmatched OCR stays rejected.
-                        if not match:
-                            continue
-                        plate = re.sub(r'[\s-]', '', match.group(1)).upper()
+                        # Paragraph mode may return non-standard/short rows on
+                        # some EasyOCR versions.  Parse only complete OCR rows
+                        # so a malformed candidate cannot stop this worker.
+                        ocr_res = reader.readtext(enhanced, detail=1, paragraph=False)
+                        ocr_rows = [row for row in ocr_res if isinstance(row, (list, tuple)) and len(row) >= 3]
+                        raw_text = " ".join(str(row[1]) for row in ocr_rows).upper().strip()
+                        ocr_conf = max((float(row[2]) for row in ocr_rows), default=0.0)
+                        match = PLATE_RE.search(raw_text)
+                        if match:
+                            plate = re.sub(r'[\s-]', '', match.group(1)).upper()
+                            plate_validated = True
+                        else:
+                            # Synthetic, non-standard, or partially occluded
+                            # OCR is retained as evidence but marked invalid.
+                            plate = re.sub(r'[^A-Z0-9]', '', raw_text)
+                            if len(plate) < 3:
+                                continue
+                            plate = plate[:15]
+                            plate_validated = False
                         detector_conf = float(box.conf[0])
                         combined_conf = round(detector_conf * ocr_conf, 4)
 
-                        r.xadd(OUT_STREAM, {
-                            b"schema_version": b"1.0",
-                            b"event_id":       str(uuid.uuid4()).encode(),
-                            b"event_type":     b"vehicle_sighting",
-                            b"detection_id":   str(uuid.uuid4()).encode(),
-                            b"cam_id":         cam_id.encode(),
-                            b"stream_id":      stream_id,
-                            b"source_ts":      source_ts,
-                            b"ingested_at":    ingested_at,
-                            b"pts_ms":         pts_ms,
-                            b"detection_type": b"plate",
-                            b"raw_ocr":        raw_text.encode(),
-                            b"plate_text":     plate.encode(),
-                            b"ocr_conf":        str(ocr_conf).encode(),
-                            b"detector_conf":   str(detector_conf).encode(),
-                            b"conf":           str(combined_conf).encode(),
-                            b"vehicle_type":    str(cls).encode(),
-                            b"x1": str(x1).encode(), b"y1": str(y1).encode(),
-                            b"x2": str(x2).encode(), b"y2": str(y2).encode(),
-                        }, maxlen=OUT_MAX, approximate=True)
+                        event = detection_event(data, "plate", raw_ocr=raw_text, plate_text=plate,
+                                                ocr_conf=ocr_conf, detector_conf=detector_conf,
+                                                conf=combined_conf, vehicle_type=cls,
+                                                x1=px1, y1=py1, x2=px2, y2=py2)
+                        event[b"event_type"] = b"vehicle_sighting"
+                        event[b"plate_validated"] = b"1" if plate_validated else b"0"
+                        r.xadd(OUT_STREAM, event, maxlen=OUT_MAX, approximate=True)
 
                 except Exception as e:
-                    log.error(f"ANPR error: {e}")
+                    log.error(f"ANPR error: {e}", exc_info=True)
                 finally:
                     r.xack(IN_STREAM, GROUP, msg_id)

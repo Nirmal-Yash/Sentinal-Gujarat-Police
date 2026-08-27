@@ -56,10 +56,10 @@ export default function OnboardCameraModal({ onClose, onSaved, onImport }) {
       <section style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, .9fr) minmax(360px, 1.1fr)', minHeight: 0, flex: 1 }}>
         <div style={{ padding: 14, overflowY: 'auto' }}>
           <div style={{ marginBottom: 14, paddingBottom: 12, borderBottom: '1px solid var(--border)' }}>
-            <b style={{ fontSize: 12 }}>Bulk CSV import</b>
-            <label style={labelStyle}>Registry CSV<input type="file" accept=".csv,text/csv" onChange={event => setFile(event.target.files?.[0] || null)} style={input}/></label>
+            <b style={{ fontSize: 12 }}>Bulk registry import</b>
+            <label style={labelStyle}>Registry CSV or XLSX<input type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={event => setFile(event.target.files?.[0] || null)} style={input}/></label>
             <button type="button" disabled={busy || !file} onClick={importCsv} style={secondary}>Import and audit</button>
-            <small style={{ display: 'block', marginTop: 5, color: 'var(--text2)' }}>Supports common headers and decimal or DMS coordinates. Invalid rows are retained in the audit history.</small>
+            <small style={{ display: 'block', marginTop: 5, color: 'var(--text2)' }}>Supports CSV/XLSX, common headers, and decimal or DMS coordinates. Invalid rows are retained in the audit history.</small>
             {importResult && <small style={{ display: 'block', marginTop: 5, color: importResult.rejected_rows ? 'var(--medium)' : 'var(--green)' }}>Imported {importResult.accepted_rows}/{importResult.total_rows}; rejected {importResult.rejected_rows}.</small>}
           </div>
           {fields.map(([name, label, required]) => <label key={name} style={labelStyle}>{label}<input name={name} value={form[name]} required={required} onChange={change} style={input}/></label>)}

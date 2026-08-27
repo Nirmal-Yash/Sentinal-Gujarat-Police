@@ -112,7 +112,7 @@ function AlertRow({ alert, onAck }) {
       {/* Ack button */}
       {!alert.acknowledged && (
         <button
-          onClick={() => onAck(alert.alert_id || alert.id)}
+          onClick={() => onAck(alert.id || alert.alert_id)}
           style={{
             fontSize: 9, padding: '3px 7px', borderRadius: 4, flexShrink: 0,
             border: '1px solid var(--border)', background: 'transparent',

@@ -12,6 +12,7 @@ import cv2, numpy as np
 import redis
 from ultralytics import YOLO
 from deep_sort_realtime.deepsort_tracker import DeepSort
+from event_schema import detection_event
 
 log = logging.getLogger("yolo_worker")
 
@@ -20,10 +21,12 @@ YOLO_MODEL   = os.getenv("YOLO_MODEL",    "yolov8n.pt")
 CONF         = float(os.getenv("DETECTION_CONF", "0.4"))
 FRAME_SKIP   = int(os.getenv("FRAME_SKIP",   "3"))    # detect 1 in N frames
 YOLO_WORKERS = int(os.getenv("YOLO_WORKERS", "4"))
-GROUP        = "ai_workers"
-IN_STREAM    = "raw_frames"
-RESET_STREAM = "cam_resets"
-OUT_STREAM   = "detections"
+TEST_MODE    = os.getenv("TEST_MODE", "false").lower() == "true"
+PREFIX       = "test:" if TEST_MODE else ""
+GROUP        = "test_ai_workers" if TEST_MODE else "ai_workers"
+IN_STREAM    = f"{PREFIX}raw_frames"
+RESET_STREAM = f"{PREFIX}cam_resets"
+OUT_STREAM   = f"{PREFIX}detections"
 OUT_MAX      = 5000
 
 TARGET_CLS = {0: "person", 2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
@@ -153,26 +156,12 @@ def run():
                             continue
                         l,t,r2,b = [int(v) for v in track.to_ltrb()]
                         etype     = track.det_class or "person"
-                        det_id    = str(uuid.uuid4())
-
-                        r.xadd(OUT_STREAM, {
-                            b"schema_version": b"1.0",
-                            b"event_id":       det_id.encode(),
-                            b"event_type":     b"detection",
-                            b"detection_id":   det_id.encode(),
-                            b"cam_id":         cam_id.encode(),
-                            b"stream_id":      stream_id,
-                            b"source_ts":      source_ts,
-                            b"ingested_at":    ingested_at,
-                            b"pts_ms":         str(pts_ms).encode(),
-                            b"detection_type": etype.encode(),
-                            b"track_id":       str(track.track_id).encode(),
-                            b"conf":           str(track.det_conf or 0).encode(),
-                            b"x1": str(l).encode(), b"y1": str(t).encode(),
-                            b"x2": str(r2).encode(), b"y2": str(b).encode(),
-                            b"frame_w": str(w_orig).encode(),
-                            b"frame_h": str(h_orig).encode(),
-                        }, maxlen=OUT_MAX, approximate=True)
+                        event = detection_event(data, etype,
+                            track_id=track.track_id, conf=track.det_conf or 0,
+                            x1=l, y1=t, x2=r2, y2=b,
+                            frame_w=w_orig, frame_h=h_orig,
+                        )
+                        r.xadd(OUT_STREAM, event, maxlen=OUT_MAX, approximate=True)
 
                 except Exception as e:
                     log.error(f"YOLO error: {e}")

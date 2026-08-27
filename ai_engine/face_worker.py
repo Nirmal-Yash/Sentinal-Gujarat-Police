@@ -6,14 +6,17 @@ import redis
 from ultralytics import YOLO
 import insightface
 from insightface.app import FaceAnalysis
+from event_schema import detection_event
 
 log = logging.getLogger("face_worker")
 
 REDIS_URL  = os.getenv("REDIS_URL", "redis://localhost:6379")
 CONF       = float(os.getenv("DETECTION_CONF", "0.4"))
-GROUP      = "face_workers"
-IN_STREAM  = "raw_frames"
-OUT_STREAM = "detections"
+TEST_MODE  = os.getenv("TEST_MODE", "false").lower() == "true"
+PREFIX     = "test:" if TEST_MODE else ""
+GROUP      = "test_face_workers" if TEST_MODE else "face_workers"
+IN_STREAM  = f"{PREFIX}raw_frames"
+OUT_STREAM = f"{PREFIX}detections"
 OUT_MAX    = 5000
 
 PERSON_CLS = {0}   # COCO class 0 = person
@@ -52,7 +55,6 @@ def run():
             for msg_id, data in entries:
                 try:
                     cam_id    = data[b"cam_id"].decode()
-                    timestamp = float(data[b"timestamp"])
                     buf       = base64.b64decode(data[b"frame"])
                     arr       = np.frombuffer(buf, np.uint8)
                     frame     = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -77,16 +79,9 @@ def run():
                                 emb_norm.astype(np.float32).tobytes()
                             ).decode()
 
-                            r.xadd(OUT_STREAM, {
-                                b"detection_id":   str(uuid.uuid4()).encode(),
-                                b"cam_id":         cam_id.encode(),
-                                b"timestamp":      str(timestamp).encode(),
-                                b"detection_type": b"face",
-                                b"embedding":      emb_b64.encode(),
-                                b"conf":           str(float(face.det_score)).encode(),
-                                b"x1": str(x1).encode(), b"y1": str(y1).encode(),
-                                b"x2": str(x2).encode(), b"y2": str(y2).encode(),
-                            }, maxlen=OUT_MAX, approximate=True)
+                            r.xadd(OUT_STREAM, detection_event(
+                                data, "face", embedding=emb_b64, conf=float(face.det_score),
+                                x1=x1, y1=y1, x2=x2, y2=y2), maxlen=OUT_MAX, approximate=True)
 
                 except Exception as e:
                     log.error(f"Face error: {e}")

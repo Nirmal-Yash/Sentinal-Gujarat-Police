@@ -41,6 +41,9 @@ class Camera(Base):
     observed_width = Column(Integer)
     observed_height = Column(Integer)
     observed_fps = Column(Float)
+    observed_source_fps = Column(Float)
+    observed_decode_fps = Column(Float)
+    observed_published_fps = Column(Float)
     observed_at = Column(DateTime(timezone=True))
     health_status = Column(String(50), default="unknown")
     last_frame_at = Column(DateTime(timezone=True))
@@ -53,6 +56,8 @@ class Camera(Base):
     night_vision_capable = Column(Boolean, default=False)
     coord_source = Column(String(32), default="unknown")
     coord_confidence = Column(Float)
+    department_source = Column(String(32), default="unknown")
+    department_confidence = Column(Float)
     vendor_id = Column(UUID(as_uuid=True))
     model_id = Column(UUID(as_uuid=True))
 
@@ -72,7 +77,7 @@ class Camera(Base):
 
     @property
     def effective_fps(self):
-        return self.observed_fps if self.observed_fps is not None else self.fps
+        return self.observed_source_fps if self.observed_source_fps is not None else (self.observed_fps if self.observed_fps is not None else self.fps)
 
     @property
     def stream_url(self):
@@ -145,9 +150,11 @@ class CameraOut(BaseModel):
     source_system: str; storage_type: str; retention_days: Optional[int]
     analytics_capabilities: Any; maintenance_status: str
     observed_at: Optional[datetime]; last_frame_at: Optional[datetime]
+    observed_source_fps: Optional[float]; observed_decode_fps: Optional[float]; observed_published_fps: Optional[float]
     external_id: Optional[str]; installation_date: Optional[date]
     ptz_capable: bool; night_vision_capable: bool
     coord_source: str; coord_confidence: Optional[float]
+    department_source: str; department_confidence: Optional[float]
     vendor_id: Optional[uuid.UUID]; model_id: Optional[uuid.UUID]
     created_at: datetime; updated_at: datetime
 

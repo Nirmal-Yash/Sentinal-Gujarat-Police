@@ -8,5 +8,5 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY worker.py catalogue_sync.py stream_adapters.py ./
+COPY worker.py catalogue_sync.py stream_adapters.py test_runner.py ./
 CMD ["python", "-u", "worker.py"]

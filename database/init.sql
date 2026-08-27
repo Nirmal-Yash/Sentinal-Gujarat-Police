@@ -101,9 +101,6 @@ CREATE INDEX IF NOT EXISTS idx_track_last    ON global_tracks(last_seen_at DESC)
 -- Note: Cameras are NOT seeded here.
 -- They are populated at runtime by ingestion/catalogue_sync.py
 -- which calls http://live.corp8.cloud/api/ingest
-\i /migrations/001_model1_registry.sql
-\i /migrations/002_registry_onboarding_and_integrity.sql
-\i /migrations/003_clear_legacy_default_coordinates.sql
-\i /migrations/004_operations_security_and_test_isolation.sql
-\i /migrations/005_vendor_registry.sql
-\i /migrations/006_seed_verified_camera_coordinates.sql
+-- Versioned schema evolution is owned exclusively by api/migrations.py.
+-- This bootstrap file intentionally creates only the base tables/extensions
+-- required for a fresh PostgreSQL volume; it must not include migrations.

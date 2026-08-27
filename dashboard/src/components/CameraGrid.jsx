@@ -47,7 +47,9 @@ function LivePlayer({ cam, muted = true, onLiveStatus, onAspectChange, fit = 'co
   useEffect(() => {
     if (mode !== 'stream' || !cam.stream_url) return
     const video = videoRef.current
-    video.src = cam.stream_url
+    const token = cam.is_test ? localStorage.getItem('sentinel.jwt') : null
+    const streamUrl = token ? `${cam.stream_url}${cam.stream_url.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(token)}` : cam.stream_url
+    video.src = streamUrl
     const failed = () => advance('stream')
     const fallbackTimer = setTimeout(failed, 12000)
     video.addEventListener('error', failed)
@@ -63,7 +65,7 @@ function LivePlayer({ cam, muted = true, onLiveStatus, onAspectChange, fit = 'co
   }, [mode, snapshotUrl])
   const updateAspect = event => { const { videoWidth, videoHeight, naturalWidth, naturalHeight } = event.currentTarget; const w = videoWidth || naturalWidth, h = videoHeight || naturalHeight; if (w && h) onAspectChange?.(w / h) }
   return <div style={{ position: 'absolute', inset: 0, background: '#000' }}>
-    <video ref={videoRef} autoPlay muted={muted} playsInline onPlaying={() => setLive(true)} onWaiting={() => setLive(false)} onLoadedMetadata={updateAspect} style={{ position: 'absolute', inset: 0, display: mode === 'hls' || mode === 'stream' ? 'block' : 'none', width: '100%', height: '100%', objectFit: fit }}/>
+    <video ref={videoRef} autoPlay muted={muted} playsInline loop={cam.is_test} onPlaying={() => setLive(true)} onWaiting={() => setLive(false)} onLoadedMetadata={updateAspect} style={{ position: 'absolute', inset: 0, display: mode === 'hls' || mode === 'stream' ? 'block' : 'none', width: '100%', height: '100%', objectFit: fit }}/>
     {mode === 'snapshot' && snapshot && (
       <img src={snapshot} alt="Latest camera frame" onLoad={event => { setLive(true); updateAspect(event) }} onError={() => { setLive(false); advance('snapshot') }} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: fit }}/>
     )}
@@ -75,14 +77,28 @@ function LivePlayer({ cam, muted = true, onLiveStatus, onAspectChange, fit = 'co
 
 const iconButton = { width: 30, height: 30, display: 'grid', placeItems: 'center', background: 'rgba(88,166,255,.12)', border: '1px solid var(--accent)', borderRadius: 6, color: 'var(--accent)', cursor: 'pointer', padding: 0 }
 const hoverIconButton = { width: 25, height: 25, display: 'grid', placeItems: 'center', border: '1px solid rgba(255,255,255,.35)', borderRadius: 4, background: 'rgba(0,0,0,.7)', color: '#fff', cursor: 'pointer', padding: 0 }
-function PlateBadge({ analytics }) { return <div style={{ position: 'absolute', left: 8, bottom: 8, background: 'rgba(7,18,34,.9)', border: '1px solid #58a6ff', color: '#fff', borderRadius: 5, padding: '4px 6px', fontSize: 10 }}><b>ANPR</b> · {analytics.plate_text}{analytics.confidence != null && ` · ${Math.round(Number(analytics.confidence) * 100)}%`}</div> }
+function PlateOverlay({ analytics, cam }) {
+  const box = analytics?.bbox || {}, width = Number(cam.effective_width || cam.width), height = Number(cam.effective_height || cam.height)
+  const x1 = Number(box.x1), y1 = Number(box.y1), x2 = Number(box.x2), y2 = Number(box.y2)
+  if (!analytics?.plate_text || !width || !height || !Number.isFinite(x1 + y1 + x2 + y2) || x2 <= x1 || y2 <= y1) return null
+  const left = Math.max(0, Math.min(100, x1 / width * 100)), top = Math.max(0, Math.min(100, y1 / height * 100))
+  const boxWidth = Math.max(1, Math.min(100 - left, (x2 - x1) / width * 100)), boxHeight = Math.max(1, Math.min(100 - top, (y2 - y1) / height * 100))
+  return <div style={{ position: 'absolute', left: `${left}%`, top: `${top}%`, width: `${boxWidth}%`, height: `${boxHeight}%`, boxSizing: 'border-box', border: '2px solid #58a6ff', pointerEvents: 'none' }}><span style={{ position: 'absolute', left: -2, bottom: '100%', padding: '3px 5px', borderRadius: '3px 3px 0 0', background: '#58a6ff', color: '#071222', fontSize: 10, fontWeight: 800, lineHeight: 1, whiteSpace: 'nowrap' }}>{analytics.plate_text}</span></div>
+}
+function PlateBadge({ analytics }) {
+  const box = analytics?.bbox || {}, width = Number(analytics?.width), height = Number(analytics?.height)
+  const x1 = Number(box.x1), y1 = Number(box.y1), x2 = Number(box.x2), y2 = Number(box.y2)
+  if (!analytics?.plate_text || !width || !height || !Number.isFinite(x1 + y1 + x2 + y2) || x2 <= x1 || y2 <= y1) return null
+  const left = Math.max(0, Math.min(100, x1 / width * 100)), top = Math.max(0, Math.min(100, y1 / height * 100))
+  return <div style={{ position: 'absolute', left: `${left}%`, top: `${top}%`, border: '2px solid #58a6ff', pointerEvents: 'none' }}><span style={{ position: 'absolute', left: -2, bottom: '100%', padding: '3px 5px', borderRadius: '3px 3px 0 0', background: '#58a6ff', color: '#071222', fontSize: 10, fontWeight: 800, lineHeight: 1, whiteSpace: 'nowrap' }}>{analytics.plate_text}</span></div>
+}
 
 function FullscreenModal({ cam, alertCount, analytics, onClose, onLocate }) {
   const [aspect, setAspect] = useState(() => streamAspect(cam)), padded = String(cam.stream_id || '?').padStart(2, '0')
   useEffect(() => setAspect(streamAspect(cam)), [cam])
   useEffect(() => { const key = event => { if (event.key === 'Escape') onClose() }; window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key) }, [onClose])
   useEffect(() => { document.body.style.overflow = 'hidden'; return () => { document.body.style.overflow = '' } }, [])
-  return <div onClick={event => event.target === event.currentTarget && onClose()} style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,.88)', display: 'grid', placeItems: 'center', padding: 16 }}><section style={{ '--feed-aspect': aspect, width: 'min(92vw, calc(78vh * var(--feed-aspect)))', minWidth: 'min(92vw, 360px)', maxWidth: 1440, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', boxShadow: '0 32px 96px rgba(0,0,0,.8)' }}><header style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--surface2)', borderBottom: '1px solid var(--border)' }}><CamIcon size={16} color="var(--accent)"/><b style={{ fontSize: 14 }}>CAM-{padded}</b><span style={{ color: 'var(--text2)', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cam.name}</span><div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 7 }}>{alertCount > 0 && <span style={{ background: 'var(--high)', color: '#fff', borderRadius: 4, fontSize: 10, fontWeight: 700, padding: '2px 6px' }}>{alertCount} alerts</span>}<button onClick={() => onLocate(cam)} title="Locate on map" aria-label="Locate on map" style={iconButton}><MapPinIcon/></button><button onClick={onClose} title="Close live feed" aria-label="Close live feed" style={iconButton}><CloseIcon/></button></div></header><div style={{ position: 'relative', width: '100%', aspectRatio: aspect, maxHeight: '78vh', background: '#000' }}><LivePlayer cam={cam} muted={false} fit="contain" onAspectChange={setAspect}/>{analytics?.plate_text && <PlateBadge analytics={analytics}/>}</div><footer style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '7px 14px', background: 'var(--surface2)', borderTop: '1px solid var(--border)', color: 'var(--text2)', fontSize: 11 }}><span>{cam.location || 'Location not registered'}</span><span>{streamMetadata(cam)} · Esc to close</span></footer></section></div>
+  return <div onClick={event => event.target === event.currentTarget && onClose()} style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,.88)', display: 'grid', placeItems: 'center', padding: 16 }}><section style={{ '--feed-aspect': aspect, width: 'min(92vw, calc(78vh * var(--feed-aspect)))', minWidth: 'min(92vw, 360px)', maxWidth: 1440, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', boxShadow: '0 32px 96px rgba(0,0,0,.8)' }}><header style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--surface2)', borderBottom: '1px solid var(--border)' }}><CamIcon size={16} color="var(--accent)"/><b style={{ fontSize: 14 }}>CAM-{padded}</b><span style={{ color: 'var(--text2)', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cam.name}</span><div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 7 }}>{alertCount > 0 && <span style={{ background: 'var(--high)', color: '#fff', borderRadius: 4, fontSize: 10, fontWeight: 700, padding: '2px 6px' }}>{alertCount} alerts</span>}<button onClick={() => onLocate(cam)} title="Locate on map" aria-label="Locate on map" style={iconButton}><MapPinIcon/></button><button onClick={onClose} title="Close live feed" aria-label="Close live feed" style={iconButton}><CloseIcon/></button></div></header><div style={{ position: 'relative', width: '100%', aspectRatio: aspect, maxHeight: '78vh', background: '#000' }}><LivePlayer cam={cam} muted={false} fit="contain" onAspectChange={setAspect}/><PlateOverlay analytics={analytics} cam={cam}/></div><footer style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '7px 14px', background: 'var(--surface2)', borderTop: '1px solid var(--border)', color: 'var(--text2)', fontSize: 11 }}><span>{cam.location || 'Location not registered'}</span><span>{streamMetadata(cam)} · Esc to close</span></footer></section></div>
 }
 
 const CameraCard = memo(function CameraCard({ cam, alertCount, analytics, onFocus, onLocate, animDelay }) {
