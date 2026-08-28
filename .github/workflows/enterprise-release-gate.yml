@@ -67,6 +67,10 @@ jobs:
         run: |
           PGPASSWORD=sentinel psql -h 127.0.0.1 -U sentinel -d sentinel_ci -c 'CREATE DATABASE sentinel_release_ci;'
           DATABASE_URL=postgresql://sentinel:sentinel@localhost:5432/sentinel_release_ci MIGRATIONS_DIR=${{ github.workspace }}/database/migrations python -c "from api.migrations import apply_migrations; apply_migrations(); apply_migrations()"
+      - name: Run final business-flow gate
+        run: python scripts/final_integration_gate.py
+      - name: Run final repository gate
+        run: bash scripts/ci_final_verify.sh
       - name: Run ANPR regressions
         working-directory: ai_engine
         run: python -m unittest discover -s tests -p 'test_*.py' -v
