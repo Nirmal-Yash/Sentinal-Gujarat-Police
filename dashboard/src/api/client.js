@@ -58,6 +58,5 @@ export const api = {
   },
 }
 
-export const WS_URL =
-  import.meta.env.VITE_WS_URL ||
-  `ws://${window.location.host}/ws/alerts`
+const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+export const WS_URL = import.meta.env.VITE_WS_URL || `${wsProtocol}//${window.location.host}/ws/alerts`
