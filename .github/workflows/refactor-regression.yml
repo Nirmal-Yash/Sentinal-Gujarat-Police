@@ -57,10 +57,14 @@ jobs:
         run: |
           PGPASSWORD=sentinel psql -h 127.0.0.1 -U sentinel -d sentinel_ci -f database/init.sql
       - name: Compile core Python modules
-        run: >-
-          python -m py_compile
-          ai_engine/*.py ai_engine/tests/*.py
-          ingestion/*.py intelligence/*.py api/*.py api/routes/*.py
+        shell: bash
+        run: |
+          python -m py_compile ingestion/worker.py
+          python -m py_compile intelligence/evidence_capture.py
+          python -m py_compile api/routes/evidence.py
+          python -m py_compile api/routes/operations.py
+          python -m py_compile ai_engine/*.py ai_engine/tests/*.py
+          python -m py_compile intelligence/*.py api/*.py api/routes/*.py
       - name: Validate fresh migrations and idempotency
         shell: bash
         run: |
@@ -78,7 +82,11 @@ jobs:
         working-directory: intelligence
         run: python -m unittest test_sighting_store.py -v
       - name: Run P0 runtime persistence/alert E2E
-        run: python scripts/p0_runtime_e2e.py
+        shell: bash
+        run: |
+          PGPASSWORD=sentinel psql -h 127.0.0.1 -U sentinel -d sentinel_ci -c 'DROP DATABASE IF EXISTS sentinel_p0_ci WITH (FORCE);'
+          PGPASSWORD=sentinel psql -h 127.0.0.1 -U sentinel -d sentinel_ci -c 'CREATE DATABASE sentinel_p0_ci;'
+          DATABASE_URL=postgresql://sentinel:sentinel@localhost:5432/sentinel_p0_ci REDIS_URL=redis://localhost:6379 python scripts/p0_runtime_e2e.py
       - name: Run ANPR benchmark harness smoke test
         run: python scripts/anpr_benchmark.py scripts/fixtures/anpr_benchmark_smoke.csv --max-error-rate 0.50
       - name: Run 50-camera registry load smoke
@@ -86,7 +94,7 @@ jobs:
       - name: Run repository hygiene checks
         shell: bash
         run: |
-          ! git ls-files -z | grep -F -z -E '/__pycache__/|\.pyc$'
+          ! git ls-files -z | grep -F -z -E '(^|/)__pycache__/|\.pyc$'
           test -z "$(git ls-files .env)"
       - name: Validate refactor invariants
         run: python scripts/validate_refactor.py
