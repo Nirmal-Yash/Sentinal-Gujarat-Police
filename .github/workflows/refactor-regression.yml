@@ -56,6 +56,8 @@ jobs:
         run: python -m unittest test_sighting_store.py -v
       - name: Run P0 runtime persistence/alert E2E
         run: python scripts/p0_runtime_e2e.py
+      - name: Run ANPR benchmark harness smoke test
+        run: python scripts/anpr_benchmark.py scripts/fixtures/anpr_benchmark_smoke.csv --max-error-rate 0.50
       - name: Validate refactor invariants
         run: python scripts/validate_refactor.py
       - name: Validate Compose configuration
