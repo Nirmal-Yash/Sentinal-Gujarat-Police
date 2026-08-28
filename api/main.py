@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import engine, Session, get_db
 from auth import AUTH_REQUIRED, SECRET_KEY, principal_from_token
 from websocket_manager import manager, redis_alert_consumer
-from routes import cameras, alerts, watchlist, search, auth, reports, test, vendors, evidence
+from routes import cameras, alerts, watchlist, search, auth, reports, test, vendors, evidence, operations
 from migrations import apply_migrations
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [API][%(levelname)s] %(message)s")
@@ -36,7 +36,7 @@ app = FastAPI(title="Sentinel AI — Gujarat Police Innovation Challenge", versi
               description="AI-powered multi-camera surveillance platform", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 app.include_router(cameras.router); app.include_router(alerts.router); app.include_router(watchlist.router); app.include_router(search.router)
-app.include_router(auth.router); app.include_router(reports.router); app.include_router(test.router); app.include_router(vendors.router); app.include_router(evidence.router)
+app.include_router(auth.router); app.include_router(reports.router); app.include_router(test.router); app.include_router(vendors.router); app.include_router(evidence.router); app.include_router(operations.router)
 
 @app.websocket("/ws/alerts")
 async def ws_alerts(ws: WebSocket):
@@ -73,8 +73,7 @@ async def ready(db: AsyncSession = Depends(get_db)):
         import redis as redis_lib
         def ping_redis():
             client = redis_lib.from_url(REDIS_URL, decode_responses=True)
-            try:
-                return bool(client.ping())
+            try: return bool(client.ping())
             finally:
                 try: client.close()
                 except Exception: pass
