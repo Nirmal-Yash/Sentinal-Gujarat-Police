@@ -30,6 +30,9 @@ def _timestamp(data):
 
 
 def _upsert_journey(cur, vehicle_id: str, plate: str, timestamp: datetime, camera_id: str | None, confidence: float, sighting_id: str):
+    """Attach a sighting to the closest active journey for the plate, or create one.
+    A transaction advisory lock serializes assignment for the same canonical vehicle.
+    """
     cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (vehicle_id,))
     cur.execute("""INSERT INTO vehicle_identities
         (canonical_key,identity_type,normalized_plate,confidence,first_seen_at,last_seen_at,provenance)
@@ -42,22 +45,36 @@ def _upsert_journey(cur, vehicle_id: str, plate: str, timestamp: datetime, camer
         (vehicle_id, plate, confidence, timestamp, timestamp, json.dumps({"source": "anpr", "identity_method": "plate_confirmed"})))
     cur.execute("SELECT id FROM vehicle_identities WHERE canonical_key=%s", (vehicle_id,))
     identity_id = cur.fetchone()[0]
-    cur.execute("""SELECT id FROM vehicle_journeys
-                   WHERE vehicle_identity_id=%s AND ended_at >= %s
+
+    cur.execute("""SELECT id, started_at, ended_at FROM vehicle_journeys
+                   WHERE vehicle_identity_id=%s
+                     AND ended_at >= %s
+                     AND started_at <= %s
                    ORDER BY ended_at DESC LIMIT 1
-                   FOR UPDATE""", (identity_id, timestamp - timedelta(seconds=CROSS_CAM_WINDOW)))
+                   FOR UPDATE""", (identity_id, timestamp - timedelta(seconds=CROSS_CAM_WINDOW), timestamp + timedelta(seconds=CROSS_CAM_WINDOW)))
     journey = cur.fetchone()
     if journey:
-        journey_id = journey[0]
+        journey_id, previous_start, previous_end = journey
         cur.execute("""UPDATE vehicle_journeys
-                       SET ended_at=GREATEST(ended_at,%s), sighting_count=sighting_count+1,
+                       SET started_at=LEAST(started_at,%s),
+                           ended_at=GREATEST(ended_at,%s),
+                           sighting_count=sighting_count+1,
                            journey_confidence=GREATEST(COALESCE(journey_confidence,0),%s),
-                           updated_at=NOW() WHERE id=%s""", (timestamp, confidence, journey_id))
+                           status='ACTIVE', updated_at=NOW() WHERE id=%s""",
+                    (timestamp, timestamp, confidence, journey_id))
     else:
+        # Close stale active journeys before opening a new temporal segment.
+        cur.execute("""UPDATE vehicle_journeys
+                       SET status='COMPLETED', updated_at=NOW()
+                       WHERE vehicle_identity_id=%s AND status='ACTIVE'
+                         AND ended_at < %s""", (identity_id, timestamp - timedelta(seconds=CROSS_CAM_WINDOW)))
         cur.execute("""INSERT INTO vehicle_journeys
                        (vehicle_identity_id,started_at,ended_at,sighting_count,journey_confidence,status)
                        VALUES (%s,%s,%s,1,%s,'ACTIVE') RETURNING id""", (identity_id, timestamp, timestamp, confidence))
         journey_id = cur.fetchone()[0]
+
+    # Sequence is an insertion key; consumers must use source_timestamp for
+    # chronological ordering because delayed events can arrive out of order.
     cur.execute("SELECT COALESCE(MAX(sequence_no),0)+1 FROM vehicle_journey_sightings WHERE journey_id=%s", (journey_id,))
     sequence_no = cur.fetchone()[0]
     cur.execute("""INSERT INTO vehicle_journey_sightings(journey_id,sighting_id,sequence_no)
@@ -76,10 +93,16 @@ def persist(data: dict):
     confidence = max(0.0, min(1.0, float(_text(data, "conf", "0") or 0)))
     vehicle_id = f"plate:{plate}" if plate else None
     bbox = {key: _text(data, key) for key in ("x1", "y1", "x2", "y2") if key.encode() in data}
-    metadata = {"schema_version": _text(data, "schema_version", "1.0"), "event_id": _text(data, "event_id", detection_id),
-                "source_timestamp_origin": timestamp_origin, "raw_ocr": _text(data, "raw_ocr"),
-                "ocr_confidence": _text(data, "ocr_conf", ""), "detector_confidence": _text(data, "detector_conf", ""),
-                "plate_validated": _text(data, "plate_validated", ""), "anpr_consensus": _text(data, "anpr_consensus", "")}
+    metadata = {
+        "schema_version": _text(data, "schema_version", "1.0"),
+        "event_id": _text(data, "event_id", detection_id),
+        "source_timestamp_origin": timestamp_origin,
+        "raw_ocr": _text(data, "raw_ocr"),
+        "ocr_confidence": _text(data, "ocr_conf", ""),
+        "detector_confidence": _text(data, "detector_conf", ""),
+        "plate_validated": _text(data, "plate_validated", ""),
+        "anpr_consensus": _text(data, "anpr_consensus", "")
+    }
     conn = psycopg2.connect(DB_URL)
     try:
         with conn.cursor() as cur:
@@ -108,7 +131,7 @@ def persist(data: dict):
             if not inserted:
                 cur.execute("""SELECT id,journey_id FROM vehicle_sightings
                     WHERE camera_id=%s::uuid AND normalized_plate=%s AND observation_bucket=%s
-                    ORDER BY created_at ASC LIMIT 1""", (camera_id, plate, bucket))
+                    ORDER BY confidence DESC, created_at ASC LIMIT 1""", (camera_id, plate, bucket))
                 duplicate = cur.fetchone()
                 conn.commit()
                 return {"timestamp": timestamp, "plate": plate, "global_vehicle_id": vehicle_id,
