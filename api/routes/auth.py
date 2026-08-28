@@ -1,5 +1,4 @@
 import os
-from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -20,8 +19,6 @@ class UserCreate(Login):
 async def config():
     return {
         "auth_required": AUTH_REQUIRED,
-        # In local no-auth mode the principal is an in-process SUPERADMIN;
-        # production still requires an authenticated ADMIN/SUPERADMIN role.
         "test_enabled": os.getenv("TEST_ENDPOINT_ENABLED", "false").lower() == "true",
     }
 
@@ -35,6 +32,22 @@ async def login(body: Login, db: AsyncSession = Depends(get_db)):
     await db.execute(text("UPDATE users SET last_login=NOW() WHERE id=CAST(:uid AS uuid)"), {"uid": str(row["id"])})
     await db.commit()
     return {"access_token": token, "token_type": "bearer", "expires_at": expires, "user": {"id": str(row["id"]), "username": row["username"], "role": row["role"]}}
+
+@router.post("/refresh")
+async def refresh(principal: Principal = Depends(current_principal), db: AsyncSession = Depends(get_db)):
+    """Rotate an authenticated session without extending a revoked session."""
+    if not AUTH_REQUIRED:
+        return {"access_token": None, "token_type": "bearer", "expires_at": None, "user": {"id": principal.user_id, "username": principal.username, "role": principal.role}}
+    if not principal.user_id or not principal.jti:
+        raise HTTPException(401, "Refresh requires an authenticated session")
+    row = (await db.execute(text("SELECT username, role FROM users WHERE id=CAST(:uid AS uuid) AND is_active=TRUE"), {"uid": principal.user_id})).mappings().first()
+    if not row:
+        raise HTTPException(401, "User session is no longer valid")
+    token, new_jti, expires = issue_token(principal.user_id, row["username"], row["role"])
+    await db.execute(text("UPDATE user_sessions SET revoked=TRUE WHERE jti=CAST(:jti AS uuid)"), {"jti": principal.jti})
+    await db.execute(text("INSERT INTO user_sessions(user_id,jti,expires_at) VALUES(CAST(:uid AS uuid),CAST(:jti AS uuid),:expires)"), {"uid": principal.user_id, "jti": new_jti, "expires": expires})
+    await db.commit()
+    return {"access_token": token, "token_type": "bearer", "expires_at": expires, "user": {"id": principal.user_id, "username": row["username"], "role": row["role"]}}
 
 @router.post("/logout")
 async def logout(principal: Principal = Depends(current_principal), db: AsyncSession = Depends(get_db)):
