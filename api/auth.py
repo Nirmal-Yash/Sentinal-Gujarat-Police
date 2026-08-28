@@ -5,8 +5,8 @@ from datetime import datetime, timedelta, timezone
 import bcrypt, jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 from database import get_db
 
 AUTH_REQUIRED = os.getenv("AUTH_REQUIRED", "false").lower() == "true"
@@ -19,9 +19,9 @@ ROLE_PERMISSIONS = {
     "VIEWER": {"camera:read", "alert:read", "search:read", "evidence:read"},
     "OPERATOR": {"camera:read", "alert:read", "alert:operate", "search:read", "evidence:read", "evidence:create"},
     "INVESTIGATOR": {"camera:read", "alert:read", "alert:operate", "search:read", "report:read", "evidence:read", "evidence:create"},
-    "AUDITOR": {"camera:read", "alert:read", "search:read", "report:read", "evidence:read"},
-    "ADMIN": {"camera:read", "camera:write", "alert:read", "alert:operate", "search:read", "report:read", "evidence:read", "evidence:create", "registry:admin"},
-    "SUPERADMIN": {"camera:read", "camera:write", "alert:read", "alert:operate", "search:read", "report:read", "evidence:read", "evidence:create", "registry:admin", "system:admin"},
+    "AUDITOR": {"camera:read", "alert:read", "search:read", "report:read", "evidence:read", "audit:read"},
+    "ADMIN": {"camera:read", "camera:write", "alert:read", "alert:operate", "search:read", "report:read", "evidence:read", "evidence:create", "registry:admin", "audit:read"},
+    "SUPERADMIN": {"camera:read", "camera:write", "alert:read", "alert:operate", "search:read", "report:read", "evidence:read", "evidence:create", "registry:admin", "audit:read", "system:admin"},
 }
 
 @dataclass(frozen=True)
