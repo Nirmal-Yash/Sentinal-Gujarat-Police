@@ -14,14 +14,14 @@ SECRET_KEY = os.getenv("SECRET_KEY", "")
 ALGORITHM = "HS256"
 TOKEN_HOURS = int(os.getenv("JWT_TOKEN_HOURS", "8"))
 security = HTTPBearer(auto_error=False)
-ROLE_ORDER = {"VIEWER": 1, "OPERATOR": 2, "INVESTIGATOR": 3, "AUDITOR": 3, "ADMIN": 4, "SUPERADMIN": 5}
+ROLE_ORDER = {"VIEWER": 1, "OPERATOR": 2, "INVESTIGATOR": 2, "AUDITOR": 2, "ADMIN": 3, "SUPERADMIN": 4}
 ROLE_PERMISSIONS = {
     "VIEWER": {"camera:read", "alert:read", "search:read", "evidence:read"},
     "OPERATOR": {"camera:read", "alert:read", "alert:operate", "search:read", "evidence:read", "evidence:create"},
     "INVESTIGATOR": {"camera:read", "alert:read", "alert:operate", "search:read", "report:read", "evidence:read", "evidence:create"},
-    "AUDITOR": {"camera:read", "alert:read", "search:read", "report:read", "evidence:read", "audit:read"},
-    "ADMIN": {"camera:read", "camera:write", "alert:read", "alert:operate", "search:read", "report:read", "evidence:read", "evidence:create", "registry:admin", "audit:read"},
-    "SUPERADMIN": {"camera:read", "camera:write", "alert:read", "alert:operate", "search:read", "report:read", "evidence:read", "evidence:create", "registry:admin", "audit:read", "system:admin"},
+    "AUDITOR": {"camera:read", "alert:read", "search:read", "report:read", "evidence:read"},
+    "ADMIN": {"camera:read", "camera:write", "alert:read", "alert:operate", "search:read", "report:read", "evidence:read", "evidence:create", "registry:admin"},
+    "SUPERADMIN": {"camera:read", "camera:write", "alert:read", "alert:operate", "search:read", "report:read", "evidence:read", "evidence:create", "registry:admin", "system:admin"},
 }
 
 @dataclass(frozen=True)
@@ -49,7 +49,10 @@ def issue_token(user_id: str, username: str, role: str) -> tuple[str, str, datet
     return token, jti, expires
 
 
-async def current_principal(credentials: HTTPAuthorizationCredentials | None = Depends(security), db: AsyncSession = Depends(get_db)) -> Principal:
+async def current_principal(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+    db: AsyncSession = Depends(get_db),
+) -> Principal:
     if not AUTH_REQUIRED:
         return Principal(None, "local-development", "SUPERADMIN")
     if not credentials or credentials.scheme.lower() != "bearer":
@@ -58,6 +61,7 @@ async def current_principal(credentials: HTTPAuthorizationCredentials | None = D
 
 
 async def principal_from_token(token: str, db: AsyncSession) -> Principal:
+    """Validate a live JWT session for both HTTP and WebSocket transports."""
     try:
         claims = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id, jti, role = claims["sub"], claims["jti"], claims["role"]
@@ -66,7 +70,7 @@ async def principal_from_token(token: str, db: AsyncSession) -> Principal:
     row = (await db.execute(text("""SELECT u.username, u.role FROM users u JOIN user_sessions s ON s.user_id=u.id
         WHERE u.id=CAST(:uid AS uuid) AND s.jti=CAST(:jti AS uuid) AND u.is_active=TRUE
           AND s.revoked=FALSE AND s.expires_at > NOW()"""), {"uid": user_id, "jti": jti})).mappings().first()
-    if not row or row["role"] != role or role not in ROLE_PERMISSIONS:
+    if not row or row["role"] != role:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session is no longer valid")
     return Principal(user_id, row["username"], row["role"], jti)
 
