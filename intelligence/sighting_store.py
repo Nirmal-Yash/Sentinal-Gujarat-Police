@@ -18,6 +18,10 @@ def _text(data, key, default=""):
     return value.decode() if isinstance(value, bytes) else str(value)
 
 
+def _truthy(data, key):
+    return _text(data, key).strip().lower() in {"1", "true", "yes"}
+
+
 def _timestamp(data):
     value = _text(data, "source_ts") or _text(data, "ingested_at")
     if not value:
@@ -30,9 +34,7 @@ def _timestamp(data):
 
 
 def _upsert_journey(cur, vehicle_id: str, plate: str, timestamp: datetime, camera_id: str | None, confidence: float, sighting_id: str):
-    """Attach a sighting to the closest active journey for the plate, or create one.
-    A transaction advisory lock serializes assignment for the same canonical vehicle.
-    """
+    """Attach a confirmed sighting to the closest active journey for the plate."""
     cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (vehicle_id,))
     cur.execute("""INSERT INTO vehicle_identities
         (canonical_key,identity_type,normalized_plate,confidence,first_seen_at,last_seen_at,provenance)
@@ -63,7 +65,6 @@ def _upsert_journey(cur, vehicle_id: str, plate: str, timestamp: datetime, camer
                            status='ACTIVE', updated_at=NOW() WHERE id=%s""",
                     (timestamp, timestamp, confidence, journey_id))
     else:
-        # Close stale active journeys before opening a new temporal segment.
         cur.execute("""UPDATE vehicle_journeys
                        SET status='COMPLETED', updated_at=NOW()
                        WHERE vehicle_identity_id=%s AND status='ACTIVE'
@@ -73,8 +74,6 @@ def _upsert_journey(cur, vehicle_id: str, plate: str, timestamp: datetime, camer
                        VALUES (%s,%s,%s,1,%s,'ACTIVE') RETURNING id""", (identity_id, timestamp, timestamp, confidence))
         journey_id = cur.fetchone()[0]
 
-    # Sequence is an insertion key; consumers must use source_timestamp for
-    # chronological ordering because delayed events can arrive out of order.
     cur.execute("SELECT COALESCE(MAX(sequence_no),0)+1 FROM vehicle_journey_sightings WHERE journey_id=%s", (journey_id,))
     sequence_no = cur.fetchone()[0]
     cur.execute("""INSERT INTO vehicle_journey_sightings(journey_id,sighting_id,sequence_no)
@@ -83,7 +82,7 @@ def _upsert_journey(cur, vehicle_id: str, plate: str, timestamp: datetime, camer
 
 
 def persist(data: dict):
-    """Persist analytics and at most one business sighting per camera/plate/time bucket."""
+    """Persist all analytics, but create business sightings only from confirmed ANPR."""
     detection_id = _text(data, "detection_id") or _text(data, "event_id")
     if not detection_id:
         return None
@@ -112,9 +111,14 @@ def persist(data: dict):
               ON CONFLICT (id) DO NOTHING""",
               (detection_id, camera_id, timestamp, int(_text(data, "pts_ms", "0") or 0), _text(data, "detection_type"),
                json.dumps(bbox), confidence, _text(data, "track_id") or None, vehicle_id, plate, json.dumps(metadata)))
-            if not plate:
+            # Raw OCR/detection evidence remains searchable, but it must not
+            # become a vehicle identity, journey sighting or watchlist input
+            # until the ANPR worker has explicitly confirmed it.
+            is_confirmed = _truthy(data, "plate_validated") and (_truthy(data, "anpr_consensus") or not _text(data, "anpr_consensus"))
+            if not plate or not is_confirmed:
                 conn.commit()
-                return {"timestamp": timestamp, "plate": None, "global_vehicle_id": None, "duplicate": False}
+                return {"timestamp": timestamp, "plate": plate, "global_vehicle_id": None, "journey_id": None,
+                        "duplicate": False, "business_sighting": False}
 
             event_id = _text(data, "event_id", detection_id)
             bucket = timestamp.replace(second=(timestamp.second // SIGHTING_BUCKET_SECS) * SIGHTING_BUCKET_SECS, microsecond=0)
@@ -135,7 +139,8 @@ def persist(data: dict):
                 duplicate = cur.fetchone()
                 conn.commit()
                 return {"timestamp": timestamp, "plate": plate, "global_vehicle_id": vehicle_id,
-                        "journey_id": str(duplicate[1]) if duplicate and duplicate[1] else None, "duplicate": True}
+                        "journey_id": str(duplicate[1]) if duplicate and duplicate[1] else None,
+                        "duplicate": True, "business_sighting": True}
 
             sighting_id = str(inserted[0])
             journey_id = _upsert_journey(cur, vehicle_id, plate, timestamp, camera_id, confidence, sighting_id)
@@ -143,7 +148,8 @@ def persist(data: dict):
         conn.commit()
     finally:
         conn.close()
-    return {"timestamp": timestamp, "plate": plate, "global_vehicle_id": vehicle_id, "journey_id": journey_id, "duplicate": False}
+    return {"timestamp": timestamp, "plate": plate, "global_vehicle_id": vehicle_id, "journey_id": journey_id,
+            "duplicate": False, "business_sighting": True}
 
 
 def persist_person_track(detection_id: str, global_track_id: str, camera_id: str, timestamp: datetime, confidence: float, embedding):
