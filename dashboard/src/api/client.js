@@ -28,11 +28,13 @@ export const api = {
   addWatchlist:    (body)        => req('/watchlist/', { method: 'POST', body: JSON.stringify(body) }),
   removeWatchlist: (id)          => req(`/watchlist/${id}`, { method: 'DELETE' }),
   searchCameras:   (q, opts = {}) => req(`/search/cameras?q=${encodeURIComponent(q)}`, opts),
-  searchPlate:    (q, opts = {}) => req(`/search/plate?q=${encodeURIComponent(q)}`, opts),
+  searchPlate:     (q, opts = {}) => req(`/search/plate?q=${encodeURIComponent(q)}`, opts),
   searchTrack:     (id)          => req(`/search/track/${id}`),
   recentAlerts:    (m, p)        => req(`/search/alerts/recent?minutes=${m}${p ? `&priority=${p}` : ''}`),
   onboardCamera:   (body)        => req('/cameras/onboard', { method: 'POST', body: JSON.stringify(body) }),
   importCameras:   (file)        => { const data = new FormData(); data.append('file', file); return req('/cameras/imports/csv', { method: 'POST', body: data, headers: {} }) },
+  getCameraHealthHistory: (id, minutes = 60) => req(`/operations/cameras/${id}/health?minutes=${minutes}`),
+  getCameraHealthSummary: () => req('/operations/cameras/health/summary'),
   getVendors:      ()            => req('/vendors/'),
   createVendor:    (body)        => req('/vendors/', { method: 'POST', body: JSON.stringify(body) }),
   getVendorModels: (id)          => req(`/vendors/${id}/models`),
@@ -58,5 +60,6 @@ export const api = {
   },
 }
 
-const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-export const WS_URL = import.meta.env.VITE_WS_URL || `${wsProtocol}//${window.location.host}/ws/alerts`
+export const WS_URL =
+  import.meta.env.VITE_WS_URL ||
+  `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/alerts`
