@@ -2,9 +2,10 @@
 """Sentinel AI FastAPI backend."""
 import asyncio, os, logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from database import engine, Session
+from sqlalchemy import text
+from database import engine, Session, get_db
 from auth import AUTH_REQUIRED, principal_from_token
 from websocket_manager import manager, redis_alert_consumer
 from routes import cameras, alerts, watchlist, search, auth, reports, test, vendors, evidence
@@ -13,6 +14,7 @@ from migrations import apply_migrations
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [API][%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 CORS_ORIGINS = [item.strip() for item in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",") if item.strip()]
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -54,6 +56,26 @@ async def ws_alerts(ws: WebSocket):
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "sentinel-ai"}
+
+@app.get("/ready")
+async def ready(db = get_db):
+    """Dependency readiness: the process is live only when DB and Redis respond."""
+    checks = {"database": False, "redis": False}
+    try:
+        async for session in get_db():
+            await session.execute(text("SELECT 1"))
+            checks["database"] = True
+            break
+    except Exception as exc:
+        log.warning("Readiness database check failed: %s", exc)
+    try:
+        import redis as redis_lib
+        checks["redis"] = await asyncio.to_thread(lambda: bool(redis_lib.from_url(REDIS_URL, decode_responses=True).ping()))
+    except Exception as exc:
+        log.warning("Readiness Redis check failed: %s", exc)
+    if not all(checks.values()):
+        raise HTTPException(status_code=503, detail={"status": "not_ready", "checks": checks})
+    return {"status": "ready", "checks": checks}
 
 @app.get("/")
 async def root():
