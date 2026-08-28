@@ -35,6 +35,7 @@ export const api = {
   importCameras:   (file)        => { const data = new FormData(); data.append('file', file); return req('/cameras/imports/csv', { method: 'POST', body: data, headers: {} }) },
   getCameraHealthHistory: (id, minutes = 60) => req(`/operations/cameras/${id}/health?minutes=${minutes}`),
   getCameraHealthSummary: () => req('/operations/cameras/health/summary'),
+  getOperationsOverview: () => req('/operations/overview'),
   getVendors:      ()            => req('/vendors/'),
   createVendor:    (body)        => req('/vendors/', { method: 'POST', body: JSON.stringify(body) }),
   getVendorModels: (id)          => req(`/vendors/${id}/models`),
