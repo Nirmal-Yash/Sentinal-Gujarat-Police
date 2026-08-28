@@ -104,8 +104,8 @@ def main():
         b"event_id": str(uuid.uuid4()).encode(), b"detection_id": str(uuid.uuid4()).encode(),
         b"session_id": b"p0", b"cam_id": CAMERA_ID.encode(), b"stream_id": b"1",
         b"source_ts": event_time.isoformat().encode(), b"ingested_at": event_time.isoformat().encode(),
-        b"pts_ms": b"1000", b"detection_type": b"car", b"plate_text": b"GJ01AB1234",
-        b"raw_ocr": b"GJ 01 AB 1234", b"plate_validated": b"1", b"conf": b"0.93",
+        b"pts_ms": b"1000", b"detection_type": b"plate", b"plate_text": b"GJ01AB1234",
+        b"raw_ocr": b"GJ 01 AB 1234", b"plate_validated": b"1", b"anpr_consensus": b"1", b"conf": b"0.93",
         b"detector_conf": b"0.94", b"ocr_conf": b"0.92", b"track_id": b"t-1",
         b"x1": b"100", b"y1": b"100", b"x2": b"300", b"y2": b"250",
         b"event_type": b"detection", b"schema_version": b"1.0",
@@ -119,11 +119,16 @@ def main():
     second_latency_ms = (time.perf_counter() - second_start) * 1000
 
     after_sightings = counts()
-    assert first["duplicate"] is False, first
-    assert second["duplicate"] is True, second
+    assert first["duplicate"] is False and first["business_sighting"] is True, first
+    assert second["duplicate"] is True and second["business_sighting"] is True, second
     assert after_sightings["detections"] == 2, after_sightings
     assert after_sightings["vehicle_sightings"] == 1, after_sightings
     assert after_sightings["journeys"] == 1, after_sightings
+
+    invalid = persist({**payload, b"event_id": str(uuid.uuid4()).encode(), b"detection_id": str(uuid.uuid4()).encode(), b"plate_text": b"GARBAGE", b"plate_validated": b"0", b"anpr_consensus": b"0"})
+    after_invalid = counts()
+    assert invalid["business_sighting"] is False, invalid
+    assert after_invalid["vehicle_sightings"] == 1, after_invalid
 
     alert_payload = {
         "detection_id": str(uuid.UUID(payload[b"detection_id"].decode())),
@@ -145,6 +150,7 @@ def main():
         "detection_sighting_reconciliation": {
             "detections": final["detections"],
             "business_sightings": final["vehicle_sightings"],
+            "unconfirmed_plates_excluded_from_business_sightings": 1,
             "duplicate_business_sightings_suppressed": 1,
             "journeys": final["journeys"],
             "alerts": final["alerts"],
