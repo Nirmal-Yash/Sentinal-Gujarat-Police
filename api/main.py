@@ -2,9 +2,10 @@
 """Sentinel AI FastAPI backend."""
 import asyncio, os, logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 from database import engine, Session, get_db
 from auth import AUTH_REQUIRED, principal_from_token
 from websocket_manager import manager, redis_alert_consumer
@@ -58,14 +59,12 @@ async def health():
     return {"status": "ok", "service": "sentinel-ai"}
 
 @app.get("/ready")
-async def ready(db = get_db):
-    """Dependency readiness: the process is live only when DB and Redis respond."""
+async def ready(db: AsyncSession = Depends(get_db)):
+    """Dependency readiness: return 503 until DB and Redis respond."""
     checks = {"database": False, "redis": False}
     try:
-        async for session in get_db():
-            await session.execute(text("SELECT 1"))
-            checks["database"] = True
-            break
+        await db.execute(text("SELECT 1"))
+        checks["database"] = True
     except Exception as exc:
         log.warning("Readiness database check failed: %s", exc)
     try:
