@@ -31,6 +31,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://sentinel:sentinel@localhost:5432/sentinel_ci
       REDIS_URL: redis://localhost:6379
+      POSTGRES_PASSWORD: sentinel
       SECRET_KEY: ci-only-sentinel-signing-secret
       AUTH_REQUIRED: "true"
       EVIDENCE_ROOT: /tmp/sentinel-evidence
