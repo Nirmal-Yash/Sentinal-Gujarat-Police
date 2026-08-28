@@ -96,9 +96,14 @@ class CameraWorker:
         fields = {b"schema_version": b"1.0", b"event_id": str(uuid.uuid4()).encode(), b"event_type": b"frame", b"cam_id": self.cam_id.encode(), b"stream_id": str(self.sid).encode(), b"frame": frame_b64.encode(), b"source_ts": b"", b"ingested_at": now, b"pts_ms": str(int(pts_ms)).encode(), b"width": str(w).encode(), b"height": str(h).encode(), b"codec": self.codec.encode()}
         self.r.xadd(STREAM_KEY, fields, maxlen=STREAM_MAX, approximate=True); self.r.set(f"snapshot:{self.cam_id}", frame_b64.encode(), ex=10)
 
+    def _stream_fps(self, cap):
+        reported = cap.get(cv2.CAP_PROP_FPS) if cap.isOpened() else 0.0
+        return reported if 0 < reported <= 120 else None
+
     def run(self):
         log.info("Starting %s → %s", self.name, self.url)
         cap = self._open()
+        source_fps = self._stream_fps(cap)
         if not cap.isOpened():
             set_status(self.cam_id, "offline")
         else:
@@ -110,11 +115,9 @@ class CameraWorker:
                     set_status(self.cam_id, "offline")
                     cap = self._reconnect()
                     if cap is None:
-                        # Do not pin the camera worker in a permanent reconnect loop.
-                        # Report offline, wait briefly, then retry and remain isolated.
                         time.sleep(10)
                         continue
-                    set_status(self.cam_id, "active")
+                    source_fps = self._stream_fps(cap); set_status(self.cam_id, "active")
                     fail_streak = 0; prev_pts = None
                     observed_started = time.monotonic(); observed_frames = 0; published_frames = 0; last_health_write = 0.0
                 ret, frame = cap.read()
@@ -134,7 +137,7 @@ class CameraWorker:
                 except Exception as exc: log.error("%s: publish error: %s", self.name, exc)
                 if now - last_health_write >= 30:
                     elapsed = max(now - observed_started, 0.001)
-                    update_runtime_observation(self.cam_id, w, h, source_fps=None, decode_fps=round(observed_frames / elapsed, 2), published_fps=round(published_frames / elapsed, 2), codec=self.codec)
+                    update_runtime_observation(self.cam_id, w, h, source_fps, round(observed_frames / elapsed, 2), round(published_frames / elapsed, 2), self.codec)
                     observed_started = now; observed_frames = 0; published_frames = 0; last_health_write = now
         finally:
             if cap is not None: cap.release()
