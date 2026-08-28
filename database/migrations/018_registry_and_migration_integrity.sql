@@ -11,11 +11,14 @@ CREATE INDEX IF NOT EXISTS idx_cameras_coord_review
 CREATE INDEX IF NOT EXISTS idx_cameras_department_health
   ON cameras(department, health_status);
 
-ALTER TABLE vehicle_sightings
-  ADD CONSTRAINT IF NOT EXISTS vehicle_sighting_confidence_check
-  CHECK (confidence >= 0 AND confidence <= 1);
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'vehicle_sighting_confidence_check') THEN
+    ALTER TABLE vehicle_sightings ADD CONSTRAINT vehicle_sighting_confidence_check
+      CHECK (confidence >= 0 AND confidence <= 1);
+  END IF;
+END $$;
 
--- Guard against accidental duplicate numbered migrations in future deployments.
 CREATE TABLE IF NOT EXISTS migration_integrity_marker (
   id BOOLEAN PRIMARY KEY DEFAULT TRUE,
   checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
