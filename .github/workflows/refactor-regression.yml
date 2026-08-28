@@ -15,7 +15,28 @@ jobs:
         with:
           python-version: "3.11"
       - name: Compile core Python modules
-        run: python -m py_compile ai_engine/anpr_policy.py ai_engine/anpr_worker.py ai_engine/yolo_worker.py ai_engine/event_schema.py
+        run: >-
+          python -m py_compile
+          ai_engine/anpr_policy.py ai_engine/anpr_worker.py ai_engine/yolo_worker.py ai_engine/event_schema.py
+          ingestion/catalogue_sync.py ingestion/rtsp_worker.py
+          intelligence/main.py intelligence/anpr_policy.py intelligence/alert_engine.py intelligence/sighting_store.py
       - name: Run deterministic ANPR policy tests
         working-directory: ai_engine
         run: python -m unittest discover -s tests -p 'test_*.py' -v
+
+  dashboard-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Production build
+        run: npm run build
