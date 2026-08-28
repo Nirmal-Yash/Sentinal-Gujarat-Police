@@ -1,0 +1,1 @@
+Final CI acceptance requires all enterprise-release-gate and refactor-regression jobs to pass. Environment-dependent live-video and labeled ANPR accuracy validation remain separate release prerequisites.
