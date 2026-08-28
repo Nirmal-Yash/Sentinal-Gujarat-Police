@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from database import engine, Session
 from auth import AUTH_REQUIRED, principal_from_token
 from websocket_manager import manager, redis_alert_consumer
-from routes import cameras, alerts, watchlist, search, auth, reports, test, vendors
+from routes import cameras, alerts, watchlist, search, auth, reports, test, vendors, evidence
 from migrations import apply_migrations
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [API][%(levelname)s] %(message)s")
@@ -31,7 +31,7 @@ app = FastAPI(title="Sentinel AI — Gujarat Police Innovation Challenge", versi
               description="AI-powered multi-camera surveillance platform", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 app.include_router(cameras.router); app.include_router(alerts.router); app.include_router(watchlist.router); app.include_router(search.router)
-app.include_router(auth.router); app.include_router(reports.router); app.include_router(test.router); app.include_router(vendors.router)
+app.include_router(auth.router); app.include_router(reports.router); app.include_router(test.router); app.include_router(vendors.router); app.include_router(evidence.router)
 
 @app.websocket("/ws/alerts")
 async def ws_alerts(ws: WebSocket):
