@@ -11,6 +11,10 @@ DB_URL    = os.getenv("DATABASE_URL", "")
 TEST_MODE = os.getenv("TEST_MODE", "false").lower() == "true"
 
 
+def _is_true(value):
+    return str(value or "").strip().lower() in {"1", "true", "yes"}
+
+
 def wait_for_services():
     import redis, psycopg2
     for _ in range(40):
@@ -67,8 +71,6 @@ def main():
                     dtype  = data.get(b"detection_type", b"").decode()
                     cam_id = data.get(b"cam_id", b"").decode()
                     det_id = data.get(b"detection_id", str(uuid.uuid4()).encode()).decode()
-                    # Persist first: search, journeys and alerts must be based
-                    # on durable evidence rather than a transient stream item.
                     persisted = persist(data)
                     if persisted is None:
                         raise ValueError("detection missing a stable event id")
@@ -79,10 +81,16 @@ def main():
                         raw = base64.b64decode(data[b"embedding"])
                         emb = np.frombuffer(raw, dtype=np.float32).copy()
 
-                    # ── Watchlist match (face or plate) ─────────────────
-                    if dtype in ("face", "plate") and (emb is not None or b"plate_text" in data):
-                        plate = normalize_plate(data.get(b"plate_text", b"").decode() or None)
-                        hit   = watchlist.match(emb, plate)
+                    # Only a confirmed/validated plate is allowed to become a
+                    # business-level watchlist match or vehicle sighting.
+                    plate = normalize_plate(data.get(b"plate_text", b"").decode() or None)
+                    plate_validated = _is_true(data.get(b"plate_validated", b"").decode())
+                    plate_consensus = _is_true(data.get(b"anpr_consensus", b"").decode())
+                    plate_confirmed = dtype == "plate" and plate_validated and (plate_consensus or not data.get(b"anpr_consensus"))
+
+                    # ── Watchlist match (face or confirmed plate) ────────
+                    if (dtype == "face" and emb is not None) or plate_confirmed:
+                        hit = watchlist.match(emb if dtype == "face" else None, plate if plate_confirmed else None)
                         if hit:
                             alerter.fire(r, {
                                 "detection_id": det_id,
@@ -91,10 +99,11 @@ def main():
                                 "priority":     hit.get("priority", "HIGH"),
                                 "confidence":   hit.get("score", 0.9),
                                 "entity_type":  dtype,
+                                "event_timestamp": ts,
                                 "details": {
                                     "watchlist_name": hit.get("name"),
                                     "match_type":     dtype,
-                                    "plate_text":     plate,
+                                    "plate_text":     plate if plate_confirmed else None,
                                     "description":    hit.get("description", ""),
                                 },
                             })
@@ -112,6 +121,7 @@ def main():
                                 "priority":     "MEDIUM",
                                 "confidence":   0.75,
                                 "entity_type":  "person",
+                                "event_timestamp": ts,
                                 "details": {
                                     "global_track_id": global_id,
                                     "message": f"Entity re-identified on camera {cam_id}",
@@ -130,6 +140,7 @@ def main():
                             "priority":     prio,
                             "confidence":   score,
                             "entity_type":  "unknown",
+                            "event_timestamp": ts,
                             "details":      {"anomaly_type": atype, "score": score},
                         })
 
@@ -142,7 +153,7 @@ def main():
 def test_main():
     """Consume only test:detections and persist only test tables/streams."""
     from test_sighting_store import persist
-    import redis, json, uuid
+    import redis, uuid
     r = redis.from_url(REDIS_URL, decode_responses=False); stream, group = "test:detections", "test_intelligence"
     try: r.xgroup_create(stream, group, id="$", mkstream=True)
     except redis.exceptions.ResponseError: pass
