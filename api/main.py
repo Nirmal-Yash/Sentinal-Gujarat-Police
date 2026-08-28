@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import engine, Session, get_db
-from auth import AUTH_REQUIRED, principal_from_token
+from auth import AUTH_REQUIRED, SECRET_KEY, principal_from_token
 from websocket_manager import manager, redis_alert_consumer
 from routes import cameras, alerts, watchlist, search, auth, reports, test, vendors, evidence
 from migrations import apply_migrations
@@ -20,6 +20,8 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     apply_migrations()
+    if AUTH_REQUIRED and (not SECRET_KEY or SECRET_KEY == "sentinel-change-in-production"):
+        raise RuntimeError("AUTH_REQUIRED=true requires a non-default SECRET_KEY")
     task = asyncio.create_task(redis_alert_consumer())
     log.info("API ready; schema owned by versioned migrations.")
     yield
@@ -69,7 +71,14 @@ async def ready(db: AsyncSession = Depends(get_db)):
         log.warning("Readiness database check failed: %s", exc)
     try:
         import redis as redis_lib
-        checks["redis"] = await asyncio.to_thread(lambda: bool(redis_lib.from_url(REDIS_URL, decode_responses=True).ping()))
+        def ping_redis():
+            client = redis_lib.from_url(REDIS_URL, decode_responses=True)
+            try:
+                return bool(client.ping())
+            finally:
+                try: client.close()
+                except Exception: pass
+        checks["redis"] = await asyncio.to_thread(ping_redis)
     except Exception as exc:
         log.warning("Readiness Redis check failed: %s", exc)
     if not all(checks.values()):
