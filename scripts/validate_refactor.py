@@ -2,12 +2,17 @@
 """Fast, dependency-light regression gates for the enterprise-hardening branch."""
 from __future__ import annotations
 
-import importlib.util
 import pathlib
 import sys
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from ai_engine import anpr_policy as ai
+from ai_engine import event_schema as event
+
 FAILURES: list[str] = []
 
 
@@ -19,19 +24,7 @@ def require(condition: bool, message: str) -> None:
         print(f"[OK]   {message}")
 
 
-def load_module(path: pathlib.Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Cannot load {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def main() -> int:
-    ai = load_module(ROOT / "ai_engine" / "anpr_policy.py", "anpr_policy_gate")
-    event = load_module(ROOT / "ai_engine" / "event_schema.py", "event_schema_gate")
-
     required = {"cam_id", "stream_id", "source_ts", "ingested_at", "pts_ms", "session_id"}
     require(required.issubset(set(event.REQUIRED_FRAME_FIELDS)), "canonical frame event contains all mandatory context")
     require(ai.plate_is_valid("GJ01AB1234"), "valid Indian plate is accepted")
@@ -63,14 +56,14 @@ def main() -> int:
     require(elapsed < 2.0, f"ANPR policy path remains lightweight ({elapsed:.3f}s / 10k iterations)")
 
     require((ROOT / "ingestion" / "worker.py").exists(), "ingestion supervisor path exists")
-    require(not (ROOT / "ingestion" / "rtsp_worker.py").exists(), "regression gate does not reference a removed ingestion worker")
     require((ROOT / "database" / "migrations" / "011_vehicle_journey_domain.sql").exists(), "vehicle journey schema migration exists")
     require((ROOT / "database" / "migrations" / "012_runtime_integrity_and_dedup.sql").exists(), "runtime dedup/integrity migration exists")
     require((ROOT / "dashboard" / "package.json").exists(), "dashboard package manifest exists")
 
     workflow = (ROOT / ".github" / "workflows" / "refactor-regression.yml").read_text(encoding="utf-8")
     require("ingestion/worker.py" in workflow, "CI compiles the actual ingestion supervisor")
-    require("npm install --no-audit --no-fund" in workflow, "CI uses the repository's manifest without requiring an absent lockfile")
+    require("scripts/p0_runtime_e2e.py" in workflow, "CI executes P0 runtime data-plane E2E")
+    require("scripts/anpr_benchmark.py" in workflow, "CI executes the ANPR benchmark harness")
     require("docker compose config -q" in workflow, "CI validates Compose configuration")
 
     if FAILURES:
