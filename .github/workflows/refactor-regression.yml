@@ -9,11 +9,38 @@ on:
 jobs:
   python-regression:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: sentinel_ci
+          POSTGRES_USER: sentinel
+          POSTGRES_PASSWORD: sentinel
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U sentinel -d sentinel_ci"
+          --health-interval=5s --health-timeout=3s --health-retries=20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s --health-timeout=3s --health-retries=20
+    env:
+      DATABASE_URL: postgresql://sentinel:sentinel@localhost:5432/sentinel_ci
+      REDIS_URL: redis://localhost:6379
+      ALERT_COOLDOWN: "60"
+      CROSS_CAM_WINDOW: "300"
+      SIGHTING_DEDUP_BUCKET_SECS: "30"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install Python test dependencies
+        run: python -m pip install --disable-pip-version-check psycopg2-binary redis
       - name: Compile core Python modules
         run: >-
           python -m py_compile
@@ -24,9 +51,11 @@ jobs:
       - name: Run deterministic ANPR policy tests
         working-directory: ai_engine
         run: python -m unittest discover -s tests -p 'test_*.py' -v
-      - name: Run durable sighting tests
+      - name: Run sighting-store import regression
         working-directory: intelligence
         run: python -m unittest test_sighting_store.py -v
+      - name: Run P0 runtime persistence/alert E2E
+        run: python scripts/p0_runtime_e2e.py
       - name: Validate refactor invariants
         run: python scripts/validate_refactor.py
       - name: Validate Compose configuration
