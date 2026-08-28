@@ -64,7 +64,9 @@ jobs:
       - name: Validate fresh migrations and idempotency
         shell: bash
         run: |
+          PGPASSWORD=sentinel psql -h 127.0.0.1 -U sentinel -d sentinel_ci -c 'DROP DATABASE IF EXISTS sentinel_migration_ci WITH (FORCE);'
           PGPASSWORD=sentinel psql -h 127.0.0.1 -U sentinel -d sentinel_ci -c 'CREATE DATABASE sentinel_migration_ci;'
+          PGPASSWORD=sentinel psql -h 127.0.0.1 -U sentinel -d sentinel_migration_ci -f database/init.sql
           DATABASE_URL=postgresql://sentinel:sentinel@localhost:5432/sentinel_migration_ci MIGRATIONS_DIR=${{ github.workspace }}/database/migrations python -c "from api.migrations import apply_migrations; apply_migrations(); apply_migrations()"
       - name: Run deterministic ANPR policy tests
         working-directory: ai_engine
@@ -84,8 +86,8 @@ jobs:
       - name: Run repository hygiene checks
         shell: bash
         run: |
-          test "$(git ls-files | grep -E '(^|/)__pycache__/|\.pyc$' | wc -l)" -eq 0
-          test "$(git ls-files .env | wc -l)" -eq 0
+          ! git ls-files -z | grep -F -z -E '/__pycache__/|\.pyc$'
+          test -z "$(git ls-files .env)"
       - name: Validate refactor invariants
         run: python scripts/validate_refactor.py
       - name: Validate Compose configuration
