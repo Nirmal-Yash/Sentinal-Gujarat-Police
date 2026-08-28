@@ -1,0 +1,21 @@
+name: Refactor regression
+
+on:
+  push:
+    branches: ["test", "refactor/**"]
+  pull_request:
+    branches: ["test", "main"]
+
+jobs:
+  python-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile core Python modules
+        run: python -m py_compile ai_engine/anpr_policy.py ai_engine/anpr_worker.py ai_engine/yolo_worker.py ai_engine/event_schema.py
+      - name: Run deterministic ANPR policy tests
+        working-directory: ai_engine
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
