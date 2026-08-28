@@ -1,13 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-import uuid
+import re, uuid, json
 
-from auth import Principal, require_role
+from auth import Principal, require_permission
 from database import get_db
 
-router = APIRouter(prefix="/evidence", tags=["evidence"], dependencies=[Depends(require_role("VIEWER"))])
+router = APIRouter(prefix="/evidence", tags=["evidence"])
 
 class EvidenceCreate(BaseModel):
     event_id: str | None = Field(None, max_length=255)
@@ -16,11 +16,31 @@ class EvidenceCreate(BaseModel):
     captured_at: str | None = None
     media_type: str = Field(min_length=1, max_length=64)
     storage_key: str = Field(min_length=1, max_length=2048)
-    sha256: str | None = Field(None, max_length=128)
+    sha256: str | None = Field(None, min_length=64, max_length=64)
     metadata: dict = Field(default_factory=dict)
 
+    @field_validator("sha256")
+    @classmethod
+    def validate_sha256(cls, value):
+        if value is not None and not re.fullmatch(r"[0-9a-fA-F]{64}", value):
+            raise ValueError("sha256 must be a 64-character hexadecimal digest")
+        return value
+
+    @field_validator("storage_key")
+    @classmethod
+    def validate_storage_key(cls, value):
+        if value.strip() != value or ".." in value or value.startswith(("/", "\\")):
+            raise ValueError("storage_key must be an opaque relative object key")
+        return value
+
 @router.get("/")
-async def list_evidence(alert_id: uuid.UUID | None = None, event_id: str | None = Query(None, max_length=255), limit: int = Query(50, ge=1, le=200), db: AsyncSession = Depends(get_db)):
+async def list_evidence(
+    alert_id: uuid.UUID | None = None,
+    event_id: str | None = Query(None, max_length=255),
+    limit: int = Query(50, ge=1, le=200),
+    _: Principal = Depends(require_permission("evidence:read")),
+    db: AsyncSession = Depends(get_db),
+):
     conditions, params = ["1=1"], {"limit": limit}
     if alert_id:
         conditions.append("alert_id=:alert_id"); params["alert_id"] = str(alert_id)
@@ -30,20 +50,35 @@ async def list_evidence(alert_id: uuid.UUID | None = None, event_id: str | None 
     return [dict(row) for row in result.mappings()]
 
 @router.post("/", status_code=201)
-async def create_evidence(body: EvidenceCreate, principal: Principal = Depends(require_role("OPERATOR")), db: AsyncSession = Depends(get_db)):
+async def create_evidence(
+    body: EvidenceCreate,
+    principal: Principal = Depends(require_permission("evidence:create")),
+    db: AsyncSession = Depends(get_db),
+):
+    if body.alert_id and not await db.scalar(text("SELECT 1 FROM alerts WHERE id=CAST(:id AS uuid)"), {"id": str(body.alert_id)}):
+        raise HTTPException(422, "alert_id does not reference an existing alert")
+    if body.camera_id and not await db.scalar(text("SELECT 1 FROM cameras WHERE id=CAST(:id AS uuid) AND status <> 'deleted'"), {"id": str(body.camera_id)}):
+        raise HTTPException(422, "camera_id does not reference an active camera")
+    values = {"event_id": body.event_id, "alert_id": str(body.alert_id) if body.alert_id else None,
+              "camera_id": str(body.camera_id) if body.camera_id else None, "captured_at": body.captured_at,
+              "media_type": body.media_type, "storage_key": body.storage_key, "sha256": body.sha256,
+              "metadata": json.dumps({**body.metadata, "created_by": principal.username})}
     row = (await db.execute(text("""INSERT INTO evidence(event_id,alert_id,camera_id,captured_at,media_type,storage_key,sha256,metadata)
         VALUES(:event_id,CAST(:alert_id AS uuid),CAST(:camera_id AS uuid),CAST(:captured_at AS timestamptz),:media_type,:storage_key,:sha256,CAST(:metadata AS jsonb))
-        RETURNING id,event_id,alert_id,camera_id,captured_at,media_type,storage_key,sha256,metadata,created_at"""), {
-            "event_id": body.event_id, "alert_id": str(body.alert_id) if body.alert_id else None,
-            "camera_id": str(body.camera_id) if body.camera_id else None, "captured_at": body.captured_at,
-            "media_type": body.media_type, "storage_key": body.storage_key, "sha256": body.sha256,
-            "metadata": __import__("json").dumps({**body.metadata, "created_by": principal.username})
-        })).mappings().one()
+        RETURNING id,event_id,alert_id,camera_id,captured_at,media_type,storage_key,sha256,metadata,created_at"""), values)).mappings().one()
+    await db.execute(text("""INSERT INTO evidence_audit_log(evidence_id,actor,action,details)
+        VALUES(CAST(:id AS uuid),:actor,'CREATE',CAST(:details AS jsonb))"""),
+        {"id": str(row["id"]), "actor": principal.username, "details": json.dumps({"event_id": body.event_id, "alert_id": str(body.alert_id) if body.alert_id else None, "camera_id": str(body.camera_id) if body.camera_id else None})})
     await db.commit()
     return dict(row)
 
 @router.get("/{evidence_id}")
-async def get_evidence(evidence_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_evidence(
+    evidence_id: uuid.UUID,
+    _: Principal = Depends(require_permission("evidence:read")),
+    db: AsyncSession = Depends(get_db),
+):
     row = (await db.execute(text("SELECT id,event_id,alert_id,camera_id,captured_at,media_type,storage_key,sha256,metadata,created_at FROM evidence WHERE id=CAST(:id AS uuid)"), {"id": str(evidence_id)})).mappings().first()
-    if not row: raise HTTPException(404, "Evidence not found")
+    if not row:
+        raise HTTPException(404, "Evidence not found")
     return dict(row)
