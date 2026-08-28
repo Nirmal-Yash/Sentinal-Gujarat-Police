@@ -1,0 +1,1 @@
+Sentinel enterprise-hardening release scope: source contracts, migration idempotency, ANPR policy, persistence E2E, evidence, registry smoke, security gates and dashboard build. Live Government feed availability, real Gujarat CCTV accuracy and production GPU performance remain environment-dependent acceptance tests.
