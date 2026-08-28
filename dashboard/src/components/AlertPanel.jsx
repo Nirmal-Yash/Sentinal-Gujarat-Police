@@ -6,21 +6,21 @@ const PRIO = {
   MEDIUM: { color: 'var(--medium)', bg: 'rgba(210,153,34,.10)', label: 'MED' },
   LOW: { color: 'var(--low)', bg: 'rgba(63,185,80,.10)', label: 'LOW' },
 }
-const TYPE_LABEL = { watchlist_match: 'Watchlist Match', cross_camera_sighting: 'Cross-Camera', anomaly_running_crowd: 'Running / Crowd', anomaly_crowd_formation: 'Crowd Detected', anomaly_abandoned_object: 'Abandoned Object' }
+const TYPE_LABEL = { watchlist_match: 'Watchlist Match', cross_camera_sighting: 'Cross-Camera', anomaly_running_crowd: 'Running / Crowd', anomaly_crowd_formation: 'Crowd Detected', anomaly_abandoned_object: 'Abandoned Object', test_plate_detected: 'Test Plate Detected' }
 const STATUS_LABEL = { NEW: 'New', ACKNOWLEDGED: 'Acknowledged', INVESTIGATING: 'Investigating', RESOLVED: 'Resolved', CLOSED: 'Closed' }
 const NEXT_ACTIONS = { NEW: ['ACKNOWLEDGED'], ACKNOWLEDGED: ['INVESTIGATING', 'RESOLVED'], INVESTIGATING: ['RESOLVED'], RESOLVED: ['CLOSED'], CLOSED: [] }
-const BellIcon = ({ muted = false }) => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>{muted && <path d="m4 4 16 16"/>}</svg>
+const BellIcon = ({ muted = false }) => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 0-3.46 0"/>{muted && <path d="m4 4 16 16"/>}</svg>
 const StatusDot = ({ status }) => <span style={{ width: 7, height: 7, borderRadius: '50%', background: status === 'NEW' ? 'var(--high)' : status === 'ACKNOWLEDGED' ? 'var(--accent)' : status === 'INVESTIGATING' ? 'var(--medium)' : 'var(--text2)', flexShrink: 0 }} aria-hidden="true"/>
 
 function AlertRow({ alert, onTransition, onOpenSearch }) {
   const prio = PRIO[alert.priority] || PRIO.MEDIUM
   const status = String(alert.status || (alert.acknowledged ? 'ACKNOWLEDGED' : 'NEW')).toUpperCase()
-  const raw = alert.event_timestamp || alert.timestamp || alert.created_at
+  const raw = alert.event_timestamp || alert.timestamp || alert.created_at || alert.event_at
   const date = typeof raw === 'number' || !Number.isNaN(Number(raw)) ? new Date(Number(raw) * 1000) : new Date(raw)
   const ts = Number.isNaN(date.getTime()) ? '—' : date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
   const ageMs = Date.now() - date.getTime()
   const escalated = status === 'NEW' && Number.isFinite(ageMs) && ageMs > 5 * 60 * 1000
-  const subtitle = alert.details?.watchlist_name || alert.details?.message || alert.details?.anomaly_type?.replace(/_/g, ' ') || alert.details?.description || (alert.cam_name ? `Camera ${alert.cam_name}` : (alert.cam_id ? `Camera ${alert.cam_id.slice(0, 8)}` : '—'))
+  const subtitle = alert.details?.watchlist_name || alert.details?.message || alert.details?.anomaly_type?.replace(/_/g, ' ') || alert.details?.description || (alert.cam_name ? `Camera ${alert.cam_name}` : (alert.cam_id ? `Camera ${alert.cam_id.slice(0, 8)}` : alert.camera_label || '—'))
   return <div style={{ display: 'flex', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border)', background: alert._new ? 'rgba(88,166,255,.04)' : 'transparent', border: escalated ? '1px solid var(--high)' : undefined, alignItems: 'flex-start' }}>
     <StatusDot status={status}/>
     <div style={{ flex: 1, minWidth: 0 }}>
@@ -35,16 +35,16 @@ function AlertRow({ alert, onTransition, onOpenSearch }) {
   </div>
 }
 
-export default function AlertPanel({ alerts, onAck, counts, collapsed = false, onToggle, onOpenSearch }) {
+export default function AlertPanel({ alerts, onAck, counts, collapsed = false, onToggle, onOpenSearch, isTest = false, testSessionId = null }) {
   const [filter, setFilter] = useState('ALL')
   const [localStatus, setLocalStatus] = useState({})
   const [busy, setBusy] = useState({})
   const filters = ['ALL', 'HIGH', 'MEDIUM', 'LOW']
   useEffect(() => { setLocalStatus(previous => { const next = { ...previous }; (alerts || []).forEach(a => { const id = a.id || a.alert_id; if (id) next[id] = a.status || (a.acknowledged ? 'ACKNOWLEDGED' : 'NEW') }); return next }) }, [alerts])
-  const grouped = useMemo(() => (alerts || []).reduce((acc, alert) => { const key = `${alert.alert_type || ''}|${alert.cam_id || ''}|${alert.details?.plate_text || alert.details?.watchlist_name || ''}`; if (!acc[key]) acc[key] = { ...alert, _count: 1 }; else acc[key]._count += 1; return acc }, {}), [alerts])
-  const visible = Object.values(grouped).map(alert => ({ ...alert, status: localStatus[alert.id || alert.alert_id] || alert.status || (alert.acknowledged ? 'ACKNOWLEDGED' : 'NEW') })).sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)).filter(a => filter === 'ALL' || a.priority === filter)
+  const grouped = useMemo(() => (alerts || []).reduce((acc, alert) => { const key = `${alert.alert_type || ''}|${alert.cam_id || alert.camera_label || ''}|${alert.details?.plate_text || alert.details?.watchlist_name || ''}`; if (!acc[key]) acc[key] = { ...alert, _count: 1 }; else acc[key]._count += 1; return acc }, {}), [alerts])
+  const visible = Object.values(grouped).map(alert => ({ ...alert, status: localStatus[alert.id || alert.alert_id] || alert.status || (alert.acknowledged ? 'ACKNOWLEDGED' : 'NEW') })).sort((a, b) => new Date(b.created_at || b.event_at || 0) - new Date(a.created_at || a.event_at || 0)).filter(a => filter === 'ALL' || a.priority === filter)
   const unacked = (alerts || []).filter(a => (localStatus[a.id || a.alert_id] || a.status || (a.acknowledged ? 'ACKNOWLEDGED' : 'NEW')) === 'NEW').length
-  const transition = async (alert, target) => { const id = alert.id || alert.alert_id; if (!id || busy[id]) return; setBusy(v => ({ ...v, [id]: true })); try { const result = await api.transitionAlert(id, target); setLocalStatus(v => ({ ...v, [id]: result.status || target })); if (target === 'ACKNOWLEDGED') onAck?.(id) } catch (error) { console.warn('alert transition failed:', error) } finally { setBusy(v => ({ ...v, [id]: false })) } }
+  const transition = async (alert, target) => { const id = alert.id || alert.alert_id; if (!id || busy[id]) return; setBusy(v => ({ ...v, [id]: true })); try { const result = isTest ? await api.transitionTestAlert(testSessionId, id, target) : await api.transitionAlert(id, target); setLocalStatus(v => ({ ...v, [id]: result.status || target })); if (target === 'ACKNOWLEDGED') onAck?.(id) } catch (error) { console.warn('alert transition failed:', error) } finally { setBusy(v => ({ ...v, [id]: false })) } }
 
   if (collapsed) return <div style={{ height: '100%', background: 'var(--surface)', borderLeft: '1px solid var(--border)', display: 'flex', alignItems: 'center', flexDirection: 'column', paddingTop: 10 }}><button onClick={onToggle} title="Expand alerts" aria-label="Expand alerts" style={{ width: 28, height: 28, border: '1px solid var(--border)', borderRadius: 5, background: 'var(--surface2)', color: 'var(--text)', cursor: 'pointer', display: 'grid', placeItems: 'center' }}><BellIcon/></button>{unacked > 0 && <span title={`${unacked} unacknowledged alerts`} style={{ marginTop: 8, minWidth: 20, textAlign: 'center', borderRadius: 10, background: 'var(--high)', color: '#fff', fontSize: 10, fontWeight: 700, padding: '3px 2px' }}>{unacked}</span>}</div>
   return <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--surface)', borderLeft: '1px solid var(--border)' }}>
