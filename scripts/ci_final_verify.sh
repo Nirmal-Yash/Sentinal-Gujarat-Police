@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+python scripts/final_ci_gate.py
 python scripts/final_integration_gate.py
 python scripts/validate_refactor.py
 python scripts/anpr_benchmark.py scripts/fixtures/anpr_benchmark_smoke.csv --max-error-rate 0.50
