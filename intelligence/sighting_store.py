@@ -5,6 +5,7 @@ import psycopg2
 
 DB_URL = os.getenv("DATABASE_URL", "")
 CROSS_CAM_WINDOW = max(30, int(os.getenv("CROSS_CAM_WINDOW", "300")))
+SIGHTING_BUCKET_SECS = max(5, int(os.getenv("SIGHTING_DEDUP_BUCKET_SECS", "30")))
 
 
 def normalize_plate(value: str | None) -> str | None:
@@ -29,9 +30,6 @@ def _timestamp(data):
 
 
 def _upsert_journey(cur, vehicle_id: str, plate: str, timestamp: datetime, camera_id: str | None, confidence: float, sighting_id: str):
-    """Attach a sighting to the current journey for this plate or create a new journey.
-    A transaction advisory lock serializes journey assignment for the same canonical vehicle.
-    """
     cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (vehicle_id,))
     cur.execute("""INSERT INTO vehicle_identities
         (canonical_key,identity_type,normalized_plate,confidence,first_seen_at,last_seen_at,provenance)
@@ -44,7 +42,6 @@ def _upsert_journey(cur, vehicle_id: str, plate: str, timestamp: datetime, camer
         (vehicle_id, plate, confidence, timestamp, timestamp, json.dumps({"source": "anpr", "identity_method": "plate_confirmed"})))
     cur.execute("SELECT id FROM vehicle_identities WHERE canonical_key=%s", (vehicle_id,))
     identity_id = cur.fetchone()[0]
-
     cur.execute("""SELECT id FROM vehicle_journeys
                    WHERE vehicle_identity_id=%s AND ended_at >= %s
                    ORDER BY ended_at DESC LIMIT 1
@@ -61,7 +58,6 @@ def _upsert_journey(cur, vehicle_id: str, plate: str, timestamp: datetime, camer
                        (vehicle_identity_id,started_at,ended_at,sighting_count,journey_confidence,status)
                        VALUES (%s,%s,%s,1,%s,'ACTIVE') RETURNING id""", (identity_id, timestamp, timestamp, confidence))
         journey_id = cur.fetchone()[0]
-
     cur.execute("SELECT COALESCE(MAX(sequence_no),0)+1 FROM vehicle_journey_sightings WHERE journey_id=%s", (journey_id,))
     sequence_no = cur.fetchone()[0]
     cur.execute("""INSERT INTO vehicle_journey_sightings(journey_id,sighting_id,sequence_no)
@@ -70,7 +66,7 @@ def _upsert_journey(cur, vehicle_id: str, plate: str, timestamp: datetime, camer
 
 
 def persist(data: dict):
-    """Persist an idempotent canonical event before alert/re-ID decisions."""
+    """Persist analytics and at most one business sighting per camera/plate/time bucket."""
     detection_id = _text(data, "detection_id") or _text(data, "event_id")
     if not detection_id:
         return None
@@ -80,16 +76,10 @@ def persist(data: dict):
     confidence = max(0.0, min(1.0, float(_text(data, "conf", "0") or 0)))
     vehicle_id = f"plate:{plate}" if plate else None
     bbox = {key: _text(data, key) for key in ("x1", "y1", "x2", "y2") if key.encode() in data}
-    metadata = {
-        "schema_version": _text(data, "schema_version", "1.0"),
-        "event_id": _text(data, "event_id", detection_id),
-        "source_timestamp_origin": timestamp_origin,
-        "raw_ocr": _text(data, "raw_ocr"),
-        "ocr_confidence": _text(data, "ocr_conf", ""),
-        "detector_confidence": _text(data, "detector_conf", ""),
-        "plate_validated": _text(data, "plate_validated", ""),
-        "anpr_consensus": _text(data, "anpr_consensus", ""),
-    }
+    metadata = {"schema_version": _text(data, "schema_version", "1.0"), "event_id": _text(data, "event_id", detection_id),
+                "source_timestamp_origin": timestamp_origin, "raw_ocr": _text(data, "raw_ocr"),
+                "ocr_confidence": _text(data, "ocr_conf", ""), "detector_confidence": _text(data, "detector_conf", ""),
+                "plate_validated": _text(data, "plate_validated", ""), "anpr_consensus": _text(data, "anpr_consensus", "")}
     conn = psycopg2.connect(DB_URL)
     try:
         with conn.cursor() as cur:
@@ -101,33 +91,39 @@ def persist(data: dict):
                json.dumps(bbox), confidence, _text(data, "track_id") or None, vehicle_id, plate, json.dumps(metadata)))
             if not plate:
                 conn.commit()
-                return {"timestamp": timestamp, "plate": None, "global_vehicle_id": None}
+                return {"timestamp": timestamp, "plate": None, "global_vehicle_id": None, "duplicate": False}
 
             event_id = _text(data, "event_id", detection_id)
+            bucket = timestamp.replace(second=(timestamp.second // SIGHTING_BUCKET_SECS) * SIGHTING_BUCKET_SECS, microsecond=0)
             cur.execute("""INSERT INTO vehicle_sightings
-              (event_id,detection_id,raw_plate,normalized_plate,camera_id,source_timestamp,confidence,vehicle_type,track_id,global_vehicle_id,model_versions,identity_type)
-              VALUES (%s::uuid,%s::uuid,%s,%s,%s::uuid,%s,%s,%s,%s,%s,%s::jsonb,'PLATE_CONFIRMED')
-              ON CONFLICT (event_id) DO NOTHING RETURNING id""",
+              (event_id,detection_id,raw_plate,normalized_plate,camera_id,source_timestamp,confidence,vehicle_type,track_id,global_vehicle_id,model_versions,identity_type,observation_bucket)
+              VALUES (%s::uuid,%s::uuid,%s,%s,%s::uuid,%s,%s,%s,%s,%s,%s::jsonb,'PLATE_CONFIRMED',%s)
+              ON CONFLICT (camera_id,normalized_plate,observation_bucket)
+              WHERE camera_id IS NOT NULL AND normalized_plate IS NOT NULL DO NOTHING
+              RETURNING id""",
               (event_id, detection_id, _text(data, "raw_ocr") or plate, plate, camera_id, timestamp, confidence,
                _text(data, "vehicle_type") or _text(data, "detection_type"), _text(data, "track_id") or None,
-               vehicle_id, json.dumps({"detector": "yolov8", "ocr": "easyocr"})))
+               vehicle_id, json.dumps({"detector": "yolov8", "ocr": "easyocr"}), bucket))
             inserted = cur.fetchone()
-            if inserted:
-                sighting_id = str(inserted[0])
-                journey_id = _upsert_journey(cur, vehicle_id, plate, timestamp, camera_id, confidence, sighting_id)
-                cur.execute("UPDATE vehicle_sightings SET journey_id=%s::uuid WHERE id=%s::uuid", (journey_id, sighting_id))
-            else:
-                cur.execute("SELECT id,journey_id FROM vehicle_sightings WHERE event_id=%s::uuid", (event_id,))
-                existing = cur.fetchone()
-                journey_id = str(existing[1]) if existing and existing[1] else None
+            if not inserted:
+                cur.execute("""SELECT id,journey_id FROM vehicle_sightings
+                    WHERE camera_id=%s::uuid AND normalized_plate=%s AND observation_bucket=%s
+                    ORDER BY created_at ASC LIMIT 1""", (camera_id, plate, bucket))
+                duplicate = cur.fetchone()
+                conn.commit()
+                return {"timestamp": timestamp, "plate": plate, "global_vehicle_id": vehicle_id,
+                        "journey_id": str(duplicate[1]) if duplicate and duplicate[1] else None, "duplicate": True}
+
+            sighting_id = str(inserted[0])
+            journey_id = _upsert_journey(cur, vehicle_id, plate, timestamp, camera_id, confidence, sighting_id)
+            cur.execute("UPDATE vehicle_sightings SET journey_id=%s::uuid WHERE id=%s::uuid", (journey_id, sighting_id))
         conn.commit()
     finally:
         conn.close()
-    return {"timestamp": timestamp, "plate": plate, "global_vehicle_id": vehicle_id, "journey_id": journey_id}
+    return {"timestamp": timestamp, "plate": plate, "global_vehicle_id": vehicle_id, "journey_id": journey_id, "duplicate": False}
 
 
 def persist_person_track(detection_id: str, global_track_id: str, camera_id: str, timestamp: datetime, confidence: float, embedding):
-    """Store durable person identity/history; FAISS remains an acceleration index."""
     vector = "[" + ",".join(str(float(value)) for value in embedding) + "]"
     conn = psycopg2.connect(DB_URL)
     try:
@@ -139,8 +135,8 @@ def persist_person_track(detection_id: str, global_track_id: str, camera_id: str
               ON CONFLICT (id) DO UPDATE SET last_seen_cam=EXCLUDED.last_seen_cam,last_seen_at=EXCLUDED.last_seen_at,
                 cam_history=global_tracks.cam_history || EXCLUDED.cam_history,embedding=EXCLUDED.embedding,
                 identity_source=EXCLUDED.identity_source,last_confidence=EXCLUDED.last_confidence,updated_at=NOW()""",
-              (global_track_id, camera_id, camera_id, timestamp, timestamp, camera_id, timestamp.isoformat(), vector, confidence,
-               json.dumps({"identity_type": "face_reidentification"})))
+              (global_track_id, camera_id, camera_id, timestamp, timestamp, camera_id, timestamp.isoformat(), vector,
+               confidence, json.dumps({"identity_type": "face_reidentification"})))
         conn.commit()
     finally:
         conn.close()
