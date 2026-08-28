@@ -1,1 +1,0 @@
-Pushes to refactor/enterprise-hardening execute both refactor regression and enterprise release gate workflows. Release is accepted only when all jobs are green and environment-dependent validation is separately completed.

@@ -1,1 +1,0 @@
-Final acceptance requires green CI plus environment-dependent real CCTV validation; no synthetic benchmark substitutes for real labeled Gujarat footage or reachable Government feeds.
