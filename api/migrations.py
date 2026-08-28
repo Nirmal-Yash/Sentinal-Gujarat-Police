@@ -1,7 +1,10 @@
 """Small, ordered SQL migration runner for the current Docker deployment."""
 from pathlib import Path
 import os
+import re
 import psycopg2
+
+_VERSION_RE = re.compile(r"^(\d+)_.*\.sql$")
 
 
 def apply_migrations():
@@ -9,6 +12,18 @@ def apply_migrations():
     migration_dir = Path(os.getenv("MIGRATIONS_DIR", "/migrations"))
     if not migration_dir.exists():
         return
+    paths = sorted(migration_dir.glob("*.sql"))
+    seen = {}
+    for path in paths:
+        match = _VERSION_RE.match(path.name)
+        if not match:
+            raise RuntimeError(f"Migration filename must start with a numeric version: {path.name}")
+        version = match.group(1)
+        previous = seen.get(version)
+        if previous:
+            raise RuntimeError(f"Duplicate migration version {version}: {previous.name} and {path.name}")
+        seen[version] = path
+
     conn = psycopg2.connect(database_url)
     try:
         with conn.cursor() as cur:
@@ -17,7 +32,7 @@ def apply_migrations():
             cur.execute("SELECT pg_advisory_xact_lock(8042601)")
             cur.execute("""CREATE TABLE IF NOT EXISTS schema_migrations (
                 version VARCHAR(255) PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
-            for path in sorted(migration_dir.glob("*.sql")):
+            for path in paths:
                 cur.execute("SELECT 1 FROM schema_migrations WHERE version=%s", (path.name,))
                 if cur.fetchone():
                     continue
