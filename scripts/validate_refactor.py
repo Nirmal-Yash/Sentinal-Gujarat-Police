@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fast, dependency-light regression gates for the enterprise-hardening branch."""
 from __future__ import annotations
-import pathlib, sys, time, subprocess
+import pathlib, sys, time, subprocess, re
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path: sys.path.insert(0, str(ROOT))
 from ai_engine import anpr_policy as ai
@@ -24,13 +24,18 @@ def main() -> int:
     start = time.perf_counter()
     for _ in range(10_000): ai.normalize_indian_plate(" gj 01 ab 1234 "); ai.plate_is_valid("GJ01AB1234")
     elapsed = time.perf_counter() - start; require(elapsed < 2.0, f"ANPR policy path remains lightweight ({elapsed:.3f}s / 10k iterations)")
+    migration_files = sorted((ROOT / "database" / "migrations").glob("*.sql"))
+    versions = [match.group(1) for path in migration_files if (match := re.match(r"^(\d+)_.*\.sql$", path.name))]
+    require(len(versions) == len(set(versions)), "database migration numbers are unique")
     required_paths = [
         ("ingestion/worker.py", "ingestion supervisor path exists"),
         ("database/migrations/010_alert_lifecycle_and_evidence.sql", "alert lifecycle and evidence schema exists"),
-        ("database/migrations/011_vehicle_journey_domain.sql", "vehicle journey schema migration exists"),
-        ("database/migrations/012_runtime_integrity_and_dedup.sql", "runtime dedup/integrity migration exists"),
-        ("database/migrations/016_evidence_and_operational_integrity.sql", "evidence/operational integrity migration exists"),
-        ("database/migrations/017_evidence_capture_integrity.sql", "evidence capture integrity migration exists"),
+        ("database/migrations/011_vehicle_journey_domain.sql", "vehicle journey schema exists"),
+        ("database/migrations/012_runtime_integrity_and_dedup.sql", "runtime dedup/integrity schema exists"),
+        ("database/migrations/016_evidence_and_operational_integrity.sql", "evidence/operational integrity schema exists"),
+        ("database/migrations/017_evidence_capture_integrity.sql", "evidence capture integrity schema exists"),
+        ("database/migrations/018_registry_and_migration_integrity.sql", "registry migration integrity schema exists"),
+        ("database/migrations/019_rbac_roles.sql", "expanded RBAC role schema exists"),
         ("scripts/registry_load_smoke.py", "50-camera registry load smoke exists"),
         ("api/routes/evidence.py", "evidence API exists"),
         ("api/routes/operations.py", "operational health API exists"),
@@ -40,7 +45,9 @@ def main() -> int:
     ]
     for rel, message in required_paths: require((ROOT / rel).exists(), message)
     auth_source = (ROOT / "api/auth.py").read_text(encoding="utf-8")
-    for permission in ("camera:read", "camera:write", "alert:read", "alert:operate", "search:read", "report:read", "evidence:read", "evidence:create", "registry:admin", "system:admin"):
+    for role in ("VIEWER", "OPERATOR", "INVESTIGATOR", "AUDITOR", "ADMIN", "SUPERADMIN"):
+        require(role in auth_source, f"RBAC role exists: {role}")
+    for permission in ("camera:read", "camera:write", "alert:read", "alert:operate", "search:read", "report:read", "evidence:read", "evidence:create", "registry:admin", "audit:read", "system:admin"):
         require(permission in auth_source, f"RBAC permission exists: {permission}")
     alerts_source = (ROOT / "api/routes/alerts.py").read_text(encoding="utf-8")
     for fragment, message in [
@@ -66,9 +73,9 @@ def main() -> int:
     alert_source = (ROOT / "intelligence/alert_engine.py").read_text(encoding="utf-8")
     require("capture_snapshot" in alert_source and "INSERT INTO evidence" in alert_source, "alerts attempt durable snapshot evidence capture")
     persistence_source = (ROOT / "intelligence/sighting_store.py").read_text(encoding="utf-8")
-    require("business_sighting" in persistence_source and "plate_validated" in persistence_source, "only confirmed ANPR observations become business sightings")
+    require("business_sighting" in persistence_source and "plate_validated" in persistence_source and "anpr_consensus" in persistence_source, "only confirmed ANPR observations become business sightings")
     ingestion_source = (ROOT / "ingestion/worker.py").read_text(encoding="utf-8")
-    require("RECONNECT_MAX_DELAY" in ingestion_source and "time.sleep(10)" in ingestion_source, "camera reconnect is bounded and non-blocking at fleet level")
+    require("RECONNECT_MAX_DELAY" in ingestion_source and "MAX_CONCURRENT_CAMERAS" in ingestion_source, "camera reconnect and 50-camera capacity are configurable")
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     require("evidence_data:/evidence" in compose, "shared durable evidence volume is configured")
     workflow = (ROOT / ".github" / "workflows" / "refactor-regression.yml").read_text(encoding="utf-8")
