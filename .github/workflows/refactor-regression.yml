@@ -38,6 +38,7 @@ jobs:
       CROSS_CAM_WINDOW: "300"
       SIGHTING_DEDUP_BUCKET_SECS: "30"
       EVIDENCE_ROOT: /tmp/sentinel-evidence
+      REGISTRY_SMOKE_CAMERAS: "50"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -66,6 +67,13 @@ jobs:
         run: python scripts/p0_runtime_e2e.py
       - name: Run ANPR benchmark harness smoke test
         run: python scripts/anpr_benchmark.py scripts/fixtures/anpr_benchmark_smoke.csv --max-error-rate 0.50
+      - name: Run 50-camera registry load smoke
+        run: python scripts/registry_load_smoke.py
+      - name: Run repository hygiene checks
+        shell: bash
+        run: |
+          test "$(git ls-files | grep -E '(^|/)__pycache__/|\.pyc$' | wc -l)" -eq 0
+          test "$(git ls-files .env | wc -l)" -eq 0
       - name: Validate refactor invariants
         run: python scripts/validate_refactor.py
       - name: Validate Compose configuration
