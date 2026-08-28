@@ -1,6 +1,4 @@
--- Migration continuity and registry integrity hardening.
--- The 012 sighting deduplication logic is consolidated into 012_runtime_integrity_and_dedup;
--- this migration adds safety constraints/indexes without relying on duplicate migration numbers.
+-- Registry and migration integrity hardening.
 ALTER TABLE cameras
   ADD COLUMN IF NOT EXISTS metadata_verified_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS metadata_verified_by VARCHAR(128),
