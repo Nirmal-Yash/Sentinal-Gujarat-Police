@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""P0 runtime data-plane verification with real PostgreSQL + Redis services."""
+"""P0 runtime data-plane verification with isolated PostgreSQL + Redis services."""
 from __future__ import annotations
 
 import json
@@ -29,33 +29,35 @@ def db():
 
 
 def setup_schema():
+    # This E2E owns its schema inside a dedicated fresh CI database.  Never
+    # attempt to recreate a production/bootstrap table in the shared CI DB.
     with db() as conn, conn.cursor() as cur:
         cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
         cur.execute("""
-        CREATE TABLE cameras (
+        CREATE TABLE IF NOT EXISTS cameras (
             id UUID PRIMARY KEY, stream_id INTEGER UNIQUE, name TEXT NOT NULL,
             location TEXT, lat DOUBLE PRECISION, lng DOUBLE PRECISION,
             codec TEXT, width INTEGER, height INTEGER, fps DOUBLE PRECISION
         );
-        CREATE TABLE detections (
+        CREATE TABLE IF NOT EXISTS detections (
             id UUID PRIMARY KEY, cam_id UUID, timestamp TIMESTAMPTZ NOT NULL,
             pts_ms BIGINT DEFAULT 0, detection_type TEXT, bbox JSONB,
             confidence DOUBLE PRECISION, track_id TEXT, global_track_id TEXT,
             plate_text TEXT, metadata JSONB
         );
-        CREATE TABLE vehicle_identities (
+        CREATE TABLE IF NOT EXISTS vehicle_identities (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(), canonical_key TEXT UNIQUE NOT NULL,
             identity_type TEXT, normalized_plate TEXT, confidence DOUBLE PRECISION,
             provenance JSONB NOT NULL DEFAULT '{}'::jsonb, first_seen_at TIMESTAMPTZ,
             last_seen_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
         );
-        CREATE TABLE vehicle_journeys (
+        CREATE TABLE IF NOT EXISTS vehicle_journeys (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(), vehicle_identity_id UUID NOT NULL,
             started_at TIMESTAMPTZ NOT NULL, ended_at TIMESTAMPTZ NOT NULL,
             sighting_count INTEGER NOT NULL DEFAULT 0, journey_confidence DOUBLE PRECISION,
             status TEXT DEFAULT 'ACTIVE', created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
         );
-        CREATE TABLE vehicle_sightings (
+        CREATE TABLE IF NOT EXISTS vehicle_sightings (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(), event_id UUID UNIQUE NOT NULL,
             detection_id UUID, raw_plate TEXT, normalized_plate TEXT NOT NULL, camera_id UUID,
             source_timestamp TIMESTAMPTZ NOT NULL, confidence DOUBLE PRECISION NOT NULL,
@@ -63,25 +65,25 @@ def setup_schema():
             model_versions JSONB NOT NULL DEFAULT '{}'::jsonb, identity_type TEXT DEFAULT 'PLATE_CONFIRMED',
             observation_bucket TIMESTAMPTZ NOT NULL, journey_id UUID, created_at TIMESTAMPTZ DEFAULT NOW()
         );
-        CREATE UNIQUE INDEX uq_vs ON vehicle_sightings(camera_id, normalized_plate, observation_bucket);
-        CREATE TABLE vehicle_journey_sightings (
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_vs ON vehicle_sightings(camera_id, normalized_plate, observation_bucket);
+        CREATE TABLE IF NOT EXISTS vehicle_journey_sightings (
             journey_id UUID NOT NULL, sighting_id UUID NOT NULL, sequence_no INTEGER NOT NULL,
             PRIMARY KEY (journey_id, sighting_id), UNIQUE (journey_id, sequence_no)
         );
-        CREATE TABLE alerts (
+        CREATE TABLE IF NOT EXISTS alerts (
             id UUID PRIMARY KEY, detection_id UUID, cam_id UUID, alert_type TEXT NOT NULL,
             priority TEXT NOT NULL, confidence DOUBLE PRECISION, entity_type TEXT,
             details JSONB, acknowledged BOOLEAN DEFAULT FALSE, acknowledged_at TIMESTAMPTZ,
             acknowledged_by TEXT, status TEXT NOT NULL, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ,
             dedup_key TEXT UNIQUE
         );
-        CREATE TABLE global_tracks (
+        CREATE TABLE IF NOT EXISTS global_tracks (
             id TEXT PRIMARY KEY, entity_type TEXT, first_seen_cam UUID, last_seen_cam UUID,
             first_seen_at TIMESTAMPTZ, last_seen_at TIMESTAMPTZ, cam_history JSONB DEFAULT '[]'::jsonb,
             embedding TEXT, identity_source TEXT, last_confidence DOUBLE PRECISION, metadata JSONB DEFAULT '{}'::jsonb
         );
         """)
-        cur.execute("INSERT INTO cameras(id,stream_id,name) VALUES (%s,1,'P0 E2E Camera')", (CAMERA_ID,))
+        cur.execute("INSERT INTO cameras(id,stream_id,name) VALUES (%s,1,'P0 E2E Camera') ON CONFLICT (stream_id) DO NOTHING", (CAMERA_ID,))
         conn.commit()
 
 
