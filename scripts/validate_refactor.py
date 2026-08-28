@@ -30,8 +30,10 @@ def main() -> int:
         ("database/migrations/011_vehicle_journey_domain.sql", "vehicle journey schema migration exists"),
         ("database/migrations/012_runtime_integrity_and_dedup.sql", "runtime dedup/integrity migration exists"),
         ("database/migrations/016_evidence_and_operational_integrity.sql", "evidence/operational integrity migration exists"),
+        ("database/migrations/017_evidence_capture_integrity.sql", "evidence capture integrity migration exists"),
         ("api/routes/evidence.py", "evidence API exists"),
         ("api/routes/operations.py", "operational health API exists"),
+        ("intelligence/evidence_capture.py", "alert evidence capture utility exists"),
         ("dashboard/src/components/AlertPanel.jsx", "operational alert UI exists"),
         ("dashboard/src/components/MapView.jsx", "operational GIS UI exists"),
     ]
@@ -53,9 +55,16 @@ def main() -> int:
     require("cameras_healthy" in operations_source and "active_journeys" in operations_source, "operations overview exposes fleet and investigation metrics")
     evidence_source = (ROOT / "api/routes/evidence.py").read_text(encoding="utf-8")
     require("evidence:create" in evidence_source and "evidence:read" in evidence_source, "evidence routes enforce permissions")
+    require("/{evidence_id}/content" in evidence_source, "evidence content endpoint exists")
+    alert_source = (ROOT / "intelligence/alert_engine.py").read_text(encoding="utf-8")
+    require("capture_snapshot" in alert_source and "INSERT INTO evidence" in alert_source, "alerts attempt durable snapshot evidence capture")
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    require("evidence_data:/evidence" in compose, "shared durable evidence volume is configured")
     workflow = (ROOT / ".github" / "workflows" / "refactor-regression.yml").read_text(encoding="utf-8")
     for fragment, message in [
         ("ingestion/worker.py", "CI compiles the actual ingestion supervisor"),
+        ("intelligence/evidence_capture.py", "CI compiles evidence capture"),
+        ("intelligence/test_evidence_capture.py", "CI runs evidence capture regression"),
         ("api/routes/evidence.py", "CI compiles the evidence API"),
         ("api/routes/operations.py", "CI compiles the operations API"),
         ("scripts/p0_runtime_e2e.py", "CI executes P0 runtime data-plane E2E"),
