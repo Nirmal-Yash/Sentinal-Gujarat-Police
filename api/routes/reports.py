@@ -7,13 +7,16 @@ from fastapi.responses import Response
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
-from auth import require_role, Principal
+from auth import require_permission, Principal
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 
 def _plate(value: str | None) -> str:
     return re.sub(r"[^A-Z0-9]", "", (value or "").upper())
+
+
+REPORT_PERMISSION = Depends(require_permission("report:read"))
 
 
 @router.get("/detections")
@@ -24,7 +27,7 @@ async def detection_report(
     cam_id: str | None = None,
     plate: str | None = None,
     limit: int = Query(1000, ge=1, le=10000),
-    _: Principal = Depends(require_role("ADMIN")),
+    _: Principal = REPORT_PERMISSION,
     db: AsyncSession = Depends(get_db),
 ):
     """Unified analytics/business report; plate-filtered output comes from durable sightings."""
@@ -44,11 +47,11 @@ async def detection_report(
                  NULL::uuid AS journey_id
                  FROM detections d LEFT JOIN cameras c ON c.id=d.cam_id WHERE 1=1"""
     if from_at:
-        sql += " AND timestamp >= :from_at"; params["from_at"] = from_at
+        sql += " AND d.timestamp >= :from_at" if not plate else " AND s.source_timestamp >= :from_at"; params["from_at"] = from_at
     if to_at:
-        sql += " AND timestamp <= :to_at"; params["to_at"] = to_at
+        sql += " AND d.timestamp <= :to_at" if not plate else " AND s.source_timestamp <= :to_at"; params["to_at"] = to_at
     if cam_id:
-        sql += " AND cam_id=CAST(:cam_id AS uuid)"; params["cam_id"] = cam_id
+        sql += " AND d.cam_id=CAST(:cam_id AS uuid)" if not plate else " AND s.camera_id=CAST(:cam_id AS uuid)"; params["cam_id"] = cam_id
     sql += " ORDER BY timestamp DESC LIMIT :limit"
     rows = [dict(row) for row in (await db.execute(text(sql), params)).mappings().all()]
     if format == "json":
@@ -65,7 +68,7 @@ async def vehicle_sighting_report(
     from_at: datetime | None = None, to_at: datetime | None = None,
     cam_id: str | None = None, plate: str | None = None,
     limit: int = Query(1000, ge=1, le=10000),
-    _: Principal = Depends(require_role("ADMIN")), db: AsyncSession = Depends(get_db),
+    _: Principal = REPORT_PERMISSION, db: AsyncSession = Depends(get_db),
 ):
     """Durable investigation report; one row represents a business sighting, not a frame."""
     params = {"limit": limit}
@@ -96,7 +99,7 @@ async def vehicle_sighting_report(
 async def runtime_reconciliation(
     seconds: int = Query(300, ge=10, le=86400),
     cam_id: str | None = None,
-    _: Principal = Depends(require_role("ADMIN")),
+    _: Principal = REPORT_PERMISSION,
     db: AsyncSession = Depends(get_db),
 ):
     """Operational reconciliation between high-volume detections and durable business records."""
