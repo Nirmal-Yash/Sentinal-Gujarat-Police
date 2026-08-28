@@ -52,10 +52,14 @@ jobs:
           test -n "$POSTGRES_CONTAINER"
           docker exec -u 0 "$POSTGRES_CONTAINER" bash -lc 'apt-get update && apt-get install -y --no-install-recommends postgresql-16-postgis-3 && rm -rf /var/lib/apt/lists/*'
       - name: Compile all refactor modules
-        run: >-
-          python -m py_compile
-          ai_engine/*.py ai_engine/tests/*.py
-          ingestion/*.py intelligence/*.py api/*.py api/routes/*.py
+        shell: bash
+        run: |
+          python -m py_compile ingestion/worker.py
+          python -m py_compile intelligence/evidence_capture.py
+          python -m py_compile api/routes/evidence.py
+          python -m py_compile api/routes/operations.py
+          python -m py_compile ai_engine/*.py ai_engine/tests/*.py
+          python -m py_compile ingestion/*.py intelligence/*.py api/*.py api/routes/*.py
       - name: Validate migration numbering and SQL structure
         run: |
           python - <<'PY'
@@ -74,6 +78,7 @@ jobs:
       - name: Run fresh database bootstrap and migration idempotency verification
         shell: bash
         run: |
+          PGPASSWORD=sentinel psql -h 127.0.0.1 -U sentinel -d sentinel_ci -c 'DROP DATABASE IF EXISTS sentinel_release_ci WITH (FORCE);'
           PGPASSWORD=sentinel psql -h 127.0.0.1 -U sentinel -d sentinel_ci -c 'CREATE DATABASE sentinel_release_ci;'
           PGPASSWORD=sentinel psql -h 127.0.0.1 -U sentinel -d sentinel_release_ci -c 'CREATE EXTENSION IF NOT EXISTS postgis; CREATE EXTENSION IF NOT EXISTS pg_trgm;'
           PGPASSWORD=sentinel psql -h 127.0.0.1 -U sentinel -d sentinel_release_ci -f database/init.sql
@@ -89,7 +94,11 @@ jobs:
         working-directory: intelligence
         run: python -m unittest test_evidence_capture.py test_sighting_store.py -v
       - name: Run P0 data-plane E2E
-        run: python scripts/p0_runtime_e2e.py
+        shell: bash
+        run: |
+          PGPASSWORD=sentinel psql -h 127.0.0.1 -U sentinel -d sentinel_ci -c 'DROP DATABASE IF EXISTS sentinel_p0_release_ci WITH (FORCE);'
+          PGPASSWORD=sentinel psql -h 127.0.0.1 -U sentinel -d sentinel_ci -c 'CREATE DATABASE sentinel_p0_release_ci;'
+          DATABASE_URL=postgresql://sentinel:sentinel@localhost:5432/sentinel_p0_release_ci REDIS_URL=redis://localhost:6379 python scripts/p0_runtime_e2e.py
       - name: Run 50-camera registry smoke
         run: python scripts/registry_load_smoke.py
       - name: Run ANPR benchmark smoke
