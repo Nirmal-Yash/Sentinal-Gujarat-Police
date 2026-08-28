@@ -105,6 +105,10 @@ services:
       - PLATE_MATCH_THRESHOLD=${PLATE_MATCH_THRESHOLD:-0.9}
       - ALERT_COOLDOWN=${ALERT_COOLDOWN:-60}
       - CROSS_CAM_WINDOW=${CROSS_CAM_WINDOW:-300}
+      - EVIDENCE_ROOT=/evidence
+      - MAX_EVIDENCE_BYTES=${MAX_EVIDENCE_BYTES:-4194304}
+    volumes:
+      - evidence_data:/evidence
 
   test_intelligence:
     build: ./intelligence
@@ -118,6 +122,9 @@ services:
       - REDIS_URL=redis://redis:6379
       - DATABASE_URL=postgresql://sentinel:${POSTGRES_PASSWORD}@postgres:5432/sentinel
       - TEST_MODE=true
+      - EVIDENCE_ROOT=/evidence
+    volumes:
+      - evidence_data:/evidence
 
   api:
     build:
@@ -141,9 +148,11 @@ services:
       - TEST_UPLOAD_DIR=/test_videos
       - TEST_RTSP_BASE=rtsp://mediamtx:8554
       - TEST_HLS_BASE=/test-hls
+      - EVIDENCE_ROOT=/evidence
     volumes:
       - ./videos:/videos:ro
       - test_videos:/test_videos
+      - evidence_data:/evidence:ro
 
   mediamtx:
     image: bluenviron/mediamtx:1.11.3
@@ -165,3 +174,4 @@ volumes:
   redis_data:
   postgres_data:
   test_videos:
+  evidence_data:
