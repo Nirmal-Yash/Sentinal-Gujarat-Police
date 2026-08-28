@@ -1,5 +1,7 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS postgis;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- ─── CAMERAS ─────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS cameras (
@@ -39,7 +41,7 @@ CREATE TABLE IF NOT EXISTS detections (
     id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     cam_id           UUID REFERENCES cameras(id) ON DELETE SET NULL,
     timestamp        TIMESTAMPTZ NOT NULL,
-    pts_ms           BIGINT      DEFAULT 0,
+    pts_ms            BIGINT      DEFAULT 0,
     detection_type   VARCHAR(50),
     bbox             JSONB,
     confidence       FLOAT,
@@ -65,7 +67,7 @@ CREATE TABLE IF NOT EXISTS alerts (
     acknowledged     BOOLEAN      DEFAULT FALSE,
     acknowledged_at  TIMESTAMPTZ,
     acknowledged_by  VARCHAR(255),
-    created_at       TIMESTAMPTZ  DEFAULT NOW()
+    created_at       TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- ─── GLOBAL TRACKS ───────────────────────────────────────────────────────────
@@ -100,7 +102,4 @@ CREATE INDEX IF NOT EXISTS idx_track_last    ON global_tracks(last_seen_at DESC)
 
 -- Note: Cameras are NOT seeded here.
 -- They are populated at runtime by ingestion/catalogue_sync.py
--- which calls http://live.corp8.cloud/api/ingest
 -- Versioned schema evolution is owned exclusively by api/migrations.py.
--- This bootstrap file intentionally creates only the base tables/extensions
--- required for a fresh PostgreSQL volume; it must not include migrations.
