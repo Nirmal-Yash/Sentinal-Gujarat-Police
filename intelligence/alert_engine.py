@@ -5,7 +5,10 @@ import uuid
 import time
 import logging
 import psycopg2
-from evidence_capture import capture_snapshot
+try:
+    from .evidence_capture import capture_snapshot
+except ImportError:
+    from evidence_capture import capture_snapshot
 
 log = logging.getLogger("alert_engine")
 DB_URL = os.getenv("DATABASE_URL", "")
