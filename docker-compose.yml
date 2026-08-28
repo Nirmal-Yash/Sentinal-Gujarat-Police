@@ -2,8 +2,6 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
     command: redis-server --maxmemory 2gb --maxmemory-policy allkeys-lru --save 60 1
@@ -19,12 +17,10 @@ services:
     environment:
       POSTGRES_DB: sentinel
       POSTGRES_USER: sentinel
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sentinelpass}
-    ports:
-      - "5432:5432"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be supplied}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
       - ./database/migrations:/migrations:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U sentinel -d sentinel"]
@@ -42,7 +38,7 @@ services:
         condition: service_healthy
     environment:
       - REDIS_URL=redis://redis:6379
-      - DATABASE_URL=postgresql://sentinel:${POSTGRES_PASSWORD:-sentinelpass}@postgres:5432/sentinel
+      - DATABASE_URL=postgresql://sentinel:${POSTGRES_PASSWORD}@postgres:5432/sentinel
       - INGEST_API=${INGEST_API:-http://live.corp8.cloud/api/ingest}
       - RTSP_HOST=${RTSP_HOST:-live.corp8.cloud}
       - FRAME_FPS=${FRAME_FPS:-3}
@@ -104,7 +100,7 @@ services:
         condition: service_healthy
     environment:
       - REDIS_URL=redis://redis:6379
-      - DATABASE_URL=postgresql://sentinel:${POSTGRES_PASSWORD:-sentinelpass}@postgres:5432/sentinel
+      - DATABASE_URL=postgresql://sentinel:${POSTGRES_PASSWORD}@postgres:5432/sentinel
       - FACE_SIM_THRESHOLD=${FACE_SIM_THRESHOLD:-0.65}
       - PLATE_MATCH_THRESHOLD=${PLATE_MATCH_THRESHOLD:-0.9}
       - ALERT_COOLDOWN=${ALERT_COOLDOWN:-60}
@@ -120,7 +116,7 @@ services:
         condition: service_healthy
     environment:
       - REDIS_URL=redis://redis:6379
-      - DATABASE_URL=postgresql://sentinel:${POSTGRES_PASSWORD:-sentinelpass}@postgres:5432/sentinel
+      - DATABASE_URL=postgresql://sentinel:${POSTGRES_PASSWORD}@postgres:5432/sentinel
       - TEST_MODE=true
 
   api:
@@ -135,18 +131,16 @@ services:
         condition: service_healthy
     environment:
       - REDIS_URL=redis://redis:6379
-      - DATABASE_URL=postgresql://sentinel:${POSTGRES_PASSWORD:-sentinelpass}@postgres:5432/sentinel
-      - SECRET_KEY=${SECRET_KEY:-sentinel-change-in-production}
+      - DATABASE_URL=postgresql://sentinel:${POSTGRES_PASSWORD}@postgres:5432/sentinel
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be supplied}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
-      - AUTH_REQUIRED=${AUTH_REQUIRED:-false}
+      - AUTH_REQUIRED=${AUTH_REQUIRED:-true}
       - JWT_TOKEN_HOURS=${JWT_TOKEN_HOURS:-8}
       - TEST_ENDPOINT_ENABLED=${TEST_ENDPOINT_ENABLED:-false}
       - TEST_VIDEO_DIR=/videos
       - TEST_UPLOAD_DIR=/test_videos
       - TEST_RTSP_BASE=rtsp://mediamtx:8554
       - TEST_HLS_BASE=/test-hls
-    ports:
-      - "8000:8000"
     volumes:
       - ./videos:/videos:ro
       - test_videos:/test_videos
