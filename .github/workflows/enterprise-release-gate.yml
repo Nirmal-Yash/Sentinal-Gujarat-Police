@@ -3,13 +3,15 @@ name: Enterprise release gate
 on:
   push:
     branches: ["refactor/enterprise-hardening"]
+  pull_request:
+    branches: ["test", "main"]
 
 jobs:
   release-gate:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_DB: sentinel_ci
           POSTGRES_USER: sentinel
@@ -43,12 +45,18 @@ jobs:
           python-version: "3.11"
       - name: Install Python dependencies
         run: python -m pip install --disable-pip-version-check psycopg2-binary redis bcrypt PyJWT numpy
+      - name: Install PostGIS into CI PostgreSQL service
+        shell: bash
+        run: |
+          POSTGRES_CONTAINER="$(docker ps --format '{{.ID}} {{.Image}}' | awk '$2=="pgvector/pgvector:pg16" {print $1; exit}')"
+          test -n "$POSTGRES_CONTAINER"
+          docker exec -u 0 "$POSTGRES_CONTAINER" bash -lc 'apt-get update && apt-get install -y --no-install-recommends postgresql-16-postgis-3 && rm -rf /var/lib/apt/lists/*'
       - name: Compile all refactor modules
         run: >-
           python -m py_compile
           ai_engine/*.py ai_engine/tests/*.py
           ingestion/*.py intelligence/*.py api/*.py api/routes/*.py
-      - name: Validate repository migrations
+      - name: Validate migration numbering and SQL structure
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -63,9 +71,12 @@ jobs:
           assert '012_sighting_deduplication.sql' not in [f.name for f in files]
           print(f'Validated {len(files)} migrations')
           PY
-      - name: Run fresh migration + idempotency verification
+      - name: Run fresh database bootstrap and migration idempotency verification
+        shell: bash
         run: |
           PGPASSWORD=sentinel psql -h 127.0.0.1 -U sentinel -d sentinel_ci -c 'CREATE DATABASE sentinel_release_ci;'
+          PGPASSWORD=sentinel psql -h 127.0.0.1 -U sentinel -d sentinel_release_ci -c 'CREATE EXTENSION IF NOT EXISTS postgis; CREATE EXTENSION IF NOT EXISTS pg_trgm;'
+          PGPASSWORD=sentinel psql -h 127.0.0.1 -U sentinel -d sentinel_release_ci -f database/init.sql
           DATABASE_URL=postgresql://sentinel:sentinel@localhost:5432/sentinel_release_ci MIGRATIONS_DIR=${{ github.workspace }}/database/migrations python -c "from api.migrations import apply_migrations; apply_migrations(); apply_migrations()"
       - name: Run final business-flow gate
         run: python scripts/final_integration_gate.py
