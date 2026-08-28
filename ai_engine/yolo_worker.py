@@ -77,7 +77,6 @@ def run():
     consumer = f"yolo-{uuid.uuid4().hex[:8]}"
     _ensure_group(r, IN_STREAM, GROUP)
     _ensure_group(r, RESET_STREAM, "reset_watchers")
-    _ensure_group(r, ANPR_STREAM, "anpr_probe")
     states = {}
     last_reset_id = b"0"
 
@@ -135,10 +134,8 @@ def run():
                         l, t, r2, b = [int(v) for v in track.to_ltrb()]
                         etype = track.det_class or "person"
                         track_conf = float(track.det_conf or 0.0)
-                        event = detection_event(
-                            data, etype, track_id=track.track_id, conf=track_conf,
-                            x1=l, y1=t, x2=r2, y2=b, frame_w=w, frame_h=h,
-                        )
+                        event = detection_event(data, etype, track_id=track.track_id, conf=track_conf,
+                                                x1=l, y1=t, x2=r2, y2=b, frame_w=w, frame_h=h)
                         r.xadd(OUT_STREAM, event, maxlen=OUT_MAX, approximate=True)
 
                         if etype not in VEHICLE_TYPES:
@@ -157,11 +154,9 @@ def run():
                         crop_b64 = _encode_crop(frame, l, t, r2, b)
                         if not crop_b64:
                             continue
-                        request = detection_event(
-                            data, "anpr_request", track_id=track.track_id, conf=track_conf,
-                            x1=l, y1=t, x2=r2, y2=b, frame_w=w, frame_h=h,
-                            vehicle_type=etype, vehicle_crop=crop_b64,
-                        )
+                        request = detection_event(data, "anpr_request", track_id=track.track_id, conf=track_conf,
+                                                  x1=l, y1=t, x2=r2, y2=b, frame_w=w, frame_h=h,
+                                                  vehicle_type=etype, vehicle_crop=crop_b64)
                         request[b"event_type"] = b"anpr_request"
                         r.xadd(ANPR_STREAM, request, maxlen=OUT_MAX, approximate=True)
                         state.last_anpr_dispatch[key] = now
