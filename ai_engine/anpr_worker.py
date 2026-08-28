@@ -103,6 +103,10 @@ def run():
     consumer = f"anpr-{uuid.uuid4().hex[:8]}"
     states = {}
     last_cleanup = time.monotonic()
+    # Only consume reset messages generated after this worker starts. Historical
+    # resets cannot invalidate freshly initialized state and replaying them on
+    # every loop would repeatedly clear active OCR state.
+    last_reset_id = "$"
     log.info("ANPR ready: track-driven requests interval=%ss gpu=%s", OCR_INTERVAL, gpu)
 
     while True:
@@ -117,7 +121,15 @@ def run():
             last_cleanup = now
 
         try:
-            r.xread({RESET_STREAM: b"0"}, count=20, block=1)
+            resets = r.xread({RESET_STREAM: last_reset_id}, count=20, block=1)
+            for _, entries in resets or []:
+                for reset_id, data in entries:
+                    cam = _bytes(data, "cam_id").decode()
+                    for key in [k for k in states if k.startswith(cam + ":")]:
+                        states.pop(key, None)
+                    for key in [f"{CONFIRMED_KEY_PREFIX}{k}" for k in list(states) if k.startswith(cam + ":")]:
+                        r.delete(key)
+                    last_reset_id = reset_id
             msgs = r.xreadgroup(GROUP, consumer, {IN_STREAM: ">"}, count=4, block=500)
         except redis.exceptions.ResponseError as exc:
             if "NOGROUP" in str(exc):
