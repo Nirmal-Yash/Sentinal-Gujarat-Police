@@ -48,7 +48,7 @@ def _upsert_journey(cur, vehicle_id: str, plate: str, timestamp: datetime, camer
     cur.execute("SELECT id FROM vehicle_identities WHERE canonical_key=%s", (vehicle_id,))
     identity_id = cur.fetchone()[0]
 
-    cur.execute("""SELECT id, started_at, ended_at FROM vehicle_journeys
+    cur.execute("""SELECT id FROM vehicle_journeys
                    WHERE vehicle_identity_id=%s
                      AND ended_at >= %s
                      AND started_at <= %s
@@ -56,7 +56,7 @@ def _upsert_journey(cur, vehicle_id: str, plate: str, timestamp: datetime, camer
                    FOR UPDATE""", (identity_id, timestamp - timedelta(seconds=CROSS_CAM_WINDOW), timestamp + timedelta(seconds=CROSS_CAM_WINDOW)))
     journey = cur.fetchone()
     if journey:
-        journey_id, previous_start, previous_end = journey
+        journey_id = journey[0]
         cur.execute("""UPDATE vehicle_journeys
                        SET started_at=LEAST(started_at,%s),
                            ended_at=GREATEST(ended_at,%s),
@@ -74,15 +74,27 @@ def _upsert_journey(cur, vehicle_id: str, plate: str, timestamp: datetime, camer
                        VALUES (%s,%s,%s,1,%s,'ACTIVE') RETURNING id""", (identity_id, timestamp, timestamp, confidence))
         journey_id = cur.fetchone()[0]
 
-    cur.execute("SELECT COALESCE(MAX(sequence_no),0)+1 FROM vehicle_journey_sightings WHERE journey_id=%s", (journey_id,))
-    sequence_no = cur.fetchone()[0]
+    # Event delivery can be delayed/out of order. Rebuild sequence numbers from
+    # source_timestamp after each accepted sighting so the investigation order
+    # is chronological rather than dependent on ingestion order.
     cur.execute("""INSERT INTO vehicle_journey_sightings(journey_id,sighting_id,sequence_no)
-                   VALUES (%s,%s::uuid,%s) ON CONFLICT (journey_id,sighting_id) DO NOTHING""", (journey_id, sighting_id, sequence_no))
+                   VALUES (%s,%s::uuid,1) ON CONFLICT (journey_id,sighting_id) DO NOTHING""", (journey_id, sighting_id))
+    cur.execute("""WITH ordered AS (
+                    SELECT js.sighting_id,
+                           ROW_NUMBER() OVER (ORDER BY s.source_timestamp ASC, s.created_at ASC, s.id ASC) AS seq
+                    FROM vehicle_journey_sightings js
+                    JOIN vehicle_sightings s ON s.id=js.sighting_id
+                    WHERE js.journey_id=%s
+                  )
+                  UPDATE vehicle_journey_sightings js
+                  SET sequence_no=ordered.seq
+                  FROM ordered
+                  WHERE js.journey_id=%s AND js.sighting_id=ordered.sighting_id""", (journey_id, journey_id))
     return str(journey_id)
 
 
 def persist(data: dict):
-    """Persist all analytics, but create business sightings only from confirmed ANPR."""
+    """Persist analytics; only explicitly confirmed ANPR becomes a business sighting."""
     detection_id = _text(data, "detection_id") or _text(data, "event_id")
     if not detection_id:
         return None
@@ -90,7 +102,6 @@ def persist(data: dict):
     timestamp, timestamp_origin = _timestamp(data)
     plate = normalize_plate(_text(data, "plate_text"))
     confidence = max(0.0, min(1.0, float(_text(data, "conf", "0") or 0)))
-    vehicle_id = f"plate:{plate}" if plate else None
     bbox = {key: _text(data, key) for key in ("x1", "y1", "x2", "y2") if key.encode() in data}
     metadata = {
         "schema_version": _text(data, "schema_version", "1.0"),
@@ -107,14 +118,14 @@ def persist(data: dict):
         with conn.cursor() as cur:
             cur.execute("""INSERT INTO detections
               (id,cam_id,timestamp,pts_ms,detection_type,bbox,confidence,track_id,global_track_id,plate_text,metadata)
-              VALUES (%s::uuid,%s::uuid,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s::jsonb)
+              VALUES (%s::uuid,%s::uuid,%s,%s,%s,%s::jsonb,%s,%s,NULL,%s,%s::jsonb)
               ON CONFLICT (id) DO NOTHING""",
               (detection_id, camera_id, timestamp, int(_text(data, "pts_ms", "0") or 0), _text(data, "detection_type"),
-               json.dumps(bbox), confidence, _text(data, "track_id") or None, vehicle_id, plate, json.dumps(metadata)))
-            # Raw OCR/detection evidence remains searchable, but it must not
-            # become a vehicle identity, journey sighting or watchlist input
-            # until the ANPR worker has explicitly confirmed it.
-            is_confirmed = _truthy(data, "plate_validated") and (_truthy(data, "anpr_consensus") or not _text(data, "anpr_consensus"))
+               json.dumps(bbox), confidence, _text(data, "track_id") or None, plate, json.dumps(metadata)))
+
+            # Raw/uncertain OCR remains available as analytics evidence but is
+            # never promoted to a business identity, journey or watchlist match.
+            is_confirmed = _truthy(data, "plate_validated") and _truthy(data, "anpr_consensus")
             if not plate or not is_confirmed:
                 conn.commit()
                 return {"timestamp": timestamp, "plate": plate, "global_vehicle_id": None, "journey_id": None,
@@ -130,7 +141,7 @@ def persist(data: dict):
               RETURNING id""",
               (event_id, detection_id, _text(data, "raw_ocr") or plate, plate, camera_id, timestamp, confidence,
                _text(data, "vehicle_type") or _text(data, "detection_type"), _text(data, "track_id") or None,
-               vehicle_id, json.dumps({"detector": "yolov8", "ocr": "easyocr"}), bucket))
+               f"plate:{plate}", json.dumps({"detector": "yolov8", "ocr": "easyocr"}), bucket))
             inserted = cur.fetchone()
             if not inserted:
                 cur.execute("""SELECT id,journey_id FROM vehicle_sightings
@@ -138,17 +149,17 @@ def persist(data: dict):
                     ORDER BY confidence DESC, created_at ASC LIMIT 1""", (camera_id, plate, bucket))
                 duplicate = cur.fetchone()
                 conn.commit()
-                return {"timestamp": timestamp, "plate": plate, "global_vehicle_id": vehicle_id,
+                return {"timestamp": timestamp, "plate": plate, "global_vehicle_id": f"plate:{plate}",
                         "journey_id": str(duplicate[1]) if duplicate and duplicate[1] else None,
                         "duplicate": True, "business_sighting": True}
 
             sighting_id = str(inserted[0])
-            journey_id = _upsert_journey(cur, vehicle_id, plate, timestamp, camera_id, confidence, sighting_id)
+            journey_id = _upsert_journey(cur, f"plate:{plate}", plate, timestamp, camera_id, confidence, sighting_id)
             cur.execute("UPDATE vehicle_sightings SET journey_id=%s::uuid WHERE id=%s::uuid", (journey_id, sighting_id))
         conn.commit()
     finally:
         conn.close()
-    return {"timestamp": timestamp, "plate": plate, "global_vehicle_id": vehicle_id, "journey_id": journey_id,
+    return {"timestamp": timestamp, "plate": plate, "global_vehicle_id": f"plate:{plate}", "journey_id": journey_id,
             "duplicate": False, "business_sighting": True}
 
 
