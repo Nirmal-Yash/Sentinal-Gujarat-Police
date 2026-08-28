@@ -16,10 +16,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [INGEST][%(levelname
 log = logging.getLogger(__name__)
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 DB_URL = os.getenv("DATABASE_URL", "")
-FRAME_FPS = float(os.getenv("FRAME_FPS", "3"))
+FRAME_FPS = max(0.5, float(os.getenv("FRAME_FPS", "3")))
 JPEG_Q = int(os.getenv("JPEG_QUALITY", "70"))
-MAX_CAMS = int(os.getenv("MAX_CONCURRENT_CAMERAS", "50"))
-CATALOGUE_SYNC_INTERVAL = int(os.getenv("CATALOGUE_SYNC_INTERVAL", "300"))
+MAX_CAMS = max(1, int(os.getenv("MAX_CONCURRENT_CAMERAS", "50")))
+CATALOGUE_SYNC_INTERVAL = max(30, int(os.getenv("CATALOGUE_SYNC_INTERVAL", "300")))
+RECONNECT_MAX_DELAY = max(5, int(os.getenv("RECONNECT_MAX_DELAY", "30")))
 STREAM_KEY = "raw_frames"; STREAM_MAX = 3000
 ENCODE_PARAMS = [cv2.IMWRITE_JPEG_QUALITY, JPEG_Q]
 
@@ -55,7 +56,7 @@ def update_runtime_observation(cam_id, width, height, source_fps, decode_fps, pu
                 observed_published_fps=%s,observed_codec=%s,observed_at=NOW(),
                 last_frame_at=NOW(),last_seen_at=NOW(),
                 health_status=%s,connectivity_status=%s,updated_at=NOW() WHERE id=%s""",
-                (width, height, source_fps, source_fps, decode_fps, published_fps, codec, health, connectivity, str(cam_id)))
+                (width, height, source_fps, decode_fps, published_fps, codec, health, connectivity, str(cam_id)))
             cur.execute("""INSERT INTO camera_health_observations
                 (camera_id,health_status,source_fps,decode_fps,published_fps,reconnect_count,decode_failure_count)
                 SELECT id,%s,%s,%s,%s,reconnect_count,decode_failure_count FROM cameras WHERE id=%s""",
@@ -73,10 +74,17 @@ class CameraWorker:
 
     def _reconnect(self):
         delay = 2
-        while True:
-            log.info("%s: reconnecting in %ss", self.name, delay); time.sleep(delay); cap = self._open()
-            if cap.isOpened(): log.info("%s: reconnected", self.name); return cap
-            cap.release(); delay = min(delay * 2, 30)
+        attempts = 0
+        while attempts < 6:
+            attempts += 1
+            log.info("%s: reconnecting in %ss (attempt %s/6)", self.name, delay, attempts)
+            time.sleep(delay)
+            cap = self._open()
+            if cap.isOpened():
+                log.info("%s: reconnected", self.name)
+                return cap
+            cap.release(); delay = min(delay * 2, RECONNECT_MAX_DELAY)
+        return None
 
     def _encode(self, frame):
         ok, buf = cv2.imencode(".jpg", frame, ENCODE_PARAMS)
@@ -89,16 +97,31 @@ class CameraWorker:
         self.r.xadd(STREAM_KEY, fields, maxlen=STREAM_MAX, approximate=True); self.r.set(f"snapshot:{self.cam_id}", frame_b64.encode(), ex=10)
 
     def run(self):
-        log.info("Starting %s → %s", self.name, self.url); set_status(self.cam_id, "active"); cap = self._open()
-        reported_fps = cap.get(cv2.CAP_PROP_FPS) if cap.isOpened() else 0.0; source_fps = reported_fps if 0 < reported_fps <= 120 else None
+        log.info("Starting %s → %s", self.name, self.url)
+        cap = self._open()
+        if not cap.isOpened():
+            set_status(self.cam_id, "offline")
+        else:
+            set_status(self.cam_id, "active")
         last_t = 0.0; fail_streak = 0; prev_pts = None; observed_started = time.monotonic(); observed_frames = 0; published_frames = 0; last_health_write = 0.0
         try:
             while True:
+                if cap is None or not cap.isOpened():
+                    set_status(self.cam_id, "offline")
+                    cap = self._reconnect()
+                    if cap is None:
+                        # Do not pin the camera worker in a permanent reconnect loop.
+                        # Report offline, wait briefly, then retry and remain isolated.
+                        time.sleep(10)
+                        continue
+                    set_status(self.cam_id, "active")
+                    fail_streak = 0; prev_pts = None
+                    observed_started = time.monotonic(); observed_frames = 0; published_frames = 0; last_health_write = 0.0
                 ret, frame = cap.read()
                 if not ret:
                     fail_streak += 1
                     if fail_streak >= 15:
-                        cap.release(); set_status(self.cam_id, "reconnecting"); cap = self._reconnect(); reported_fps = cap.get(cv2.CAP_PROP_FPS) if cap.isOpened() else 0.0; source_fps = reported_fps if 0 < reported_fps <= 120 else None; fail_streak = 0; prev_pts = None; set_status(self.cam_id, "active")
+                        cap.release(); cap = None; set_status(self.cam_id, "reconnecting")
                     time.sleep(0.05); continue
                 fail_streak = 0; observed_frames += 1; pts_ms = cap.get(cv2.CAP_PROP_POS_MSEC); now = time.monotonic()
                 if now - last_t < self.interval: continue
@@ -111,10 +134,11 @@ class CameraWorker:
                 except Exception as exc: log.error("%s: publish error: %s", self.name, exc)
                 if now - last_health_write >= 30:
                     elapsed = max(now - observed_started, 0.001)
-                    update_runtime_observation(self.cam_id, w, h, source_fps, round(observed_frames / elapsed, 2), round(published_frames / elapsed, 2), self.codec)
+                    update_runtime_observation(self.cam_id, w, h, source_fps=None, decode_fps=round(observed_frames / elapsed, 2), published_fps=round(published_frames / elapsed, 2), codec=self.codec)
                     observed_started = now; observed_frames = 0; published_frames = 0; last_health_write = now
         finally:
-            cap.release(); set_status(self.cam_id, "offline")
+            if cap is not None: cap.release()
+            set_status(self.cam_id, "offline")
 
 
 def run_worker(cam):
