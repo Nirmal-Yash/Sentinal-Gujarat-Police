@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
 
 import psycopg2
 import redis
@@ -25,6 +30,7 @@ def db():
 
 def setup_schema():
     with db() as conn, conn.cursor() as cur:
+        cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
         cur.execute("""
         CREATE TABLE cameras (
             id UUID PRIMARY KEY, stream_id INTEGER UNIQUE, name TEXT NOT NULL,
@@ -75,7 +81,6 @@ def setup_schema():
             embedding TEXT, identity_source TEXT, last_confidence DOUBLE PRECISION, metadata JSONB DEFAULT '{}'::jsonb
         );
         """)
-        cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
         cur.execute("INSERT INTO cameras(id,stream_id,name) VALUES (%s,1,'P0 E2E Camera')", (CAMERA_ID,))
         conn.commit()
 
@@ -90,10 +95,6 @@ def counts():
 
 
 def main():
-    # Extension must exist before setup tables with gen_random_uuid defaults.
-    with db() as conn, conn.cursor() as cur:
-        cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
-        conn.commit()
     setup_schema()
     r = redis.from_url(REDIS_URL)
     r.flushdb()
@@ -117,7 +118,6 @@ def main():
     second = persist({**payload, b"event_id": str(uuid.uuid4()).encode(), b"detection_id": str(uuid.uuid4()).encode(), b"pts_ms": b"1100"})
     second_latency_ms = (time.perf_counter() - second_start) * 1000
 
-    # Same confirmed business entity must deduplicate its sighting in the same bucket.
     after_sightings = counts()
     assert first["duplicate"] is False, first
     assert second["duplicate"] is True, second
@@ -136,11 +136,11 @@ def main():
     alert_2 = engine.fire(r, dict(alert_payload))
     alert_latency_ms = (time.perf_counter() - alert_start) * 1000
     final = counts()
-    assert alert_1 and alert_2 is None, (alert_1, alert_2)
+    assert bool(alert_1) and alert_2 is None, (alert_1, alert_2)
     assert final["alerts"] == 1, final
     assert r.xlen("alerts") == 1, r.xlen("alerts")
 
-    result = {
+    print(json.dumps({
         "status": "PASS",
         "detection_sighting_reconciliation": {
             "detections": final["detections"],
@@ -154,9 +154,8 @@ def main():
             "duplicate_sighting": round(second_latency_ms, 3),
             "alert_persistence_and_publish": round(alert_latency_ms, 3),
         },
-        "notes": "This verifies the runtime persistence/alert data plane. Model-level ANPR accuracy requires a labeled video ground-truth dataset and is measured by the separate benchmark harness when supplied.",
-    }
-    print(json.dumps(result, indent=2))
+        "model_accuracy_status": "NOT_MEASURED_WITHOUT_LABELED_VIDEO_GROUND_TRUTH",
+    }, indent=2))
 
 
 if __name__ == "__main__":
