@@ -1,12 +1,11 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from auth import require_authenticated
+from auth import require_permission, Principal
 from database import get_db
-from typing import Optional
 import re
 from sqlalchemy import text
 
-router = APIRouter(prefix="/search", tags=["search"], dependencies=[Depends(require_authenticated)])
+router = APIRouter(prefix="/search", tags=["search"], dependencies=[Depends(require_permission("search:read"))])
 
 @router.get("/cameras")
 async def search_cameras(q: str = Query(..., min_length=1, max_length=100), limit: int = Query(20, ge=1, le=100), offset: int = Query(0, ge=0), db: AsyncSession = Depends(get_db)):
@@ -84,7 +83,7 @@ async def search_by_track(global_track_id: str, db: AsyncSession = Depends(get_d
     return {"global_track_id": global_track_id, "sightings": rows}
 
 @router.get("/alerts/recent")
-async def recent_alerts(minutes: int = Query(60, ge=1, le=1440), priority: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+async def recent_alerts(minutes: int = Query(60, ge=1, le=1440), priority: str | None = None, db: AsyncSession = Depends(get_db)):
     q = """SELECT a.id,a.alert_type,a.priority,a.confidence,a.entity_type,a.details,a.created_at,a.status,c.name AS cam_name,c.lat,c.lng
            FROM alerts a LEFT JOIN cameras c ON c.id=a.cam_id WHERE a.created_at > NOW() - (:minutes || ' minutes')::INTERVAL"""
     params = {"minutes": minutes}
