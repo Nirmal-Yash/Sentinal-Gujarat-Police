@@ -80,12 +80,12 @@ def main() -> int:
     require("evidence_data:/evidence" in compose, "shared durable evidence volume is configured")
     workflow = (ROOT / ".github" / "workflows" / "refactor-regression.yml").read_text(encoding="utf-8")
     for fragment, message in [
-        ("ingestion/worker.py", "CI compiles the actual ingestion supervisor"),
-        ("intelligence/evidence_capture.py", "CI compiles evidence capture"),
-        ("intelligence/test_evidence_capture.py", "CI runs evidence capture regression"),
-        ("intelligence/test_sighting_store.py", "CI runs test-mode persistence regression"),
-        ("api/routes/evidence.py", "CI compiles the evidence API"),
-        ("api/routes/operations.py", "CI compiles the operations API"),
+        ("python -m py_compile ingestion/worker.py", "CI compiles the actual ingestion supervisor"),
+        ("python -m py_compile intelligence/evidence_capture.py", "CI compiles evidence capture"),
+        ("python -m unittest test_evidence_capture.py -v", "CI runs evidence capture regression"),
+        ("python -m unittest test_sighting_store.py -v", "CI runs test-mode persistence regression"),
+        ("python -m py_compile api/routes/evidence.py", "CI compiles the evidence API"),
+        ("python -m py_compile api/routes/operations.py", "CI compiles the operations API"),
         ("scripts/p0_runtime_e2e.py", "CI executes P0 runtime data-plane E2E"),
         ("scripts/anpr_benchmark.py", "CI executes the ANPR benchmark harness"),
         ("scripts/registry_load_smoke.py", "CI executes the 50-camera registry smoke"),
