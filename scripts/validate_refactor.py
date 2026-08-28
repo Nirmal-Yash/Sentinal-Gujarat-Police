@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fast, dependency-light regression gates for the enterprise-hardening branch."""
 from __future__ import annotations
-import pathlib, sys, time
+import pathlib, sys, time, subprocess
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path: sys.path.insert(0, str(ROOT))
 from ai_engine import anpr_policy as ai
@@ -31,6 +31,7 @@ def main() -> int:
         ("database/migrations/012_runtime_integrity_and_dedup.sql", "runtime dedup/integrity migration exists"),
         ("database/migrations/016_evidence_and_operational_integrity.sql", "evidence/operational integrity migration exists"),
         ("database/migrations/017_evidence_capture_integrity.sql", "evidence capture integrity migration exists"),
+        ("scripts/registry_load_smoke.py", "50-camera registry load smoke exists"),
         ("api/routes/evidence.py", "evidence API exists"),
         ("api/routes/operations.py", "operational health API exists"),
         ("intelligence/evidence_capture.py", "alert evidence capture utility exists"),
@@ -39,10 +40,12 @@ def main() -> int:
     ]
     for rel, message in required_paths: require((ROOT / rel).exists(), message)
     auth_source = (ROOT / "api/auth.py").read_text(encoding="utf-8")
-    for permission in ("camera:read", "camera:write", "alert:operate", "search:read", "report:read", "evidence:read", "evidence:create", "registry:admin", "system:admin"):
+    for permission in ("camera:read", "camera:write", "alert:read", "alert:operate", "search:read", "report:read", "evidence:read", "evidence:create", "registry:admin", "system:admin"):
         require(permission in auth_source, f"RBAC permission exists: {permission}")
     alerts_source = (ROOT / "api/routes/alerts.py").read_text(encoding="utf-8")
     for fragment, message in [
+        ('require_permission("alert:read")', "alert reads enforce alert permission"),
+        ('require_permission("alert:operate")', "alert operations enforce alert permission"),
         ('"NEW": {"ACKNOWLEDGED"}', "NEW alert has a safe acknowledgement transition"),
         ('"ACKNOWLEDGED": {"INVESTIGATING", "RESOLVED"}', "acknowledged alert supports investigation/resolution"),
         ('"INVESTIGATING": {"RESOLVED"}', "investigating alert resolves only after investigation"),
@@ -50,6 +53,10 @@ def main() -> int:
         ('"CLOSED": set()', "closed alert is terminal"),
         ('alert_status_changed', "alert status transitions have a realtime event type"),
     ]: require(fragment in alerts_source, message)
+    search_source = (ROOT / "api/routes/search.py").read_text(encoding="utf-8")
+    require('require_permission("search:read")' in search_source, "search APIs enforce search permission")
+    reports_source = (ROOT / "api/routes/reports.py").read_text(encoding="utf-8")
+    require('require_permission("report:read")' in reports_source, "report APIs enforce report permission")
     operations_source = (ROOT / "api/routes/operations.py").read_text(encoding="utf-8")
     require('"/overview"' in operations_source, "operations overview endpoint exists")
     require("cameras_healthy" in operations_source and "active_journeys" in operations_source, "operations overview exposes fleet and investigation metrics")
@@ -58,6 +65,10 @@ def main() -> int:
     require("/{evidence_id}/content" in evidence_source, "evidence content endpoint exists")
     alert_source = (ROOT / "intelligence/alert_engine.py").read_text(encoding="utf-8")
     require("capture_snapshot" in alert_source and "INSERT INTO evidence" in alert_source, "alerts attempt durable snapshot evidence capture")
+    persistence_source = (ROOT / "intelligence/sighting_store.py").read_text(encoding="utf-8")
+    require("business_sighting" in persistence_source and "plate_validated" in persistence_source, "only confirmed ANPR observations become business sightings")
+    ingestion_source = (ROOT / "ingestion/worker.py").read_text(encoding="utf-8")
+    require("RECONNECT_MAX_DELAY" in ingestion_source and "time.sleep(10)" in ingestion_source, "camera reconnect is bounded and non-blocking at fleet level")
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     require("evidence_data:/evidence" in compose, "shared durable evidence volume is configured")
     workflow = (ROOT / ".github" / "workflows" / "refactor-regression.yml").read_text(encoding="utf-8")
@@ -65,13 +76,23 @@ def main() -> int:
         ("ingestion/worker.py", "CI compiles the actual ingestion supervisor"),
         ("intelligence/evidence_capture.py", "CI compiles evidence capture"),
         ("intelligence/test_evidence_capture.py", "CI runs evidence capture regression"),
+        ("intelligence/test_sighting_store.py", "CI runs test-mode persistence regression"),
         ("api/routes/evidence.py", "CI compiles the evidence API"),
         ("api/routes/operations.py", "CI compiles the operations API"),
         ("scripts/p0_runtime_e2e.py", "CI executes P0 runtime data-plane E2E"),
         ("scripts/anpr_benchmark.py", "CI executes the ANPR benchmark harness"),
+        ("scripts/registry_load_smoke.py", "CI executes the 50-camera registry smoke"),
+        ("git ls-files .env", "CI checks tracked environment files"),
         ("npm run build", "CI executes dashboard production build"),
         ("docker compose config -q", "CI validates Compose configuration"),
     ]: require(fragment in workflow, message)
+    try:
+        tracked = subprocess.run(["git", "ls-files", ".env"], cwd=ROOT, check=True, text=True, capture_output=True).stdout.strip()
+        require(not tracked, "no .env file is tracked")
+        artifacts = subprocess.run(["git", "ls-files"], cwd=ROOT, check=True, text=True, capture_output=True).stdout.splitlines()
+        require(not any("__pycache__/" in path or path.endswith(".pyc") for path in artifacts), "no compiled Python artifacts are tracked")
+    except Exception as exc:
+        require(False, f"repository hygiene inspection executes: {exc}")
     if FAILURES:
         print(f"\n{len(FAILURES)} refactor gate(s) failed."); return 1
     print("\nAll refactor gates passed."); return 0
