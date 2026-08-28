@@ -15,6 +15,12 @@ ALGORITHM = "HS256"
 TOKEN_HOURS = int(os.getenv("JWT_TOKEN_HOURS", "8"))
 security = HTTPBearer(auto_error=False)
 ROLE_ORDER = {"VIEWER": 1, "OPERATOR": 2, "ADMIN": 3, "SUPERADMIN": 4}
+ROLE_PERMISSIONS = {
+    "VIEWER": {"camera:read", "alert:read", "search:read", "evidence:read"},
+    "OPERATOR": {"camera:read", "alert:read", "alert:operate", "search:read", "evidence:read", "evidence:create"},
+    "ADMIN": {"camera:read", "camera:write", "alert:read", "alert:operate", "search:read", "report:read", "evidence:read", "evidence:create", "registry:admin"},
+    "SUPERADMIN": {"camera:read", "camera:write", "alert:read", "alert:operate", "search:read", "report:read", "evidence:read", "evidence:create", "registry:admin", "system:admin"},
+}
 
 @dataclass(frozen=True)
 class Principal:
@@ -23,11 +29,14 @@ class Principal:
     role: str
     jti: str | None = None
 
+
 def hash_password(value: str) -> str:
     return bcrypt.hashpw(value.encode(), bcrypt.gensalt()).decode()
 
+
 def verify_password(value: str, stored: str) -> bool:
     return bcrypt.checkpw(value.encode(), stored.encode())
+
 
 def issue_token(user_id: str, username: str, role: str) -> tuple[str, str, datetime]:
     if not SECRET_KEY or SECRET_KEY == "sentinel-change-in-production":
@@ -36,6 +45,7 @@ def issue_token(user_id: str, username: str, role: str) -> tuple[str, str, datet
     jti = str(uuid.uuid4())
     token = jwt.encode({"sub": user_id, "username": username, "role": role, "jti": jti, "exp": expires}, SECRET_KEY, algorithm=ALGORITHM)
     return token, jti, expires
+
 
 async def current_principal(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
@@ -46,6 +56,7 @@ async def current_principal(
     if not credentials or credentials.scheme.lower() != "bearer":
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Bearer token required")
     return await principal_from_token(credentials.credentials, db)
+
 
 async def principal_from_token(token: str, db: AsyncSession) -> Principal:
     """Validate a live JWT session for both HTTP and WebSocket transports."""
@@ -61,8 +72,22 @@ async def principal_from_token(token: str, db: AsyncSession) -> Principal:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session is no longer valid")
     return Principal(user_id, row["username"], row["role"], jti)
 
+
 async def require_authenticated(principal: Principal = Depends(current_principal)) -> Principal:
     return principal
+
+
+def has_permission(principal: Principal, permission: str) -> bool:
+    return permission in ROLE_PERMISSIONS.get(principal.role, set())
+
+
+def require_permission(permission: str):
+    async def dependency(principal: Principal = Depends(current_principal)) -> Principal:
+        if not has_permission(principal, permission):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, f"Permission required: {permission}")
+        return principal
+    return dependency
+
 
 def require_role(minimum: str):
     async def dependency(principal: Principal = Depends(current_principal)) -> Principal:
