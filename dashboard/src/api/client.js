@@ -20,7 +20,7 @@ export const api = {
   getCameraStats:  ()            => req('/cameras/stats/summary'),
   getPipelineStats:()            => req('/cameras/pipeline/stats'),
   getRecentAnalytics: ()         => req('/cameras/analytics/recent'),
-  getAlerts:       (p = {})     => req('/alerts/?' + new URLSearchParams(p)),
+  getAlerts:       (p = {})      => req('/alerts/?' + new URLSearchParams(p)),
   getAlertCounts:  ()            => req('/alerts/stats/counts'),
   ackAlert:        (id)          => req(`/alerts/${id}/acknowledge`, { method: 'POST' }),
   transitionAlert: (id, status, reason = '') => req(`/alerts/${id}/transition?target_status=${encodeURIComponent(status)}${reason ? `&reason=${encodeURIComponent(reason)}` : ''}`, { method: 'POST' }),
@@ -49,7 +49,10 @@ export const api = {
     const token = localStorage.getItem('sentinel.jwt'); const res = await fetch(`${BASE}/test/sessions/${id}/results/export`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`); return res.blob()
   },
-  downloadDetections: async ()   => {
+  listEvidence: (params = {}) => req('/evidence/?' + new URLSearchParams(params)),
+  createEvidence: (body) => req('/evidence/', { method: 'POST', body: JSON.stringify(body) }),
+  getEvidence: (id) => req(`/evidence/${id}`),
+  downloadDetections: async () => {
     const token = localStorage.getItem('sentinel.jwt'); const res = await fetch(`${BASE}/reports/detections?format=csv`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`); return res.blob()
   },
