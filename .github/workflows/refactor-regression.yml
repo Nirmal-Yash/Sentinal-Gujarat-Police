@@ -19,11 +19,14 @@ jobs:
           python -m py_compile
           ai_engine/anpr_policy.py ai_engine/anpr_worker.py ai_engine/yolo_worker.py ai_engine/event_schema.py
           ingestion/catalogue_sync.py ingestion/worker.py ingestion/test_runner.py
-          intelligence/main.py intelligence/anpr_policy.py intelligence/alert_engine.py intelligence/sighting_store.py
+          intelligence/main.py intelligence/alert_engine.py intelligence/sighting_store.py intelligence/cross_camera.py intelligence/watchlist_engine.py
           api/models.py api/auth.py api/routes/alerts.py api/routes/cameras.py api/routes/reports.py api/routes/search.py api/routes/test.py
       - name: Run deterministic ANPR policy tests
         working-directory: ai_engine
         run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Run durable sighting tests
+        working-directory: intelligence
+        run: python -m unittest test_sighting_store.py -v
       - name: Validate refactor invariants
         run: python scripts/validate_refactor.py
       - name: Validate Compose configuration
