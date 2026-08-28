@@ -36,21 +36,21 @@ def main():
     if TEST_MODE:
         return test_main()
 
-    from cross_camera    import CrossCameraTracker
+    from cross_camera import CrossCameraTracker
     from watchlist_engine import WatchlistEngine
-    from alert_engine    import AlertEngine
-    from sighting_store  import persist, persist_person_track, normalize_plate
+    from alert_engine import AlertEngine
+    from sighting_store import persist, persist_person_track, normalize_plate
 
-    tracker   = CrossCameraTracker()
+    tracker = CrossCameraTracker()
     watchlist = WatchlistEngine()
-    alerter   = AlertEngine()
+    alerter = AlertEngine()
 
-    import redis, base64, json, uuid
+    import redis, base64, uuid
     import numpy as np
 
-    r        = redis.from_url(REDIS_URL, decode_responses=False)
-    GROUP    = "intelligence"
-    STREAM   = "detections"
+    r = redis.from_url(REDIS_URL, decode_responses=False)
+    GROUP = "intelligence"
+    STREAM = "detections"
 
     try:
         r.xgroup_create(STREAM, GROUP, id="$", mkstream=True)
@@ -68,7 +68,7 @@ def main():
         for _, entries in msgs:
             for msg_id, data in entries:
                 try:
-                    dtype  = data.get(b"detection_type", b"").decode()
+                    dtype = data.get(b"detection_type", b"").decode()
                     cam_id = data.get(b"cam_id", b"").decode()
                     det_id = data.get(b"detection_id", str(uuid.uuid4()).encode()).decode()
                     persisted = persist(data)
@@ -81,34 +81,34 @@ def main():
                         raw = base64.b64decode(data[b"embedding"])
                         emb = np.frombuffer(raw, dtype=np.float32).copy()
 
-                    # Only a confirmed/validated plate is allowed to become a
-                    # business-level watchlist match or vehicle sighting.
+                    # Business-level plate correlation is deliberately strict:
+                    # both explicit validation and explicit temporal consensus
+                    # must be present. Raw OCR can remain diagnostic data but
+                    # can never create a police watchlist alert.
                     plate = normalize_plate(data.get(b"plate_text", b"").decode() or None)
                     plate_validated = _is_true(data.get(b"plate_validated", b"").decode())
                     plate_consensus = _is_true(data.get(b"anpr_consensus", b"").decode())
-                    plate_confirmed = dtype == "plate" and plate_validated and (plate_consensus or not data.get(b"anpr_consensus"))
+                    plate_confirmed = dtype == "plate" and plate_validated and plate_consensus and persisted.get("business_sighting") is True
 
-                    # ── Watchlist match (face or confirmed plate) ────────
                     if (dtype == "face" and emb is not None) or plate_confirmed:
                         hit = watchlist.match(emb if dtype == "face" else None, plate if plate_confirmed else None)
                         if hit:
                             alerter.fire(r, {
                                 "detection_id": det_id,
-                                "cam_id":       cam_id,
-                                "alert_type":   "watchlist_match",
-                                "priority":     hit.get("priority", "HIGH"),
-                                "confidence":   hit.get("score", 0.9),
-                                "entity_type":  dtype,
+                                "cam_id": cam_id,
+                                "alert_type": "watchlist_match",
+                                "priority": hit.get("priority", "HIGH"),
+                                "confidence": hit.get("score", 0.9),
+                                "entity_type": dtype,
                                 "event_timestamp": ts,
                                 "details": {
                                     "watchlist_name": hit.get("name"),
-                                    "match_type":     dtype,
-                                    "plate_text":     plate if plate_confirmed else None,
-                                    "description":    hit.get("description", ""),
+                                    "match_type": dtype,
+                                    "plate_text": plate if plate_confirmed else None,
+                                    "description": hit.get("description", ""),
                                 },
                             })
 
-                    # ── Cross-camera tracking (face embeddings) ──────────
                     if dtype == "face" and emb is not None:
                         global_id = tracker.assign(cam_id, det_id, emb, ts)
                         persist_person_track(det_id, global_id, cam_id, persisted["timestamp"],
@@ -116,11 +116,11 @@ def main():
                         if tracker.is_new_camera(global_id, cam_id):
                             alerter.fire(r, {
                                 "detection_id": det_id,
-                                "cam_id":       cam_id,
-                                "alert_type":   "cross_camera_sighting",
-                                "priority":     "MEDIUM",
-                                "confidence":   0.75,
-                                "entity_type":  "person",
+                                "cam_id": cam_id,
+                                "alert_type": "cross_camera_sighting",
+                                "priority": "MEDIUM",
+                                "confidence": 0.75,
+                                "entity_type": "person",
                                 "event_timestamp": ts,
                                 "details": {
                                     "global_track_id": global_id,
@@ -128,20 +128,19 @@ def main():
                                 },
                             })
 
-                    # ── Anomaly alerts ───────────────────────────────────
                     if dtype == "anomaly":
                         score = float(data.get(b"anomaly_score", b"0"))
                         atype = data.get(b"anomaly_type", b"unknown").decode()
-                        prio  = "HIGH" if score > 0.7 else "MEDIUM"
+                        prio = "HIGH" if score > 0.7 else "MEDIUM"
                         alerter.fire(r, {
                             "detection_id": det_id,
-                            "cam_id":       cam_id,
-                            "alert_type":   f"anomaly_{atype}",
-                            "priority":     prio,
-                            "confidence":   score,
-                            "entity_type":  "unknown",
+                            "cam_id": cam_id,
+                            "alert_type": f"anomaly_{atype}",
+                            "priority": prio,
+                            "confidence": score,
+                            "entity_type": "unknown",
                             "event_timestamp": ts,
-                            "details":      {"anomaly_type": atype, "score": score},
+                            "details": {"anomaly_type": atype, "score": score},
                         })
 
                 except Exception as e:
