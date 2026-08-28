@@ -18,11 +18,16 @@ jobs:
         run: >-
           python -m py_compile
           ai_engine/anpr_policy.py ai_engine/anpr_worker.py ai_engine/yolo_worker.py ai_engine/event_schema.py
-          ingestion/catalogue_sync.py ingestion/rtsp_worker.py
+          ingestion/catalogue_sync.py ingestion/worker.py ingestion/test_runner.py
           intelligence/main.py intelligence/anpr_policy.py intelligence/alert_engine.py intelligence/sighting_store.py
+          api/models.py api/auth.py api/routes/alerts.py api/routes/cameras.py api/routes/reports.py api/routes/search.py api/routes/test.py
       - name: Run deterministic ANPR policy tests
         working-directory: ai_engine
         run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Validate refactor invariants
+        run: python scripts/validate_refactor.py
+      - name: Validate Compose configuration
+        run: docker compose config -q
 
   dashboard-build:
     runs-on: ubuntu-latest
@@ -33,10 +38,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: dashboard/package-lock.json
+          node-version: "24"
       - name: Install dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund
       - name: Production build
         run: npm run build
