@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_DB: sentinel_ci
           POSTGRES_USER: sentinel
@@ -44,16 +44,28 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install PostGIS into CI PostgreSQL service
+        shell: bash
+        run: |
+          POSTGRES_CONTAINER="$(docker ps --format '{{.ID}} {{.Image}}' | awk '$2=="pgvector/pgvector:pg16" {print $1; exit}')"
+          test -n "$POSTGRES_CONTAINER"
+          docker exec -u 0 "$POSTGRES_CONTAINER" bash -lc 'apt-get update && apt-get install -y --no-install-recommends postgresql-16-postgis-3 && rm -rf /var/lib/apt/lists/*'
       - name: Install Python test dependencies
-        run: python -m pip install --disable-pip-version-check psycopg2-binary redis
+        run: python -m pip install --disable-pip-version-check psycopg2-binary redis bcrypt PyJWT numpy
+      - name: Bootstrap CI schema
+        shell: bash
+        run: |
+          PGPASSWORD=sentinel psql -h 127.0.0.1 -U sentinel -d sentinel_ci -f database/init.sql
       - name: Compile core Python modules
         run: >-
           python -m py_compile
-          ai_engine/anpr_policy.py ai_engine/anpr_worker.py ai_engine/yolo_worker.py ai_engine/event_schema.py
-          ingestion/catalogue_sync.py ingestion/worker.py ingestion/test_runner.py
-          intelligence/main.py intelligence/alert_engine.py intelligence/evidence_capture.py intelligence/sighting_store.py intelligence/cross_camera.py intelligence/watchlist_engine.py
-          intelligence/test_evidence_capture.py
-          api/models.py api/auth.py api/main.py api/routes/alerts.py api/routes/cameras.py api/routes/evidence.py api/routes/operations.py api/routes/reports.py api/routes/search.py api/routes/test.py api/routes/vendors.py
+          ai_engine/*.py ai_engine/tests/*.py
+          ingestion/*.py intelligence/*.py api/*.py api/routes/*.py
+      - name: Validate fresh migrations and idempotency
+        shell: bash
+        run: |
+          PGPASSWORD=sentinel psql -h 127.0.0.1 -U sentinel -d sentinel_ci -c 'CREATE DATABASE sentinel_migration_ci;'
+          DATABASE_URL=postgresql://sentinel:sentinel@localhost:5432/sentinel_migration_ci MIGRATIONS_DIR=${{ github.workspace }}/database/migrations python -c "from api.migrations import apply_migrations; apply_migrations(); apply_migrations()"
       - name: Run deterministic ANPR policy tests
         working-directory: ai_engine
         run: python -m unittest discover -s tests -p 'test_*.py' -v
