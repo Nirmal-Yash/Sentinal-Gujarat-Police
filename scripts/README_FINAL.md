@@ -1,0 +1,1 @@
+Final verification note: CI validates source-level contracts, isolated runtime persistence/E2E behavior, migration idempotency, ANPR policy, registry smoke, evidence and dashboard build. Real ANPR accuracy on Gujarat CCTV footage and live Government provider uptime remain environment-dependent acceptance tests and are not inferred from CI.
