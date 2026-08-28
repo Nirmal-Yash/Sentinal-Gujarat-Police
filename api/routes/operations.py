@@ -44,7 +44,7 @@ async def operations_overview(
     db: AsyncSession = Depends(get_db),
 ):
     """Single authoritative operational snapshot for dashboards and health review."""
-    row = (await db.execute(text("""
+    result = await db.execute(text("""
         SELECT
           (SELECT COUNT(*) FROM cameras WHERE status <> 'deleted') AS cameras_total,
           (SELECT COUNT(*) FROM cameras WHERE status <> 'deleted' AND health_status='healthy') AS cameras_healthy,
@@ -58,4 +58,4 @@ async def operations_overview(
           (SELECT COUNT(*) FROM vehicle_journeys WHERE status='ACTIVE') AS active_journeys,
           (SELECT COUNT(*) FROM evidence WHERE created_at >= NOW() - INTERVAL '1 hour') AS evidence_1h
     """)).mappings().one()
-    return {"generated_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(), "metrics": dict(row)}
+    return {"generated_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(), "metrics": dict(result)}
