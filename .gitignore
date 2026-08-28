@@ -5,4 +5,6 @@
 # Generated Python and frontend artifacts
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
 dashboard/dist/
