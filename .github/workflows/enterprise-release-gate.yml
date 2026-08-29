@@ -39,6 +39,8 @@ jobs:
       ALERT_COOLDOWN: "60"
       CROSS_CAM_WINDOW: "300"
       SIGHTING_DEDUP_BUCKET_SECS: "30"
+      PERSON_INVESTIGATION_ENABLED: "true"
+      PERSON_INVESTIGATION_TIMEOUT: "20"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -56,9 +58,13 @@ jobs:
         shell: bash
         run: |
           python -m py_compile ingestion/worker.py
+          python -m py_compile ingestion/catalogue_sync.py
           python -m py_compile intelligence/evidence_capture.py
           python -m py_compile api/routes/evidence.py
           python -m py_compile api/routes/operations.py
+          python -m py_compile api/routes/search.py
+          python -m py_compile api/routes/auth.py
+          python -m py_compile ai_engine/person_investigation_worker.py
           python -m py_compile ai_engine/*.py ai_engine/tests/*.py
           python -m py_compile ingestion/*.py intelligence/*.py api/*.py api/routes/*.py
       - name: Validate migration numbering and SQL structure
