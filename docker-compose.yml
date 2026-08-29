@@ -53,7 +53,6 @@ services:
       - RECONNECT_MAX_DELAY=${RECONNECT_MAX_DELAY:-30}
       - TEST_FRAME_FPS=${TEST_FRAME_FPS:-3}
       - TEST_RTSP_BASE=rtsp://mediamtx:8554
-
     volumes:
       - ./videos:/videos:ro
       - test_videos:/test_videos
@@ -178,9 +177,6 @@ services:
       - TEST_UPLOAD_DIR=/test_videos
       - TEST_RTSP_BASE=rtsp://mediamtx:8554
       - TEST_HLS_BASE=/test-hls
-      - GROQ_API_KEY=${GROQ_API_KEY:-}
-      - GROQ_MODEL=${GROQ_MODEL:-llama-3.1-8b-instant}
-      - GROQ_API_URL=${GROQ_API_URL:-https://api.groq.com/openai/v1/chat/completions}
       - EVIDENCE_ROOT=/evidence
       - BOOTSTRAP_ADMIN_USERNAME=${BOOTSTRAP_ADMIN_USERNAME:-}
       - BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_ADMIN_PASSWORD:-}
