@@ -7,38 +7,36 @@ ALTER TABLE camera_audit_log ADD COLUMN IF NOT EXISTS entry_hash TEXT;
 ALTER TABLE camera_audit_log ADD COLUMN IF NOT EXISTS immutable_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
 CREATE SEQUENCE IF NOT EXISTS camera_audit_log_seq;
-SELECT setval('camera_audit_log_seq', GREATEST(COALESCE((SELECT MAX(audit_seq) FROM camera_audit_log), 0), 0), true);
+DO $$
+DECLARE max_seq BIGINT;
+BEGIN
+    SELECT MAX(audit_seq) INTO max_seq FROM camera_audit_log;
+    IF max_seq IS NULL THEN
+        PERFORM setval('camera_audit_log_seq', 1, false);
+    ELSE
+        PERFORM setval('camera_audit_log_seq', max_seq, true);
+    END IF;
+END $$;
 UPDATE camera_audit_log SET audit_seq=nextval('camera_audit_log_seq') WHERE audit_seq IS NULL;
 ALTER TABLE camera_audit_log ALTER COLUMN audit_seq SET NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_camera_audit_seq ON camera_audit_log(audit_seq);
 
--- Backfill the chain for existing records in deterministic sequence order.
 DO $$
-DECLARE
-    row_data RECORD;
-    prior TEXT := NULL;
-    canonical TEXT;
+DECLARE row_data RECORD; prior TEXT := NULL; canonical TEXT;
 BEGIN
     FOR row_data IN SELECT * FROM camera_audit_log ORDER BY audit_seq LOOP
         canonical := concat_ws('|', row_data.audit_seq, COALESCE(row_data.camera_id::text,''), row_data.actor, row_data.action,
             COALESCE(row_data.before_value::text,''), COALESCE(row_data.after_value::text,''),
             COALESCE(row_data.correlation_id::text,''), row_data.created_at, row_data.immutable_at, COALESCE(prior,''));
-        UPDATE camera_audit_log
-        SET prev_hash=prior,
-            entry_hash=encode(digest(canonical, 'sha256'), 'hex')
-        WHERE id=row_data.id;
+        UPDATE camera_audit_log SET prev_hash=prior, entry_hash=encode(digest(canonical, 'sha256'), 'hex') WHERE id=row_data.id;
         prior := encode(digest(canonical, 'sha256'), 'hex');
     END LOOP;
 END $$;
 
 CREATE OR REPLACE FUNCTION camera_audit_hash_row() RETURNS trigger AS $$
-DECLARE
-    previous_hash TEXT;
-    canonical TEXT;
+DECLARE previous_hash TEXT; canonical TEXT;
 BEGIN
-    IF TG_OP <> 'INSERT' THEN
-        RAISE EXCEPTION 'camera_audit_log is append-only';
-    END IF;
+    IF TG_OP <> 'INSERT' THEN RAISE EXCEPTION 'camera_audit_log is append-only'; END IF;
     PERFORM pg_advisory_xact_lock(2147483121);
     IF NEW.audit_seq IS NULL THEN NEW.audit_seq := nextval('camera_audit_log_seq'); END IF;
     SELECT entry_hash INTO previous_hash FROM camera_audit_log ORDER BY audit_seq DESC LIMIT 1;
@@ -52,26 +50,18 @@ END;
 $$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS camera_audit_hash_insert ON camera_audit_log;
-CREATE TRIGGER camera_audit_hash_insert
-    BEFORE INSERT ON camera_audit_log
-    FOR EACH ROW EXECUTE FUNCTION camera_audit_hash_row();
+CREATE TRIGGER camera_audit_hash_insert BEFORE INSERT ON camera_audit_log FOR EACH ROW EXECUTE FUNCTION camera_audit_hash_row();
 
 CREATE OR REPLACE FUNCTION prevent_camera_audit_mutation() RETURNS trigger AS $$
-BEGIN
-    RAISE EXCEPTION 'camera_audit_log is append-only';
-END;
+BEGIN RAISE EXCEPTION 'camera_audit_log is append-only'; END;
 $$ LANGUAGE plpgsql;
-
 DROP TRIGGER IF EXISTS camera_audit_no_update ON camera_audit_log;
 DROP TRIGGER IF EXISTS camera_audit_no_delete ON camera_audit_log;
 CREATE TRIGGER camera_audit_no_update BEFORE UPDATE ON camera_audit_log FOR EACH ROW EXECUTE FUNCTION prevent_camera_audit_mutation();
 CREATE TRIGGER camera_audit_no_delete BEFORE DELETE ON camera_audit_log FOR EACH ROW EXECUTE FUNCTION prevent_camera_audit_mutation();
 
 CREATE OR REPLACE FUNCTION verify_camera_audit_chain() RETURNS TABLE(audit_seq BIGINT, valid BOOLEAN) AS $$
-DECLARE
-    row_data RECORD;
-    expected TEXT;
-    prior TEXT := NULL;
+DECLARE row_data RECORD; expected TEXT; prior TEXT := NULL;
 BEGIN
     FOR row_data IN SELECT * FROM camera_audit_log ORDER BY audit_seq LOOP
         expected := encode(digest(concat_ws('|', row_data.audit_seq, COALESCE(row_data.camera_id::text,''), row_data.actor, row_data.action,
