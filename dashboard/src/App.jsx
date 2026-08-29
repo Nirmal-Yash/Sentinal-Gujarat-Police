@@ -64,15 +64,24 @@ export default function App() {
       const required = Boolean(config.auth_required)
       setAuthRequired(required)
       setTestEnabled(Boolean(config.test_enabled))
+      const token = localStorage.getItem('sentinel.jwt')
+      if (!token) {
+        setPrincipal(required ? null : { id: null, username: 'local-development', role: 'SUPERADMIN' })
+        setAuthReady(true)
+        return
+      }
       try {
         const me = await api.getMe()
         if (!active) return
         setPrincipal(me)
         setAuthReady(true)
-      } catch {
+        setAuthConfigError('')
+      } catch (error) {
         if (!active) return
+        localStorage.removeItem('sentinel.jwt')
         setPrincipal(null)
         setAuthReady(true)
+        if (required && error?.message?.startsWith('401')) setAuthConfigError('Your session has expired. Please sign in again.')
       }
     }).catch(error => {
       if (!active) return
@@ -91,10 +100,7 @@ export default function App() {
     if (path !== '/investigations' && showSearch && !searchInit) setShowSearch(false)
   }, [path, authReady, testEnabled, testMode, showTestDiagnostics, showSearch, searchInit])
 
-  const alertsByCam = (alerts || []).reduce((acc, a) => {
-    if (a.cam_id && !a.acknowledged) acc[a.cam_id] = (acc[a.cam_id] || 0) + 1
-    return acc
-  }, {})
+  const alertsByCam = (alerts || []).reduce((acc, a) => { if (a.cam_id && !a.acknowledged) acc[a.cam_id] = (acc[a.cam_id] || 0) + 1; return acc }, {})
   const analyticsByCam = (analytics || []).reduce((acc, item) => { if (item.cam_id) acc[item.cam_id] = item; return acc }, {})
 
   useEffect(() => {
@@ -159,11 +165,11 @@ export default function App() {
   const locateCamera = useCallback(camera => { if (!camera?.id) return; setMapFocus(previous => ({ id:camera.id, nonce:previous.nonce+1 })); navigate('/map') }, [navigate])
   const openCamera = useCallback(camera => { if (!camera?.id) return; setCameraFocus(previous => ({ id:camera.id, nonce:previous.nonce+1 })); navigate('/feeds') }, [navigate])
   const locateRoute = useCallback(sightings => { if (!Array.isArray(sightings) || !sightings.length) return; setVehicleRoute(previous => ({ sightings, nonce:previous.nonce+1 })); navigate('/map') }, [navigate])
-  const login = useCallback(async credentials => { const response = await api.login(credentials); localStorage.setItem('sentinel.jwt', response.access_token); setPrincipal(response.user); setAuthReady(true); setAuthConfigError('') }, [])
+  const login = useCallback(async credentials => { const response=await api.login(credentials); localStorage.setItem('sentinel.jwt', response.access_token); setPrincipal(response.user); setAuthReady(true); setAuthConfigError('') }, [])
   const logout = useCallback(async () => { try { await api.logout() } catch {} localStorage.removeItem('sentinel.jwt'); setPrincipal(null); setAlerts([]); setCounts(null); setAuthReady(!authRequired); navigate('/dashboard') }, [authRequired, navigate])
-  const onboard = useCallback(async body => { const camera = await api.onboardCamera(body); setCameras(current => [...current,camera].sort((a,b)=>(a.stream_id || 0)-(b.stream_id || 0))); return camera }, [])
-  const importCameras = useCallback(async file => { const result = await api.importCameras(file); setCameras(await api.getCameras()); return result }, [])
-  const exportDetections = useCallback(async () => { const blob = await api.downloadDetections(); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href=url; link.download='sentinel-detections.csv'; link.click(); URL.revokeObjectURL(url) }, [])
+  const onboard = useCallback(async body => { const camera=await api.onboardCamera(body); setCameras(current => [...current,camera].sort((a,b)=>(a.stream_id || 0)-(b.stream_id || 0))); return camera }, [])
+  const importCameras = useCallback(async file => { const result=await api.importCameras(file); setCameras(await api.getCameras()); return result }, [])
+  const exportDetections = useCallback(async () => { const blob=await api.downloadDetections(); const url=URL.createObjectURL(blob); const link=document.createElement('a'); link.href=url; link.download='sentinel-detections.csv'; link.click(); URL.revokeObjectURL(url) }, [])
   const startTest = useCallback(session => { setTestSession(session); setTestMode(true); setShowTestDiagnostics(false); navigate('/test') }, [navigate])
   const openTest = useCallback(async () => { try { const session=await api.getActiveTestSession(); if (session) return startTest(session) } catch (error) { console.warn('test session lookup:',error) } setShowTestDiagnostics(true); navigate('/test') }, [startTest,navigate])
   const exitTest = useCallback(() => { setTestMode(false); setTestSession(null); setAlerts([]); api.getCameras().then(rows => { setCameras(rows); setProductionCameras(rows) }).catch(console.warn); navigate('/feeds') }, [navigate])
@@ -176,10 +182,7 @@ export default function App() {
   const showMap = path === '/map'
   const showFeeds = path === '/dashboard' || path === '/feeds' || path === '/alerts' || path === '/test'
   return <div style={{ display:'flex',flexDirection:'column',height:'100vh',overflow:'hidden' }}>
-    <Navbar path={path} onNavigate={navigate} alertCount={counts?.unacknowledged || 0}
-      onSearchOpen={() => { setSearchInit(null); setShowSearch(true); navigate('/investigations') }}
-      onWatchlistOpen={() => setShowWatchlist(true)} onOnboardOpen={() => setShowOnboard(true)} onVendorsOpen={() => setShowVendors(true)}
-      onTestOpen={testEnabled ? () => testMode ? exitTest() : openTest() : null} testMode={testMode} onReportExport={exportDetections} principal={principal} onLogout={logout}/>
+    <Navbar path={path} onNavigate={navigate} alertCount={counts?.unacknowledged || 0} onSearchOpen={() => { setSearchInit(null); setShowSearch(true); navigate('/investigations') }} onWatchlistOpen={() => setShowWatchlist(true)} onOnboardOpen={() => setShowOnboard(true)} onVendorsOpen={() => setShowVendors(true)} onTestOpen={testEnabled ? () => testMode ? exitTest() : openTest() : null} testMode={testMode} onReportExport={exportDetections} principal={principal} onLogout={logout}/>
     <div style={{ display:'flex',alignItems:'center',gap:8,padding:'6px 14px',background:'var(--surface)',borderBottom:'1px solid var(--border)',flexShrink:0 }}>
       <div style={{ display:'flex',gap:14,fontSize:11 }}><span style={{ color:testMode ? 'var(--accent)':'var(--text2)' }}>{testMode ? 'ISOLATED TEST MODE' : `${cameras.length} cameras`}</span><span style={{ color:'var(--high)',fontWeight:counts?.high ? 700:400 }}>{counts?.high || 0} HIGH</span><span style={{ color:'var(--medium)' }}>{counts?.medium || 0} MED</span><span style={{ color:'var(--low)' }}>{counts?.low || 0} LOW</span></div>
       {testMode && <div style={{ display:'flex',gap:6,marginLeft:10 }}><button onClick={exportTest} style={smallButton}>Export test results</button><button onClick={clearTest} style={{ ...smallButton,color:'var(--high)',borderColor:'var(--high)' }}>Clear test data</button></div>}
@@ -189,13 +192,13 @@ export default function App() {
       <div style={{ flex:1,overflow:'hidden',position:'relative',display:'flex',flexDirection:'column' }}>
         {showMap ? <MapView cameras={productionCameras} alerts={testMode ? [] : alerts} focusCameraId={mapFocus.id} focusNonce={mapFocus.nonce} route={vehicleRoute.sightings} routeFocusNonce={vehicleRoute.nonce}/> : showFeeds ? <div style={{ flex:1,minHeight:0 }}><CameraGrid cameras={cameras} alertsByCam={alertsByCam} analyticsByCam={analyticsByCam} pipelineStats={pipelineStats} onLocate={testMode ? (() => {}) : locateCamera} focusCameraId={cameraFocus.id} focusNonce={cameraFocus.nonce}/></div> : null}
       </div>
-      <div style={{ width:alertsCollapsed ? 38:320,transition:'width .18s ease',flexShrink:0,display:'flex',flexDirection:'column',overflow:'hidden' }}><AlertPanel alerts={alerts} onAck={testMode ? (() => {}) : ack} counts={counts} collapsed={alertsCollapsed} onToggle={toggleAlerts} onOpenSearch={async init => { if (init?.tab === 'track' && init.query) { try { const result=await api.searchTrack(init.query); locateRoute(result.sightings || []) } catch(error) { console.warn('journey lookup:',error) } } else { setSearchInit(init); setShowSearch(true); navigate('/investigations') } }}/></div>
+      <div style={{ width:alertsCollapsed ? 38:320,transition:'width .18s ease',flexShrink:0,display:'flex',flexDirection:'column',overflow:'hidden' }}><AlertPanel alerts={alerts} onAck={testMode ? (() => {}) : ack} counts={counts} collapsed={alertsCollapsed} onToggle={toggleAlerts} onOpenSearch={async init => { if (init?.tab === 'track' && init.query) { try { const result=await api.searchTrack(init.query); locateRoute(result.sightings || []) } catch(error) { console.warn('journey lookup:', error) } } else { setSearchInit(init); setShowSearch(true); navigate('/investigations') } }}/></div>
     </div>
     {showSearch && <SearchModal init={searchInit} testMode={testMode} testSession={testSession} onClose={() => { setShowSearch(false); setSearchInit(null); navigate('/feeds') }} onViewCamera={openCamera} onLocateCamera={locateCamera} onLocateRoute={locateRoute}/>} 
     {showWatchlist && <WatchlistModal onClose={() => setShowWatchlist(false)}/>} 
     {showOnboard && <OnboardCameraModal onClose={() => setShowOnboard(false)} onSaved={onboard} onImport={importCameras}/>} 
     {showVendors && <VendorModal onClose={() => setShowVendors(false)}/>} 
-    {showTestDiagnostics && <TestDiagnosticsModal onClose={() => { setShowTestDiagnostics(false); if (path === '/test' && !testMode) navigate('/feeds') }} onStarted={startTest}/>} 
+    {showTestDiagnostics && <TestDiagnosticsModal onClose={() => setShowTestDiagnostics(false)} onStarted={startTest}/>} 
   </div>
 }
-const smallButton = { padding:'4px 7px',borderRadius:5,border:'1px solid var(--border)',background:'transparent',color:'var(--text2)',cursor:'pointer',fontSize:10 }
+const smallButton = { padding:'4px 7px', borderRadius:5, border:'1px solid var(--border)', background:'transparent', color:'var(--text2)', cursor:'pointer', fontSize:10 }
