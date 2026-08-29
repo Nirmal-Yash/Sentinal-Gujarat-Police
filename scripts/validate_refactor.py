@@ -11,6 +11,8 @@ def require(condition: bool, message: str) -> None:
     if not condition:
         FAILURES.append(message); print(f"[FAIL] {message}")
     else: print(f"[OK]   {message}")
+def has_any(source: str, *fragments: str) -> bool:
+    return any(fragment in source for fragment in fragments)
 def main() -> int:
     required = {"cam_id", "stream_id", "source_ts", "ingested_at", "pts_ms", "session_id"}
     require(required.issubset(set(event.REQUIRED_FRAME_FIELDS)), "canonical frame event contains all mandatory context")
@@ -61,9 +63,11 @@ def main() -> int:
         ('alert_status_changed', "alert status transitions have a realtime event type"),
     ]: require(fragment in alerts_source, message)
     search_source = (ROOT / "api/routes/search.py").read_text(encoding="utf-8")
-    require('require_permission("search:read")' in search_source, "search APIs enforce search permission")
+    require(has_any(search_source, 'require_permission("search:read")', "require_permission('search:read')", 'require_permission(\"search:read\")'), "search APIs enforce search permission")
+    require(has_any(search_source, "rate_limit('plate-search'", 'rate_limit("plate-search"'), "plate search is rate limited")
+    require(has_any(search_source, "rate_limit('person-investigation'", 'rate_limit("person-investigation"'), "person investigation is rate limited")
     reports_source = (ROOT / "api/routes/reports.py").read_text(encoding="utf-8")
-    require('require_permission("report:read")' in reports_source, "report APIs enforce report permission")
+    require(has_any(reports_source, 'require_permission("report:read")', "require_permission('report:read')"), "report APIs enforce report permission")
     operations_source = (ROOT / "api/routes/operations.py").read_text(encoding="utf-8")
     require('"/overview"' in operations_source, "operations overview endpoint exists")
     require("cameras_healthy" in operations_source and "active_journeys" in operations_source, "operations overview exposes fleet and investigation metrics")
