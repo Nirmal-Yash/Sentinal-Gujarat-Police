@@ -1,33 +1,15 @@
 const BASE = import.meta.env.VITE_API_URL || '/api'
-
-async function req(path, opts = {}) {
-  const token = localStorage.getItem('sentinel.jwt')
-  const isForm = opts.body instanceof FormData
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { ...(isForm ? {} : { 'Content-Type': 'application/json' }), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...opts.headers },
-    ...opts,
-  })
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
-  return res.json()
+async function req(path, opts = {}) { const token=localStorage.getItem('sentinel.jwt'),isForm=opts.body instanceof FormData; const res=await fetch(`${BASE}${path}`,{headers:{...(isForm?{}:{'Content-Type':'application/json'}),...(token?{Authorization:`Bearer ${token}`}:{}) ,...opts.headers},...opts}); if(!res.ok) throw new Error(`${res.status} ${res.statusText}`); return res.json() }
+export const api={
+ getCameras:()=>req('/cameras/'),getAuthConfig:()=>req('/auth/config'),getMe:()=>req('/auth/me'),login:body=>req('/auth/login',{method:'POST',body:JSON.stringify(body)}),logout:()=>req('/auth/logout',{method:'POST'}),
+ getCameraStats:()=>req('/cameras/stats/summary'),getPipelineStats:()=>req('/cameras/pipeline/stats'),getRecentAnalytics:()=>req('/cameras/analytics/recent'),getAlerts:(p={})=>req('/alerts/?'+new URLSearchParams(p)),getAlertCounts:()=>req('/alerts/stats/counts'),ackAlert:id=>req(`/alerts/${id}/acknowledge`,{method:'POST'}),
+ transitionAlert:(id,status,reason='')=>req(`/alerts/${id}/transition?target_status=${encodeURIComponent(status)}${reason?`&reason=${encodeURIComponent(reason)}`:''}`,{method:'POST'}),transitionTestAlert:(sessionId,id,status,reason='')=>req(`/test/sessions/${sessionId}/alerts/${id}/transition?target_status=${encodeURIComponent(status)}${reason?`&reason=${encodeURIComponent(reason)}`:''}`,{method:'POST'}),
+ getWatchlist:()=>req('/watchlist/'),addWatchlist:body=>req('/watchlist/',{method:'POST',body:JSON.stringify(body)}),removeWatchlist:id=>req(`/watchlist/${id}`,{method:'DELETE'}),
+ searchCameras:(q,opts={})=>req(`/search/cameras?q=${encodeURIComponent(q)}`,opts),searchPlate:(q,opts={})=>req(`/search/plate?q=${encodeURIComponent(q)}`,opts),searchTrack:id=>req(`/search/track/${id}`),recentAlerts:(m,p)=>req(`/search/alerts/recent?minutes=${m}${p?`&priority=${p}`:''}`),validatePersonPhoto:file=>{const d=new FormData();d.append('file',file);return req('/search/person/validate',{method:'POST',body:d,headers:{}})},
+ onboardCamera:body=>req('/cameras/onboard',{method:'POST',body:JSON.stringify(body)}),importCameras:file=>{const d=new FormData();d.append('file',file);return req('/cameras/imports/csv',{method:'POST',body:d,headers:{}})},
+ getCameraHealthHistory:(id,minutes=60)=>req(`/operations/cameras/${id}/health?minutes=${minutes}`),getCameraHealthSummary:()=>req('/operations/cameras/health/summary'),getOperationsOverview:()=>req('/operations/overview'),
+ getVendors:()=>req('/vendors/'),createVendor:body=>req('/vendors/',{method:'POST',body:JSON.stringify(body)}),updateVendor:(id,body)=>req(`/vendors/${id}`,{method:'PUT',body:JSON.stringify(body)}),deleteVendor:id=>req(`/vendors/${id}`,{method:'DELETE'}),getVendorModels:id=>req(`/vendors/${id}/models`),createVendorModel:(id,body)=>req(`/vendors/${id}/models`,{method:'POST',body:JSON.stringify(body)}),updateVendorModel:(vid,mid,body)=>req(`/vendors/${vid}/models/${mid}`,{method:'PUT',body:JSON.stringify(body)}),deleteVendorModel:(vid,mid)=>req(`/vendors/${vid}/models/${mid}`,{method:'DELETE'}),
+ getTestAssets:()=>req('/test/assets'),uploadTestVideo:file=>{const d=new FormData();d.append('file',file);return req('/test/feeds/upload',{method:'POST',body:d,headers:{}})},createTestSession:body=>req('/test/sessions',{method:'POST',body:JSON.stringify(body)}),getActiveTestSession:()=>req('/test/sessions/active'),getTestStatus:id=>req(`/test/sessions/${id}/status`),getTestCameras:id=>req(`/test/sessions/${id}/cameras`),getTestResults:(id,p={})=>req(`/test/sessions/${id}/results?${new URLSearchParams(p)}`),closeTestSession:id=>req(`/test/sessions/${id}`,{method:'DELETE'}),
+ downloadTestResults:async id=>{const token=localStorage.getItem('sentinel.jwt'),r=await fetch(`${BASE}/test/sessions/${id}/results/export`,{headers:token?{Authorization:`Bearer ${token}`}:{}});if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);return r.blob()},listEvidence:(p={})=>req('/evidence/?'+new URLSearchParams(p)),createEvidence:body=>req('/evidence/',{method:'POST',body:JSON.stringify(body)}),getEvidence:id=>req(`/evidence/${id}`),downloadDetections:async()=>{const token=localStorage.getItem('sentinel.jwt'),r=await fetch(`${BASE}/reports/detections?format=csv`,{headers:token?{Authorization:`Bearer ${token}`}:{}});if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);return r.blob()}
 }
-
-export const api = {
-  getCameras: () => req('/cameras/'), getAuthConfig: () => req('/auth/config'), getMe: () => req('/auth/me'),
-  login: body => req('/auth/login', { method:'POST', body:JSON.stringify(body) }), logout: () => req('/auth/logout', { method:'POST' }),
-  getCameraStats: () => req('/cameras/stats/summary'), getPipelineStats: () => req('/cameras/pipeline/stats'), getRecentAnalytics: () => req('/cameras/analytics/recent'),
-  getAlerts: (p={}) => req('/alerts/?' + new URLSearchParams(p)), getAlertCounts: () => req('/alerts/stats/counts'), ackAlert: id => req(`/alerts/${id}/acknowledge`, {method:'POST'}),
-  transitionAlert: (id,status,reason='') => req(`/alerts/${id}/transition?target_status=${encodeURIComponent(status)}${reason ? `&reason=${encodeURIComponent(reason)}`:''}`, {method:'POST'}),
-  transitionTestAlert: (sessionId,id,status,reason='') => req(`/test/sessions/${sessionId}/alerts/${id}/transition?target_status=${encodeURIComponent(status)}${reason ? `&reason=${encodeURIComponent(reason)}`:''}`, {method:'POST'}),
-  getWatchlist: () => req('/watchlist/'), addWatchlist: body => req('/watchlist/', {method:'POST',body:JSON.stringify(body)}), removeWatchlist:id => req(`/watchlist/${id}`,{method:'DELETE'}),
-  searchCameras: (q,opts={}) => req(`/search/cameras?q=${encodeURIComponent(q)}`,opts), searchPlate:(q,opts={})=>req(`/search/plate?q=${encodeURIComponent(q)}`,opts), searchTrack:id=>req(`/search/track/${id}`), recentAlerts:(m,p)=>req(`/search/alerts/recent?minutes=${m}${p?`&priority=${p}`:''}`),
-  onboardCamera: body => req('/cameras/onboard',{method:'POST',body:JSON.stringify(body)}),
-  importCameras:file=>{const d=new FormData();d.append('file',file);return req('/cameras/imports/csv',{method:'POST',body:d,headers:{}})},
-  getCameraHealthHistory:(id,minutes=60)=>req(`/operations/cameras/${id}/health?minutes=${minutes}`), getCameraHealthSummary:()=>req('/operations/cameras/health/summary'), getOperationsOverview:()=>req('/operations/overview'),
-  getVendors:()=>req('/vendors/'), createVendor:body=>req('/vendors/',{method:'POST',body:JSON.stringify(body)}), updateVendor:(id,body)=>req(`/vendors/${id}`,{method:'PUT',body:JSON.stringify(body)}), deleteVendor:id=>req(`/vendors/${id}`,{method:'DELETE'}),
-  getVendorModels:id=>req(`/vendors/${id}/models`), createVendorModel:(id,body)=>req(`/vendors/${id}/models`,{method:'POST',body:JSON.stringify(body)}), updateVendorModel:(vid,mid,body)=>req(`/vendors/${vid}/models/${mid}`,{method:'PUT',body:JSON.stringify(body)}), deleteVendorModel:(vid,mid)=>req(`/vendors/${vid}/models/${mid}`,{method:'DELETE'}),
-  getTestAssets:()=>req('/test/assets'), uploadTestVideo:file=>{const d=new FormData();d.append('file',file);return req('/test/feeds/upload',{method:'POST',body:d,headers:{}})}, createTestSession:body=>req('/test/sessions',{method:'POST',body:JSON.stringify(body)}), getActiveTestSession:()=>req('/test/sessions/active'), getTestStatus:id=>req(`/test/sessions/${id}/status`), getTestCameras:id=>req(`/test/sessions/${id}/cameras`), getTestResults:(id,p={})=>req(`/test/sessions/${id}/results?${new URLSearchParams(p)}`), closeTestSession:id=>req(`/test/sessions/${id}`,{method:'DELETE'}),
-  downloadTestResults:async id=>{const token=localStorage.getItem('sentinel.jwt');const r=await fetch(`${BASE}/test/sessions/${id}/results/export`,{headers:token?{Authorization:`Bearer ${token}`}:{}});if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);return r.blob()},
-  listEvidence:(p={})=>req('/evidence/?'+new URLSearchParams(p)), createEvidence:body=>req('/evidence/',{method:'POST',body:JSON.stringify(body)}), getEvidence:id=>req(`/evidence/${id}`),
-  downloadDetections:async()=>{const token=localStorage.getItem('sentinel.jwt');const r=await fetch(`${BASE}/reports/detections?format=csv`,{headers:token?{Authorization:`Bearer ${token}`}:{}});if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);return r.blob()}
-}
-export const WS_URL = import.meta.env.VITE_WS_URL || `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/alerts`
+export const WS_URL=import.meta.env.VITE_WS_URL||`${window.location.protocol==='https:'?'wss:':'ws:'}//${window.location.host}/ws/alerts`
