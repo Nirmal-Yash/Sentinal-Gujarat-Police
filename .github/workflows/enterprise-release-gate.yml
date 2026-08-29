@@ -111,7 +111,7 @@ jobs:
       - name: Build dashboard
         working-directory: dashboard
         run: |
-          npm ci
+          npm install --no-audit --no-fund
           npm run build
       - name: Run invariant and hygiene gate
         run: python scripts/validate_refactor.py
