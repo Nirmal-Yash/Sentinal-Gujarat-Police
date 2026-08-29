@@ -1,45 +1,21 @@
 import React from 'react'
 import { SidebarProvider, Sidebar, SidebarHeader, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupLabel, SidebarGroupContent, SidebarMenu, SidebarMenuItem, SidebarMenuButton, SidebarTrigger } from './ui/sidebar'
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from './ui/dropdown-menu'
-
-const ShieldIcon=()=> <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M12 3 5 6v5c0 4.7 2.8 8.2 7 10 4.2-1.8 7-5.3 7-10V6l-7-3Z"/><path d="m9.5 12 1.7 1.8 3.7-4"/></svg>
-const CameraIcon=()=> <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M15 10l4.5-2.1A1 1 0 0121 8.8v6.4a1 1 0 01-1.5.9L15 14"/><rect x="2" y="6" width="13" height="12" rx="2"/></svg>
-const MapIcon=()=> <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18-6 3V6l6-3 6 3 6-3v15l-6 3-6-3Z"/><path d="M9 3v15M15 6v15"/></svg>
-const SearchIcon=()=> <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
-const BellIcon=()=> <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 0-3.46 0"/></svg>
-const ListIcon=()=> <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
-const ToolsIcon=()=> <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L4 17l3 3 5.3-5.3a4 4 0 0 0 5.4-5.4l-2.2 2.2-2.8-.6-.6-2.8 2.2-2.2Z"/></svg>
-const BeakerIcon=()=> <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3h8M10 3v5l-4.5 8A3.5 3.5 0 008.6 21h6.8a3.5 3.5 0 003.1-5L14 8V3"/><path d="M7 15h10"/></svg>
-const ChevronDown=()=> <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m6 9 6 6 6-6"/></svg>
-
-const routes=[['/feeds','Live Monitoring',CameraIcon],['/map','GIS Map',MapIcon],['/investigations','Investigate',SearchIcon],['/alerts','Alerts',BellIcon]]
-
-export default function Navbar({alertCount=0,onSearchOpen,onWatchlistOpen,onOnboardOpen,onVendorsOpen,onTestOpen,testMode,principal,onLogout,path='/',onNavigate}){
- const open=localStorage.getItem('sentinel.sidebar.open.v1')!=='false'
- const go=target=>event=>{event.preventDefault();onNavigate?.(target);if(target==='/alerts')window.dispatchEvent(new CustomEvent('sentinel:open-alerts'))}
- const admin=principal&&['ADMIN','SUPERADMIN'].includes(principal.role)
- return <SidebarProvider defaultOpen={open} onOpenChange={value=>localStorage.setItem('sentinel.sidebar.open.v1',String(value))}>
-   <Sidebar>
-    <SidebarHeader>
-      <a href="/feeds" onClick={go('/feeds')} className="ui-sidebar-brand" aria-label="Sentinel AI home">
-        <span className="ui-sidebar-brand-mark"><ShieldIcon/></span>
-        <span className="ui-sidebar-header-text"><span className="ui-sidebar-brand-title">SENTINEL AI</span><span className="ui-sidebar-brand-sub">Gujarat Police Operations</span></span>
-      </a>
-      <div style={{display:'flex',justifyContent:'flex-end',marginTop:9}}><SidebarTrigger/></div>
-    </SidebarHeader>
-    <SidebarContent>
-      <SidebarGroup><SidebarGroupLabel>Operations</SidebarGroupLabel><SidebarGroupContent><SidebarMenu>
-       {routes.map(([href,label,Icon])=><SidebarMenuItem key={href}><SidebarMenuButton href={href} onClick={go(href)} active={path===href} tooltip={label}><Icon/><span>{label}{href==='/alerts'&&alertCount>0?` · ${Math.min(alertCount,99)}`:''}</span></SidebarMenuButton></SidebarMenuItem>)}
-      </SidebarMenu></SidebarGroupContent></SidebarGroup>
-      <SidebarGroup><SidebarGroupLabel>Tools</SidebarGroupLabel><SidebarGroupContent><SidebarMenu>
-       <SidebarMenuItem><SidebarMenuButton href="#" onClick={e=>{e.preventDefault();onWatchlistOpen?.()}} tooltip="Watchlist"><ListIcon/><span>Watchlist</span></SidebarMenuButton></SidebarMenuItem>
-       {admin&&<><SidebarMenuItem><SidebarMenuButton href="#" onClick={e=>{e.preventDefault();onOnboardOpen?.()}} tooltip="Camera Registry"><CameraIcon/><span>Camera Registry</span></SidebarMenuButton></SidebarMenuItem><SidebarMenuItem><SidebarMenuButton href="#" onClick={e=>{e.preventDefault();onVendorsOpen?.()}} tooltip="Vendors & Models"><ToolsIcon/><span>Vendors & Models</span></SidebarMenuButton></SidebarMenuItem></>}
-       {admin&&onTestOpen&&<SidebarMenuItem><SidebarMenuButton href="/test" onClick={e=>{e.preventDefault();onNavigate?.('/test');onTestOpen()}} active={path==='/test'||testMode} tooltip="Test Mode"><BeakerIcon/><span>{testMode?'Exit Test Mode':'Test Mode'}</span></SidebarMenuButton></SidebarMenuItem>}
-      </SidebarMenu></SidebarGroupContent></SidebarGroup>
-    </SidebarContent>
-    <SidebarFooter>
-      {principal?.id&&<DropdownMenu><DropdownMenuTrigger asChild><button type="button" className="sentinel-user-trigger" title="User profile"><span className="sentinel-avatar">{String(principal.username||'?').slice(0,1).toUpperCase()}</span><span className="sentinel-user-meta"><span className="sentinel-user-name">{principal.username}</span><span className="sentinel-user-role">{principal.role}</span></span><ChevronDown/></button></DropdownMenuTrigger><DropdownMenuContent align="start"><DropdownMenuLabel>Signed in</DropdownMenuLabel><DropdownMenuItem disabled>{principal.username} · {principal.role}</DropdownMenuItem><DropdownMenuSeparator/><DropdownMenuItem onSelect={onLogout}>Sign out</DropdownMenuItem></DropdownMenuContent></DropdownMenu>}
-    </SidebarFooter>
-   </Sidebar>
- </SidebarProvider>
+const icons={
+ shield:()=> <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3 5 6v5c0 4.7 2.8 8.2 7 10 4.2-1.8 7-5.3 7-10V6l-7-3Z"/><path d="m9.5 12 1.7 1.8 3.7-4"/></svg>,
+ monitor:()=> <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>,
+ map:()=> <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18-6 3V6l6-3 6 3 6-3v15l-6 3-6-3Z"/><path d="M9 3v15M15 6v15"/></svg>,
+ search:()=> <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>,
+ bell:()=> <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 0-3.46 0"/></svg>,
+ list:()=> <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>,
+ settings:()=> <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8"><path d="m12 15.5 3.2 1.9 1.4-2.4-2.6-2-.1-2.6 2.5-2-1.4-2.4L12 7.5 8.8 5.6 7.4 8l2.6 2-.1 2.6-2.5 2 1.4 2.4L12 15.5Z"/><circle cx="12" cy="12" r="2.8"/></svg>,
+ beaker:()=> <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8"><path d="M8 3h8M10 3v5l-4.5 8A3.5 3.5 0 0 0 8.6 21h6.8a3.5 3.5 0 0 0 3.1-5L14 8V3"/><path d="M7 15h10"/></svg>
+}
+const Chevron=()=> <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m6 9 6 6 6-6"/></svg>
+const routes=[['/feeds','Monitor',icons.monitor],['/map','Map',icons.map],['/investigations','Investigate',icons.search],['/alerts','Alerts',icons.bell]]
+export default function Navbar({alertCount=0,onWatchlistOpen,onOnboardOpen,onVendorsOpen,onTestOpen,testMode,principal,onLogout,path='/',onNavigate,onAlertsOpen}){
+ const stored=localStorage.getItem('sentinel.sidebar.open.v1'),defaultOpen=stored!=='false',admin=principal&&['ADMIN','SUPERADMIN'].includes(principal.role)
+ const go=target=>event=>{event.preventDefault();if(target==='/alerts')onAlertsOpen?.();else onNavigate?.(target)}
+ const utility=handler=>event=>{event.preventDefault();handler?.()}
+ return <SidebarProvider defaultOpen={defaultOpen} onOpenChange={value=>localStorage.setItem('sentinel.sidebar.open.v1',String(value))}><Sidebar><SidebarHeader><a href="/feeds" onClick={go('/feeds')} className="ui-sidebar-brand" aria-label="Sentinel AI home"><span className="ui-sidebar-brand-mark">{icons.shield()}</span><span className="ui-sidebar-header-text"><span className="ui-sidebar-brand-title">SENTINEL AI</span><span className="ui-sidebar-brand-sub">Gujarat Police Operations</span></span></a><div className="ui-sidebar-trigger-row"><SidebarTrigger/></div></SidebarHeader><SidebarContent><SidebarGroup><SidebarGroupLabel>Operations</SidebarGroupLabel><SidebarGroupContent><SidebarMenu>{routes.map(([href,label,Icon])=><SidebarMenuItem key={href}><SidebarMenuButton href={href} onClick={go(href)} active={path===href} tooltip={label}><Icon/><span>{label}</span>{href==='/alerts'&&alertCount>0?<span className="sentinel-sidebar-badge">{Math.min(alertCount,99)}</span>:null}</SidebarMenuButton></SidebarMenuItem>)}</SidebarMenu></SidebarGroupContent></SidebarGroup><SidebarGroup><SidebarGroupLabel>Workspace</SidebarGroupLabel><SidebarGroupContent><SidebarMenu><SidebarMenuItem><SidebarMenuButton href="#" onClick={utility(onWatchlistOpen)} tooltip="Watchlist"><icons.list/><span>Watchlist</span></SidebarMenuButton></SidebarMenuItem>{admin&&<SidebarMenuItem><SidebarMenuButton href="#" onClick={utility(onOnboardOpen)} tooltip="Camera Registry"><icons.monitor/><span>Registry</span></SidebarMenuButton></SidebarMenuItem>}{admin&&<SidebarMenuItem><SidebarMenuButton href="#" onClick={utility(onVendorsOpen)} tooltip="Vendors and Models"><icons.settings/><span>Vendors</span></SidebarMenuButton></SidebarMenuItem>}{admin&&onTestOpen&&<SidebarMenuItem><SidebarMenuButton href="/test" onClick={e=>{e.preventDefault();onNavigate?.('/test');onTestOpen()}} active={path==='/test'||testMode} tooltip="Test Mode"><icons.beaker/><span>{testMode?'Exit Test':'Test Mode'}</span></SidebarMenuButton></SidebarMenuItem>}</SidebarMenu></SidebarGroupContent></SidebarGroup></SidebarContent><SidebarFooter>{principal?.id&&<DropdownMenu><DropdownMenuTrigger asChild><button type="button" className="sentinel-user-trigger" title="User profile"><span className="sentinel-avatar">{String(principal.username||'?').slice(0,1).toUpperCase()}</span><span className="sentinel-user-meta"><span className="sentinel-user-name">{principal.username}</span><span className="sentinel-user-role">{principal.role}</span></span><Chevron/></button></DropdownMenuTrigger><DropdownMenuContent align="start"><DropdownMenuLabel>Authenticated operator</DropdownMenuLabel><DropdownMenuItem disabled>{principal.username} · {principal.role}</DropdownMenuItem><DropdownMenuSeparator/><DropdownMenuItem onSelect={onLogout}>Sign out</DropdownMenuItem></DropdownMenuContent></DropdownMenu>}</SidebarFooter></Sidebar></SidebarProvider>
 }
