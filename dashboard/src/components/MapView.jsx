@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
-const GUJARAT_BOUNDS = L.latLngBounds([20.08, 68.08], [24.8, 74.55])
-const VIEW_KEY = 'sentinel.map.viewport.v1'
-const SELECTED_KEY = 'sentinel.map.selected-camera.v1'
+const GUJARAT_BOUNDS = L.latLngBounds([20.08, 68.08], [24.55, 74.55])
+const VIEW_KEY = 'sentinel.map.viewport.session.v1'
+const SELECTED_KEY = 'sentinel.map.selected-camera.session.v1'
 const PRIO_COLOR = { HIGH: '#f85149', MEDIUM: '#d29922', LOW: '#3fb950' }
 const hasCoordinates = cam => cam?.lat !== null && cam?.lat !== undefined && cam?.lng !== null && cam?.lng !== undefined && Number.isFinite(Number(cam.lat)) && Number.isFinite(Number(cam.lng))
 const needsCoordinateReview = cam => cam?.coord_source === 'default' || Number(cam?.coord_confidence) < 0.4
@@ -45,7 +45,7 @@ function alertPopup(alert) {
 }
 
 export default function MapView({ cameras, alerts = [], compact = false, focusCameraId, focusNonce = 0, route = [], routeFocusNonce = 0 }) {
-  const containerRef = useRef(null), mapRef = useRef(null), cameraLayerRef = useRef(null), coverageLayerRef = useRef(null), alertLayerRef = useRef(null), routeLayerRef = useRef(null), markersRef = useRef({}), camerasRef = useRef([]), selectedRef = useRef(localStorage.getItem(SELECTED_KEY) || null)
+  const containerRef = useRef(null), mapRef = useRef(null), cameraLayerRef = useRef(null), coverageLayerRef = useRef(null), alertLayerRef = useRef(null), routeLayerRef = useRef(null), markersRef = useRef({}), camerasRef = useRef([]), selectedRef = useRef(sessionStorage.getItem(SELECTED_KEY) || null)
   const [notice, setNotice] = useState('')
 
   const refreshVisibleLayer = () => {
@@ -67,7 +67,7 @@ export default function MapView({ cameras, alerts = [], compact = false, focusCa
   const selectCamera = (cameraId, { focus = false } = {}) => {
     const map = mapRef.current, selected = markersRef.current[cameraId]
     if (!map || !selected) return false
-    selectedRef.current = cameraId; localStorage.setItem(SELECTED_KEY, cameraId)
+    selectedRef.current = cameraId; sessionStorage.setItem(SELECTED_KEY, cameraId)
     Object.values(markersRef.current).forEach(item => item.marker.setIcon(camIcon(item.camera, item.camera.id === cameraId)))
     if (focus) { map.setView(selected.marker.getLatLng(), Math.max(map.getZoom(), 15), { animate: true }); selected.marker.openPopup() }
     return true
@@ -75,8 +75,9 @@ export default function MapView({ cameras, alerts = [], compact = false, focusCa
 
   useEffect(() => {
     if (mapRef.current || !containerRef.current) return
-    let saved; try { saved = JSON.parse(localStorage.getItem(VIEW_KEY) || 'null') } catch { saved = null }
-    const map = L.map(containerRef.current, { center: saved?.center || GUJARAT_BOUNDS.getCenter(), zoom: saved?.zoom || 7, zoomControl: true })
+    let saved
+    try { saved = JSON.parse(sessionStorage.getItem(VIEW_KEY) || 'null') } catch { saved = null }
+    const map = L.map(containerRef.current, { center: GUJARAT_BOUNDS.getCenter(), zoom: 7, zoomControl: true, maxBounds: GUJARAT_BOUNDS.pad(0.55), maxBoundsViscosity: 0.72 })
     const streets = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors', maxZoom: 19 }).addTo(map)
     const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { attribution: 'Tiles © Esri', maxZoom: 19 })
     const camerasLayer = L.layerGroup().addTo(map), coverageLayer = L.layerGroup(), alertLayer = L.layerGroup().addTo(map), routeLayer = L.layerGroup().addTo(map)
@@ -87,8 +88,9 @@ export default function MapView({ cameras, alerts = [], compact = false, focusCa
     const fullscreen = L.Control.extend({ onAdd() { const b = L.DomUtil.create('button', 'leaflet-bar'); b.type = 'button'; b.title = 'Fullscreen map'; b.textContent = '⛶'; b.style.cssText = 'width:30px;height:30px;background:#fff;border:0;font-size:18px;cursor:pointer'; L.DomEvent.on(b, 'click', e => { L.DomEvent.stop(e); containerRef.current?.requestFullscreen?.() }); return b } })
     map.addControl(new reset({ position: 'topleft' })); map.addControl(new fullscreen({ position: 'topleft' }))
     const legend = L.control({ position: 'bottomright' }); legend.onAdd = () => { const d = L.DomUtil.create('div'); d.style.cssText = 'background:rgba(255,255,255,.94);padding:6px 8px;border-radius:4px;font:11px system-ui;color:#222'; d.innerHTML = '<b>Camera health</b><br><span style="color:#3fb950">●</span> Healthy &nbsp; <span style="color:#d29922">●</span> Degraded<br><span style="color:#f85149">●</span> Offline &nbsp; <span style="color:#8b949e">●</span> Unknown'; return d }; legend.addTo(map)
-    map.on('moveend', () => { const c = map.getCenter(); localStorage.setItem(VIEW_KEY, JSON.stringify({ center: [c.lat, c.lng], zoom: map.getZoom() })) }); map.on('zoomend', refreshVisibleLayer)
+    map.on('moveend', () => { const c = map.getCenter(); sessionStorage.setItem(VIEW_KEY, JSON.stringify({ center: [c.lat, c.lng], zoom: map.getZoom() })) }); map.on('zoomend', refreshVisibleLayer)
     requestAnimationFrame(() => map.invalidateSize())
+    if (saved?.center && Number.isFinite(saved.zoom)) map.setView(saved.center, saved.zoom, { animate: false })
     return () => { map.remove(); mapRef.current = null }
   }, [])
 
