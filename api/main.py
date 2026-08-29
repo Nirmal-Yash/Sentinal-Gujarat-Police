@@ -16,22 +16,46 @@ log = logging.getLogger(__name__)
 CORS_ORIGINS = [item.strip() for item in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",") if item.strip()]
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
+BOOTSTRAP_ADMIN_USERNAME = os.getenv("BOOTSTRAP_ADMIN_USERNAME", "").strip()
+BOOTSTRAP_ADMIN_PASSWORD = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")
+BOOTSTRAP_ADMIN_ROLE = os.getenv("BOOTSTRAP_ADMIN_ROLE", "SUPERADMIN").upper()
+
+
 async def bootstrap_admin(db: AsyncSession) -> None:
-    username = os.getenv("BOOTSTRAP_ADMIN_USERNAME", "").strip()
-    password = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")
-    if not username or not password:
+    """Provision exactly one initial admin when explicitly configured.
+
+    Existing active administrators always win. The bootstrap credentials are
+    never used to overwrite an existing account, which makes restarts and
+    repeated deployments idempotent.
+    """
+    active_admin = await db.scalar(text("SELECT 1 FROM users WHERE role IN ('ADMIN','SUPERADMIN') AND is_active=TRUE LIMIT 1"))
+    if active_admin:
         return
-    existing = await db.scalar(text("SELECT 1 FROM users WHERE role IN ('ADMIN','SUPERADMIN') AND is_active=TRUE LIMIT 1"))
-    if existing:
+    if not BOOTSTRAP_ADMIN_USERNAME or not BOOTSTRAP_ADMIN_PASSWORD:
+        if AUTH_REQUIRED:
+            raise RuntimeError(
+                "No active ADMIN/SUPERADMIN exists and bootstrap admin credentials are not configured "
+                "(BOOTSTRAP_ADMIN_USERNAME and BOOTSTRAP_ADMIN_PASSWORD)."
+            )
         return
-    role = os.getenv("BOOTSTRAP_ADMIN_ROLE", "SUPERADMIN").upper()
-    if role not in {"ADMIN", "SUPERADMIN"}:
+    if BOOTSTRAP_ADMIN_ROLE not in {"ADMIN", "SUPERADMIN"}:
         raise RuntimeError("BOOTSTRAP_ADMIN_ROLE must be ADMIN or SUPERADMIN")
-    await db.execute(text("""INSERT INTO users(username,password_hash,role,is_active)
-        VALUES(:username,:password_hash,:role,TRUE) ON CONFLICT (username) DO NOTHING"""),
-        {"username": username, "password_hash": hash_password(password), "role": role})
+
+    existing_username = await db.scalar(text("SELECT 1 FROM users WHERE username=:username LIMIT 1"), {"username": BOOTSTRAP_ADMIN_USERNAME})
+    password_hash = hash_password(BOOTSTRAP_ADMIN_PASSWORD)
+    if existing_username:
+        await db.execute(
+            text("UPDATE users SET password_hash=:password_hash, role=:role, is_active=TRUE WHERE username=:username"),
+            {"username": BOOTSTRAP_ADMIN_USERNAME, "password_hash": password_hash, "role": BOOTSTRAP_ADMIN_ROLE},
+        )
+    else:
+        await db.execute(
+            text("INSERT INTO users(username,password_hash,role,is_active) VALUES(:username,:password_hash,:role,TRUE)"),
+            {"username": BOOTSTRAP_ADMIN_USERNAME, "password_hash": password_hash, "role": BOOTSTRAP_ADMIN_ROLE},
+        )
     await db.commit()
-    log.info("Environment-provisioned initial administrative account created: %s", username)
+    log.info("Initial administrative account provisioned: %s (%s)", BOOTSTRAP_ADMIN_USERNAME, BOOTSTRAP_ADMIN_ROLE)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -72,10 +96,14 @@ async def health(): return {"status": "ok", "service": "sentinel-ai"}
 
 @app.get("/ready")
 async def ready(db: AsyncSession = Depends(get_db)):
-    checks = {"database": False, "redis": False}
+    checks = {"database": False, "redis": False, "authentication": False}
     try:
         await db.execute(text("SELECT 1")); checks["database"] = True
     except Exception as exc: log.warning("Readiness database check failed: %s", exc)
+    try:
+        row = await db.scalar(text("SELECT 1 FROM users WHERE role IN ('ADMIN','SUPERADMIN') AND is_active=TRUE LIMIT 1"))
+        checks["authentication"] = (not AUTH_REQUIRED) or bool(row)
+    except Exception as exc: log.warning("Readiness authentication check failed: %s", exc)
     try:
         import redis as redis_lib
         def ping_redis():
