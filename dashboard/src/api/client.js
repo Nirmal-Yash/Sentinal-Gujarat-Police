@@ -13,14 +13,12 @@ async function req(path, opts = {}) {
 
 export const api = {
   getCameras: () => req('/cameras/'), getAuthConfig: () => req('/auth/config'), getMe: () => req('/auth/me'),
-  groqChat: body => req('/assistant/chat', { method:'POST', body:JSON.stringify(body) }),
-  getAssistantStatus: () => req('/assistant/status'),
   login: body => req('/auth/login', { method:'POST', body:JSON.stringify(body) }), logout: () => req('/auth/logout', { method:'POST' }),
   getCameraStats: () => req('/cameras/stats/summary'), getPipelineStats: () => req('/cameras/pipeline/stats'), getRecentAnalytics: () => req('/cameras/analytics/recent'),
   getAlerts: (p={}) => req('/alerts/?' + new URLSearchParams(p)), getAlertCounts: () => req('/alerts/stats/counts'), ackAlert: id => req(`/alerts/${id}/acknowledge`, {method:'POST'}),
   transitionAlert: (id,status,reason='') => req(`/alerts/${id}/transition?target_status=${encodeURIComponent(status)}${reason ? `&reason=${encodeURIComponent(reason)}`:''}`, {method:'POST'}),
   transitionTestAlert: (sessionId,id,status,reason='') => req(`/test/sessions/${sessionId}/alerts/${id}/transition?target_status=${encodeURIComponent(status)}${reason ? `&reason=${encodeURIComponent(reason)}`:''}`, {method:'POST'}),
-  getWatchlist: () => req('/watchlist/'), addWatchlist: body => req('/watchlist/', {method:'POST',body:JSON.stringify(body)}), removeWatchlist:id => req(`/watchlist/${id}`, {method:'DELETE'}),
+  getWatchlist: () => req('/watchlist/'), addWatchlist: body => req('/watchlist/', {method:'POST',body:JSON.stringify(body)}), removeWatchlist:id => req(`/watchlist/${id}`,{method:'DELETE'}),
   searchCameras: (q,opts={}) => req(`/search/cameras?q=${encodeURIComponent(q)}`,opts), searchPlate:(q,opts={})=>req(`/search/plate?q=${encodeURIComponent(q)}`,opts), searchTrack:id=>req(`/search/track/${id}`), recentAlerts:(m,p)=>req(`/search/alerts/recent?minutes=${m}${p?`&priority=${p}`:''}`),
   onboardCamera: body => req('/cameras/onboard',{method:'POST',body:JSON.stringify(body)}),
   importCameras:file=>{const d=new FormData();d.append('file',file);return req('/cameras/imports/csv',{method:'POST',body:d,headers:{}})},
