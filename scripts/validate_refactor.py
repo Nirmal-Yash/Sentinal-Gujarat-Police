@@ -38,6 +38,7 @@ def main() -> int:
         ("database/migrations/017_evidence_capture_integrity.sql", "evidence capture integrity schema exists"),
         ("database/migrations/018_registry_and_migration_integrity.sql", "registry migration integrity schema exists"),
         ("database/migrations/019_rbac_roles.sql", "expanded RBAC role schema exists"),
+        ("database/migrations/021_audit_integrity.sql", "audit integrity schema exists"),
         ("scripts/registry_load_smoke.py", "50-camera registry load smoke exists"),
         ("api/routes/evidence.py", "evidence API exists"),
         ("api/routes/operations.py", "operational health API exists"),
@@ -63,7 +64,7 @@ def main() -> int:
         ('alert_status_changed', "alert status transitions have a realtime event type"),
     ]: require(fragment in alerts_source, message)
     search_source = (ROOT / "api/routes/search.py").read_text(encoding="utf-8")
-    require(has_any(search_source, 'require_permission("search:read")', "require_permission('search:read')", 'require_permission(\"search:read\")'), "search APIs enforce search permission")
+    require(has_any(search_source, 'require_permission("search:read")', "require_permission('search:read')"), "search APIs enforce search permission")
     require(has_any(search_source, "rate_limit('plate-search'", 'rate_limit("plate-search"'), "plate search is rate limited")
     require(has_any(search_source, "rate_limit('person-investigation'", 'rate_limit("person-investigation"'), "person investigation is rate limited")
     reports_source = (ROOT / "api/routes/reports.py").read_text(encoding="utf-8")
@@ -74,6 +75,10 @@ def main() -> int:
     evidence_source = (ROOT / "api/routes/evidence.py").read_text(encoding="utf-8")
     require("evidence:create" in evidence_source and "evidence:read" in evidence_source, "evidence routes enforce permissions")
     require("/{evidence_id}/content" in evidence_source, "evidence content endpoint exists")
+    audit_migration = (ROOT / "database/migrations/021_audit_integrity.sql").read_text(encoding="utf-8")
+    require("append-only" in audit_migration.lower() and "digest" in audit_migration and "verify_camera_audit_chain" in audit_migration, "audit trail is append-only and hash verifiable")
+    rate_source = (ROOT / "api/rate_limit.py").read_text(encoding="utf-8")
+    require("429" in rate_source and "CLIENT.incr" in rate_source and "sha256" in rate_source, "sensitive endpoint rate limiter is implemented")
     alert_source = (ROOT / "intelligence/alert_engine.py").read_text(encoding="utf-8")
     require("capture_snapshot" in alert_source and "INSERT INTO evidence" in alert_source, "alerts attempt durable snapshot evidence capture")
     persistence_source = (ROOT / "intelligence/sighting_store.py").read_text(encoding="utf-8")
