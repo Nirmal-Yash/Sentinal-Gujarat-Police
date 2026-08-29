@@ -41,12 +41,18 @@ services:
       - DATABASE_URL=postgresql://sentinel:${POSTGRES_PASSWORD}@postgres:5432/sentinel
       - INGEST_API=${INGEST_API:-http://live.corp8.cloud/api/ingest}
       - RTSP_HOST=${RTSP_HOST:-live.corp8.cloud}
+      - PLAYBACK_HOST=${PLAYBACK_HOST:-live.corp8.cloud}
       - FRAME_FPS=${FRAME_FPS:-3}
       - JPEG_QUALITY=${JPEG_QUALITY:-70}
       - MAX_CONCURRENT_CAMERAS=${MAX_CONCURRENT_CAMERAS:-50}
       - CATALOGUE_SYNC_INTERVAL=${CATALOGUE_SYNC_INTERVAL:-300}
+      - RECONNECT_MAX_DELAY=${RECONNECT_MAX_DELAY:-30}
       - TEST_FRAME_FPS=${TEST_FRAME_FPS:-3}
       - TEST_RTSP_BASE=rtsp://mediamtx:8554
+
+    volumes:
+      - ./videos:/videos:ro
+      - test_videos:/test_videos
 
   ai_worker:
     build: ./ai_engine
@@ -91,9 +97,9 @@ services:
       - YOLO_MODEL=${YOLO_MODEL:-yolov8n.pt}
       - DETECTION_CONF=${DETECTION_CONF:-0.4}
       - FRAME_SKIP=${TEST_FRAME_SKIP:-2}
-      - YOLO_WORKERS=1
-      - ANPR_ENABLED=true
-      - ANPR_OCR_GPU=${TEST_ANPR_OCR_GPU:-false}
+      - YOLO_WORKERS=${TEST_YOLO_WORKERS:-1}
+      - ANPR_ENABLED=${ANPR_ENABLED:-true}
+      - ANPR_OCR_GPU=${ANPR_OCR_GPU:-false}
       - ANPR_OCR_INTERVAL_SECS=${ANPR_OCR_INTERVAL_SECS:-0.8}
       - ANPR_OCR_MIN_CONF=${ANPR_OCR_MIN_CONF:-0.35}
       - ANPR_CONFIRM_OBSERVATIONS=${ANPR_CONFIRM_OBSERVATIONS:-2}
@@ -124,6 +130,8 @@ services:
       - CROSS_CAM_WINDOW=${CROSS_CAM_WINDOW:-300}
       - EVIDENCE_ROOT=/evidence
       - MAX_EVIDENCE_BYTES=${MAX_EVIDENCE_BYTES:-4194304}
+    volumes:
+      - evidence_data:/evidence
 
   test_intelligence:
     build: ./intelligence
@@ -141,6 +149,8 @@ services:
       - MAX_EVIDENCE_BYTES=${MAX_EVIDENCE_BYTES:-4194304}
       - ALERT_COOLDOWN=${ALERT_COOLDOWN:-60}
       - CROSS_CAM_WINDOW=${CROSS_CAM_WINDOW:-300}
+    volumes:
+      - evidence_data:/evidence
 
   api:
     build:
@@ -159,14 +169,15 @@ services:
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
       - AUTH_REQUIRED=${AUTH_REQUIRED:-true}
       - JWT_TOKEN_HOURS=${JWT_TOKEN_HOURS:-8}
-      - TEST_ENDPOINT_ENABLED=${TEST_ENDPOINT_ENABLED:-false}
+      - TEST_ENDPOINT_ENABLED=${TEST_ENDPOINT_ENABLED:-true}
       - TEST_VIDEO_DIR=/videos
       - TEST_UPLOAD_DIR=/test_videos
-      - TEST_MAX_UPLOAD_BYTES=${TEST_MAX_UPLOAD_BYTES:-2147483648}
       - TEST_RTSP_BASE=rtsp://mediamtx:8554
       - TEST_HLS_BASE=/test-hls
       - EVIDENCE_ROOT=/evidence
-      - MAX_EVIDENCE_BYTES=${MAX_EVIDENCE_BYTES:-4194304}
+      - BOOTSTRAP_ADMIN_USERNAME=${BOOTSTRAP_ADMIN_USERNAME:-}
+      - BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_ADMIN_PASSWORD:-}
+      - BOOTSTRAP_ADMIN_ROLE=${BOOTSTRAP_ADMIN_ROLE:-SUPERADMIN}
     volumes:
       - ./videos:/videos:ro
       - test_videos:/test_videos
