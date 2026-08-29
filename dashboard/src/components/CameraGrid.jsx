@@ -19,8 +19,6 @@ const ExpandIcon = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="n
 const CloseIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m18 6-12 12M6 6l12 12"/></svg>
 const GridIcon = ({ n }) => <svg width="14" height="14" viewBox="0 0 12 12" fill="currentColor">{n === 2 && <><rect width="5" height="12" rx="1"/><rect x="7" width="5" height="12" rx="1"/></>}{n === 3 && <><rect width="3" height="12" rx="1"/><rect x="4.5" width="3" height="12" rx="1"/><rect x="9" width="3" height="12" rx="1"/></>}{n === 4 && [0, 3.2, 6.3, 9.5].flatMap(x => [0, 6.5].map(y => <rect key={`${x}-${y}`} x={x} y={y} width="2.5" height="5.5" rx=".5"/>))}{n === 5 && [0, 2.5, 5, 7.5, 10].flatMap(x => [0, 6.5].map(y => <rect key={`${x}-${y}`} x={x} y={y} width="2" height="5.5" rx=".5"/>))}</svg>
 
-// Playback uses canonical registry HLS, then its canonical browser MP4 fallback,
-// then the locally cached frame.
 function LivePlayer({ cam, muted = true, onLiveStatus, onAspectChange, fit = 'contain' }) {
   const videoRef = useRef(null), hlsRef = useRef(null), timerRef = useRef(null)
   const [mode, setMode] = useState(cam.hls_url ? 'hls' : cam.stream_url ? 'stream' : 'snapshot')
@@ -29,6 +27,25 @@ function LivePlayer({ cam, muted = true, onLiveStatus, onAspectChange, fit = 'co
   const advance = useCallback(from => { setMode(from === 'hls' && cam.stream_url ? 'stream' : from === 'stream' ? 'snapshot' : 'error'); setLive(false) }, [cam.stream_url])
   useEffect(() => { onLiveStatus?.(live) }, [live, onLiveStatus])
   useEffect(() => { hlsRef.current?.destroy(); clearInterval(timerRef.current); setMode(cam.hls_url ? 'hls' : cam.stream_url ? 'stream' : 'snapshot'); setSnapshot(null); setLive(false) }, [cam.id, cam.hls_url, cam.stream_url])
+
+  // Warm the visual surface immediately from the ingestion snapshot cache. This
+  // avoids a blank card while HLS/browser playback negotiates or a provider is
+  // slow, while the actual live player continues trying in parallel.
+  useEffect(() => {
+    let cancelled = false
+    const loadSnapshot = async () => {
+      try {
+        const response = await fetch(`${snapshotUrl}?t=${Date.now()}`)
+        if (!response.ok) return
+        const blob = await response.blob()
+        if (!cancelled) setSnapshot(URL.createObjectURL(blob))
+      } catch {}
+    }
+    loadSnapshot()
+    const timer = setInterval(() => { if (!live) loadSnapshot() }, 4000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [snapshotUrl, live])
+
   useEffect(() => {
     if (mode !== 'hls') return
     if (!cam.hls_url) { advance('hls'); return }
@@ -57,20 +74,14 @@ function LivePlayer({ cam, muted = true, onLiveStatus, onAspectChange, fit = 'co
     video.play().catch(() => {})
     return () => { clearTimeout(fallbackTimer); video.removeEventListener('error', failed); video.removeAttribute('src'); video.load() }
   }, [mode, cam.stream_url, advance])
-  useEffect(() => {
-    if (mode !== 'snapshot') return
-    const load = () => setSnapshot(`${snapshotUrl}?t=${Date.now()}`)
-    load(); timerRef.current = setInterval(load, 2500)
-    return () => clearInterval(timerRef.current)
-  }, [mode, snapshotUrl])
+  useEffect(() => { if (mode !== 'snapshot') return; timerRef.current = setInterval(() => {}, 10000); return () => clearInterval(timerRef.current) }, [mode])
   const updateAspect = event => { const { videoWidth, videoHeight, naturalWidth, naturalHeight } = event.currentTarget; const w = videoWidth || naturalWidth, h = videoHeight || naturalHeight; if (w && h) onAspectChange?.(w / h) }
   return <div style={{ position: 'absolute', inset: 0, background: '#000' }}>
+    {snapshot && !live && <img src={snapshot} alt="Latest camera frame" onLoad={updateAspect} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: fit }}/>} 
     <video ref={videoRef} autoPlay muted={muted} playsInline loop={cam.is_test} onPlaying={() => setLive(true)} onWaiting={() => setLive(false)} onLoadedMetadata={updateAspect} style={{ position: 'absolute', inset: 0, display: mode === 'hls' || mode === 'stream' ? 'block' : 'none', width: '100%', height: '100%', objectFit: fit }}/>
-    {mode === 'snapshot' && snapshot && (
-      <img src={snapshot} alt="Latest camera frame" onLoad={event => { setLive(true); updateAspect(event) }} onError={() => { setLive(false); advance('snapshot') }} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: fit }}/>
-    )}
-    {(mode === 'error' || (mode === 'snapshot' && !snapshot)) && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: 'var(--text2)', fontSize: 11 }}>Feed unavailable</div>}
-    {(mode === 'hls' || mode === 'stream') && !live && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,.45)', color: 'rgba(255,255,255,.65)', fontSize: 10 }}>Connecting</div>}
+    {mode === 'snapshot' && !snapshot && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: 'var(--text2)', fontSize: 11 }}>Waiting for camera frame…</div>}
+    {mode === 'error' && !snapshot && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: 'var(--text2)', fontSize: 11 }}>Feed unavailable</div>}
+    {(mode === 'hls' || mode === 'stream') && !live && !snapshot && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,.45)', color: 'rgba(255,255,255,.65)', fontSize: 10 }}>Connecting</div>}
     {live && <span style={{ position: 'absolute', right: 8, bottom: 6, color: '#fff', fontSize: 9, letterSpacing: .5 }}><i style={{ display: 'inline-block', width: 5, height: 5, marginRight: 3, borderRadius: '50%', background: '#f85149' }}/>LIVE</span>}
   </div>
 }
