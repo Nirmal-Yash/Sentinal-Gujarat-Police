@@ -76,6 +76,10 @@ jobs:
           assert '012_sighting_deduplication.sql' not in [f.name for f in files]
           print(f'Validated {len(files)} migrations')
           PY
+      - name: Run frontend route and metadata regressions
+        run: |
+          node scripts/route_state_regression.mjs
+          python scripts/p1_metadata_regression.py
       - name: Run fresh database bootstrap and migration idempotency verification
         shell: bash
         run: |
@@ -104,6 +108,11 @@ jobs:
         run: python scripts/registry_load_smoke.py
       - name: Run ANPR benchmark smoke
         run: python scripts/anpr_benchmark.py scripts/fixtures/anpr_benchmark_smoke.csv --max-error-rate 0.50
+      - name: Build dashboard
+        working-directory: dashboard
+        run: |
+          npm ci
+          npm run build
       - name: Run invariant and hygiene gate
         run: python scripts/validate_refactor.py
       - name: Validate Compose
