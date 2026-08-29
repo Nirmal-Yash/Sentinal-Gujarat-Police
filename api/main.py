@@ -9,78 +9,36 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import engine, Session, get_db
 from auth import AUTH_REQUIRED, SECRET_KEY, principal_from_token, hash_password
 from websocket_manager import manager, redis_alert_consumer
-from routes import cameras, alerts, watchlist, search, auth, reports, test, vendors, evidence, operations, test_alerts, assistant
+from routes import cameras, alerts, watchlist, search, auth, reports, test, vendors, evidence, operations, test_alerts
 from migrations import apply_migrations
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [API][%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 CORS_ORIGINS = [item.strip() for item in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",") if item.strip()]
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-
 BOOTSTRAP_ADMIN_USERNAME = os.getenv("BOOTSTRAP_ADMIN_USERNAME", "").strip()
 BOOTSTRAP_ADMIN_PASSWORD = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")
 BOOTSTRAP_ADMIN_ROLE = os.getenv("BOOTSTRAP_ADMIN_ROLE", "SUPERADMIN").upper()
 BOOTSTRAP_LOCK_KEY = "sentinel:bootstrap-admin:v1"
 
-
 async def bootstrap_admin(db: AsyncSession) -> None:
-    """Provision the initial administrator exactly once and safely across workers.
-
-    Multiple Uvicorn workers can execute FastAPI lifespan startup concurrently.
-    A PostgreSQL transaction advisory lock serializes the bootstrap decision so
-    two workers cannot race between the existence check and INSERT.
-    Existing active administrators always win; configured bootstrap credentials
-    never replace an already-active administrative account.
-    """
     await db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"), {"lock_key": BOOTSTRAP_LOCK_KEY})
-
-    active_admin = await db.scalar(
-        text("SELECT 1 FROM users WHERE role IN ('ADMIN','SUPERADMIN') AND is_active=TRUE LIMIT 1")
-    )
+    active_admin = await db.scalar(text("SELECT 1 FROM users WHERE role IN ('ADMIN','SUPERADMIN') AND is_active=TRUE LIMIT 1"))
     if active_admin:
         return
-
     if not BOOTSTRAP_ADMIN_USERNAME or not BOOTSTRAP_ADMIN_PASSWORD:
         if AUTH_REQUIRED:
-            raise RuntimeError(
-                "No active ADMIN/SUPERADMIN exists and bootstrap admin credentials are not configured "
-                "(BOOTSTRAP_ADMIN_USERNAME and BOOTSTRAP_ADMIN_PASSWORD)."
-            )
+            raise RuntimeError("No active ADMIN/SUPERADMIN exists and bootstrap admin credentials are not configured")
         return
-
     if BOOTSTRAP_ADMIN_ROLE not in {"ADMIN", "SUPERADMIN"}:
         raise RuntimeError("BOOTSTRAP_ADMIN_ROLE must be ADMIN or SUPERADMIN")
-
-    existing_username = await db.scalar(
-        text("SELECT 1 FROM users WHERE username=:username LIMIT 1"),
-        {"username": BOOTSTRAP_ADMIN_USERNAME},
-    )
     password_hash = hash_password(BOOTSTRAP_ADMIN_PASSWORD)
-
+    existing_username = await db.scalar(text("SELECT 1 FROM users WHERE username=:username LIMIT 1"), {"username": BOOTSTRAP_ADMIN_USERNAME})
     if existing_username:
-        await db.execute(
-            text("""UPDATE users
-                   SET password_hash=:password_hash, role=:role, is_active=TRUE
-                   WHERE username=:username"""),
-            {
-                "username": BOOTSTRAP_ADMIN_USERNAME,
-                "password_hash": password_hash,
-                "role": BOOTSTRAP_ADMIN_ROLE,
-            },
-        )
-        log.info("Bootstrap administrator account reconciled: %s (%s)", BOOTSTRAP_ADMIN_USERNAME, BOOTSTRAP_ADMIN_ROLE)
+        await db.execute(text("UPDATE users SET password_hash=:password_hash, role=:role, is_active=TRUE WHERE username=:username"), {"username": BOOTSTRAP_ADMIN_USERNAME, "password_hash": password_hash, "role": BOOTSTRAP_ADMIN_ROLE})
     else:
-        await db.execute(
-            text("""INSERT INTO users(username,password_hash,role,is_active)
-                   VALUES(:username,:password_hash,:role,TRUE)"""),
-            {
-                "username": BOOTSTRAP_ADMIN_USERNAME,
-                "password_hash": password_hash,
-                "role": BOOTSTRAP_ADMIN_ROLE,
-            },
-        )
-        log.info("Initial administrative account provisioned: %s (%s)", BOOTSTRAP_ADMIN_USERNAME, BOOTSTRAP_ADMIN_ROLE)
+        await db.execute(text("INSERT INTO users(username,password_hash,role,is_active) VALUES(:username,:password_hash,:role,TRUE)"), {"username": BOOTSTRAP_ADMIN_USERNAME, "password_hash": password_hash, "role": BOOTSTRAP_ADMIN_ROLE})
     await db.commit()
-
+    log.info("Bootstrap administrative account ready: %s (%s)", BOOTSTRAP_ADMIN_USERNAME, BOOTSTRAP_ADMIN_ROLE)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -100,7 +58,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Sentinel AI — Gujarat Police Innovation Challenge", version="1.0.0", description="AI-powered multi-camera surveillance platform", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 app.include_router(cameras.router); app.include_router(alerts.router); app.include_router(watchlist.router); app.include_router(search.router)
-app.include_router(auth.router); app.include_router(reports.router); app.include_router(test.router); app.include_router(test_alerts.router); app.include_router(vendors.router); app.include_router(evidence.router); app.include_router(operations.router); app.include_router(assistant.router)
+app.include_router(auth.router); app.include_router(reports.router); app.include_router(test.router); app.include_router(test_alerts.router); app.include_router(vendors.router); app.include_router(evidence.router); app.include_router(operations.router)
 
 @app.websocket("/ws/alerts")
 async def ws_alerts(ws: WebSocket):
