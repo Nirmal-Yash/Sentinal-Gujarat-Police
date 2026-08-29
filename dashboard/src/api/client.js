@@ -15,6 +15,7 @@ export const api = {
   getCameras:      ()            => req('/cameras/'),
   getAuthConfig:   ()            => req('/auth/config'),
   getMe:           ()            => req('/auth/me'),
+  groqChat:        (body)        => req('/assistant/chat', { method: 'POST', body: JSON.stringify(body) }),
   login:           (body)        => req('/auth/login', { method: 'POST', body: JSON.stringify(body) }),
   logout:          ()            => req('/auth/logout', { method: 'POST' }),
   getCameraStats:  ()            => req('/cameras/stats/summary'),

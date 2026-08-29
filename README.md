@@ -53,6 +53,17 @@ docker-compose exec intelligence python /app/scripts/seed_watchlist.py
 **Dashboard → http://localhost:3000**  
 **API docs  → http://localhost:8000/docs**
 
+### Optional Groq operator assistant
+
+Set the key in the VS Code PowerShell terminal without committing it, then recreate only the API:
+
+```powershell
+$env:GROQ_API_KEY = "<your-key>"
+docker compose up -d --build api
+```
+
+The authenticated endpoint is `POST /assistant/chat`; `GET /assistant/status` reports configuration without exposing the key. The dashboard client exposes `api.groqChat(...)` for project UI integrations.
+
 ### Registry migration note
 
 The Compose database image now includes PostGIS as well as pgvector. On startup,

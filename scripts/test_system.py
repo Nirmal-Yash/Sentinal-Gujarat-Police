@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Sentinel AI - local Docker Compose health check."""
 import json
+import os
 import sys
 import urllib.request
 
@@ -52,7 +53,8 @@ def check_redis():
 def check_postgres():
     try:
         import psycopg2
-        conn = psycopg2.connect("postgresql://sentinel:sentinelpass@localhost:5432/sentinel")
+        password = os.getenv("POSTGRES_PASSWORD", "change-me")
+        conn = psycopg2.connect(f"postgresql://sentinel:{password}@localhost:5432/sentinel")
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM cameras"); cameras = cur.fetchone()[0]
             cur.execute("SELECT COUNT(*) FROM watchlist WHERE is_active"); watchlist = cur.fetchone()[0]

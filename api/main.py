@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import engine, Session, get_db
 from auth import AUTH_REQUIRED, SECRET_KEY, principal_from_token, hash_password
 from websocket_manager import manager, redis_alert_consumer
-from routes import cameras, alerts, watchlist, search, auth, reports, test, vendors, evidence, operations, test_alerts
+from routes import cameras, alerts, watchlist, search, auth, reports, test, vendors, evidence, operations, test_alerts, assistant
 from migrations import apply_migrations
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [API][%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Sentinel AI — Gujarat Police Innovation Challenge", version="1.0.0", description="AI-powered multi-camera surveillance platform", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 app.include_router(cameras.router); app.include_router(alerts.router); app.include_router(watchlist.router); app.include_router(search.router)
-app.include_router(auth.router); app.include_router(reports.router); app.include_router(test.router); app.include_router(test_alerts.router); app.include_router(vendors.router); app.include_router(evidence.router); app.include_router(operations.router)
+app.include_router(auth.router); app.include_router(reports.router); app.include_router(test.router); app.include_router(test_alerts.router); app.include_router(vendors.router); app.include_router(evidence.router); app.include_router(operations.router); app.include_router(assistant.router)
 
 @app.websocket("/ws/alerts")
 async def ws_alerts(ws: WebSocket):
