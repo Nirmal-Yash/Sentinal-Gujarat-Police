@@ -7,21 +7,39 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import engine, Session, get_db
-from auth import AUTH_REQUIRED, SECRET_KEY, principal_from_token
+from auth import AUTH_REQUIRED, SECRET_KEY, principal_from_token, hash_password
 from websocket_manager import manager, redis_alert_consumer
 from routes import cameras, alerts, watchlist, search, auth, reports, test, vendors, evidence, operations, test_alerts
 from migrations import apply_migrations
-
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [API][%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 CORS_ORIGINS = [item.strip() for item in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",") if item.strip()]
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+
+async def bootstrap_admin(db: AsyncSession) -> None:
+    username = os.getenv("BOOTSTRAP_ADMIN_USERNAME", "").strip()
+    password = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")
+    if not username or not password:
+        return
+    existing = await db.scalar(text("SELECT 1 FROM users WHERE role IN ('ADMIN','SUPERADMIN') AND is_active=TRUE LIMIT 1"))
+    if existing:
+        return
+    role = os.getenv("BOOTSTRAP_ADMIN_ROLE", "SUPERADMIN").upper()
+    if role not in {"ADMIN", "SUPERADMIN"}:
+        raise RuntimeError("BOOTSTRAP_ADMIN_ROLE must be ADMIN or SUPERADMIN")
+    await db.execute(text("""INSERT INTO users(username,password_hash,role,is_active)
+        VALUES(:username,:password_hash,:role,TRUE) ON CONFLICT (username) DO NOTHING"""),
+        {"username": username, "password_hash": hash_password(password), "role": role})
+    await db.commit()
+    log.info("Environment-provisioned initial administrative account created: %s", username)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     apply_migrations()
     if AUTH_REQUIRED and (not SECRET_KEY or SECRET_KEY == "sentinel-change-in-production"):
         raise RuntimeError("AUTH_REQUIRED=true requires a non-default SECRET_KEY")
+    async with Session() as db:
+        await bootstrap_admin(db)
     task = asyncio.create_task(redis_alert_consumer())
     log.info("API ready; schema owned by versioned migrations.")
     yield
