@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, File, UploadFile, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from auth import require_permission, Principal
 from database import get_db
@@ -92,3 +92,25 @@ async def recent_alerts(minutes: int = Query(60, ge=1, le=1440), priority: str |
     q += " ORDER BY a.created_at DESC LIMIT 200"
     result = await db.execute(text(q), params)
     return [dict(r) for r in result.mappings().all()]
+
+@router.post("/person/validate")
+async def validate_person_photo(file: UploadFile = File(...), db: AsyncSession = Depends(get_db), principal: Principal = Depends(require_permission("search:read"))):
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(415, "Upload an image file")
+    payload = await file.read()
+    if not payload or len(payload) > 10 * 1024 * 1024:
+        raise HTTPException(413, "Image must be between 1 byte and 10 MB")
+    try:
+        import cv2, numpy as np
+        image = cv2.imdecode(np.frombuffer(payload, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if image is None:
+            raise HTTPException(422, "Image could not be decoded")
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        gray = cv2.equalizeHist(gray)
+        cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        faces = cascade.detectMultiScale(gray, scaleFactor=1.08, minNeighbors=5, minSize=(48,48)) if not cascade.empty() else ()
+        return {"valid": bool(len(faces)), "face_count": int(len(faces)), "faces": [{"x":int(x),"y":int(y),"width":int(w),"height":int(h)} for x,y,w,h in faces], "message": "Face detected" if len(faces) else "No visible face detected"}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(422, "Unable to validate image") from exc
