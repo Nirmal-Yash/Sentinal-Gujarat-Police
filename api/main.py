@@ -19,18 +19,26 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 BOOTSTRAP_ADMIN_USERNAME = os.getenv("BOOTSTRAP_ADMIN_USERNAME", "").strip()
 BOOTSTRAP_ADMIN_PASSWORD = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")
 BOOTSTRAP_ADMIN_ROLE = os.getenv("BOOTSTRAP_ADMIN_ROLE", "SUPERADMIN").upper()
+BOOTSTRAP_LOCK_KEY = "sentinel:bootstrap-admin:v1"
 
 
 async def bootstrap_admin(db: AsyncSession) -> None:
-    """Provision exactly one initial admin when explicitly configured.
+    """Provision the initial administrator exactly once and safely across workers.
 
-    Existing active administrators always win. The bootstrap credentials are
-    never used to overwrite an existing account, which makes restarts and
-    repeated deployments idempotent.
+    Multiple Uvicorn workers can execute FastAPI lifespan startup concurrently.
+    A PostgreSQL transaction advisory lock serializes the bootstrap decision so
+    two workers cannot race between the existence check and INSERT.
+    Existing active administrators always win; configured bootstrap credentials
+    never replace an already-active administrative account.
     """
-    active_admin = await db.scalar(text("SELECT 1 FROM users WHERE role IN ('ADMIN','SUPERADMIN') AND is_active=TRUE LIMIT 1"))
+    await db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"), {"lock_key": BOOTSTRAP_LOCK_KEY})
+
+    active_admin = await db.scalar(
+        text("SELECT 1 FROM users WHERE role IN ('ADMIN','SUPERADMIN') AND is_active=TRUE LIMIT 1")
+    )
     if active_admin:
         return
+
     if not BOOTSTRAP_ADMIN_USERNAME or not BOOTSTRAP_ADMIN_PASSWORD:
         if AUTH_REQUIRED:
             raise RuntimeError(
@@ -38,23 +46,40 @@ async def bootstrap_admin(db: AsyncSession) -> None:
                 "(BOOTSTRAP_ADMIN_USERNAME and BOOTSTRAP_ADMIN_PASSWORD)."
             )
         return
+
     if BOOTSTRAP_ADMIN_ROLE not in {"ADMIN", "SUPERADMIN"}:
         raise RuntimeError("BOOTSTRAP_ADMIN_ROLE must be ADMIN or SUPERADMIN")
 
-    existing_username = await db.scalar(text("SELECT 1 FROM users WHERE username=:username LIMIT 1"), {"username": BOOTSTRAP_ADMIN_USERNAME})
+    existing_username = await db.scalar(
+        text("SELECT 1 FROM users WHERE username=:username LIMIT 1"),
+        {"username": BOOTSTRAP_ADMIN_USERNAME},
+    )
     password_hash = hash_password(BOOTSTRAP_ADMIN_PASSWORD)
+
     if existing_username:
         await db.execute(
-            text("UPDATE users SET password_hash=:password_hash, role=:role, is_active=TRUE WHERE username=:username"),
-            {"username": BOOTSTRAP_ADMIN_USERNAME, "password_hash": password_hash, "role": BOOTSTRAP_ADMIN_ROLE},
+            text("""UPDATE users
+                   SET password_hash=:password_hash, role=:role, is_active=TRUE
+                   WHERE username=:username"""),
+            {
+                "username": BOOTSTRAP_ADMIN_USERNAME,
+                "password_hash": password_hash,
+                "role": BOOTSTRAP_ADMIN_ROLE,
+            },
         )
+        log.info("Bootstrap administrator account reconciled: %s (%s)", BOOTSTRAP_ADMIN_USERNAME, BOOTSTRAP_ADMIN_ROLE)
     else:
         await db.execute(
-            text("INSERT INTO users(username,password_hash,role,is_active) VALUES(:username,:password_hash,:role,TRUE)"),
-            {"username": BOOTSTRAP_ADMIN_USERNAME, "password_hash": password_hash, "role": BOOTSTRAP_ADMIN_ROLE},
+            text("""INSERT INTO users(username,password_hash,role,is_active)
+                   VALUES(:username,:password_hash,:role,TRUE)"""),
+            {
+                "username": BOOTSTRAP_ADMIN_USERNAME,
+                "password_hash": password_hash,
+                "role": BOOTSTRAP_ADMIN_ROLE,
+            },
         )
+        log.info("Initial administrative account provisioned: %s (%s)", BOOTSTRAP_ADMIN_USERNAME, BOOTSTRAP_ADMIN_ROLE)
     await db.commit()
-    log.info("Initial administrative account provisioned: %s (%s)", BOOTSTRAP_ADMIN_USERNAME, BOOTSTRAP_ADMIN_ROLE)
 
 
 @asynccontextmanager
