@@ -88,6 +88,22 @@ services:
         limits:
           memory: 6g
 
+  person_investigation:
+    build: ./ai_engine
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: ["python", "-u", "person_investigation_worker.py"]
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - PERSON_INVESTIGATION_RESULT_TTL=${PERSON_INVESTIGATION_RESULT_TTL:-120}
+    shm_size: '1gb'
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
   test_ai_worker:
     build: ./ai_engine
     restart: unless-stopped
@@ -181,6 +197,7 @@ services:
       - BOOTSTRAP_ADMIN_USERNAME=${BOOTSTRAP_ADMIN_USERNAME:-}
       - BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_ADMIN_PASSWORD:-}
       - BOOTSTRAP_ADMIN_ROLE=${BOOTSTRAP_ADMIN_ROLE:-SUPERADMIN}
+      - PERSON_INVESTIGATION_TIMEOUT=${PERSON_INVESTIGATION_TIMEOUT:-20}
     ports:
       - "8000:8000"
     volumes:
