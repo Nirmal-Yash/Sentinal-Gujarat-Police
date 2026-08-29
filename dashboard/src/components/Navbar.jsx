@@ -5,7 +5,7 @@ const ListIcon=()=> <svg width="13" height="13" viewBox="0 0 24 24" fill="none" 
 const BellIcon=()=> <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
 const btn={display:'flex',alignItems:'center',gap:6,padding:'5px 10px',borderRadius:6,border:'1px solid var(--border)',background:'transparent',color:'var(--text)',cursor:'pointer',fontSize:12,fontWeight:500,transition:'background .15s,border-color .15s',letterSpacing:.2,textDecoration:'none',whiteSpace:'nowrap'}
 const routeButton=active=>({...btn,background:active?'var(--surface2)':'transparent',borderColor:active?'var(--accent)':'var(--border)'})
-export default function Navbar({alertCount,onSearchOpen,onWatchlistOpen,onOnboardOpen,onVendorsOpen,onAssistantOpen,onTestOpen,testMode,onReportExport,principal,onLogout,path='/',onNavigate}){
+export default function Navbar({alertCount,onSearchOpen,onWatchlistOpen,onOnboardOpen,onVendorsOpen,onTestOpen,testMode,onReportExport,principal,onLogout,path='/',onNavigate}){
  const [time,setTime]=useState(new Date());useEffect(()=>{const t=setInterval(()=>setTime(new Date()),1000);return()=>clearInterval(t)},[])
  const go=target=>event=>{event.preventDefault();onNavigate?.(target)}
  const timeStr=time.toLocaleTimeString('en-IN',{hour12:false}),dateStr=time.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})
@@ -15,7 +15,7 @@ export default function Navbar({alertCount,onSearchOpen,onWatchlistOpen,onOnboar
   <div style={{display:'flex',gap:5}}>{[['/dashboard','Dashboard'],['/feeds','Feeds'],['/map','Map'],['/alerts','Alerts'],['/investigations','Investigate']].map(([href,label])=><a key={href} href={href} onClick={go(href)} style={routeButton(path===href)}>{label}</a>)}</div>
   <div style={{flex:1,minWidth:8}}/>{alertCount>0&&<div style={{display:'flex',alignItems:'center',gap:6,background:'rgba(248,81,73,.12)',border:'1px solid rgba(248,81,73,.3)',borderRadius:6,padding:'4px 9px'}}><BellIcon/><span style={{fontSize:12,fontWeight:700,color:'var(--high)',whiteSpace:'nowrap'}}>{alertCount} unacknowledged</span></div>}
   <button style={btn} onClick={onSearchOpen}><SearchIcon/> Search</button><button style={btn} onClick={onWatchlistOpen}><ListIcon/> Watchlist</button>
-  {principal&&['ADMIN','SUPERADMIN'].includes(principal.role)&&<><button style={btn} onClick={onOnboardOpen}>Add camera</button><button style={btn} onClick={onVendorsOpen}>Vendors</button><button style={btn} onClick={onAssistantOpen}>Assistant</button><button style={btn} onClick={onReportExport}>Export</button></>}
+  {principal&&['ADMIN','SUPERADMIN'].includes(principal.role)&&<><button style={btn} onClick={onOnboardOpen}>Add camera</button><button style={btn} onClick={onVendorsOpen}>Vendors</button><button style={btn} onClick={onReportExport}>Export</button></>}
   {principal&&['ADMIN','SUPERADMIN'].includes(principal.role)&&onTestOpen&&<a href="/test" onClick={event=>{event.preventDefault();onNavigate?.('/test');onTestOpen()}} style={{...routeButton(path==='/test'||testMode),color:testMode?'var(--accent)':'var(--text)'}}>{testMode?'Exit test mode':'Test mode'}</a>}
   {principal&&<span style={{padding:'4px 8px',borderRadius:5,background:'var(--surface2)',color:'var(--text2)',fontSize:10,whiteSpace:'nowrap'}}>{principal.username} · {principal.role}</span>}{principal?.id&&<button style={btn} onClick={onLogout}>Sign out</button>}
  </nav>
