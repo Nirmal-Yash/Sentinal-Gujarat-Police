@@ -1,15 +1,15 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api, WS_URL } from './api/client'
 import { useWebSocket } from './hooks/useWebSocket'
-import Navbar         from './components/Navbar'
-import CameraGrid     from './components/CameraGrid'
-import AlertPanel     from './components/AlertPanel'
-import MapView        from './components/MapView'
-import SearchModal    from './components/SearchModal'
+import Navbar from './components/Navbar'
+import CameraGrid from './components/CameraGrid'
+import AlertPanel from './components/AlertPanel'
+import MapView from './components/MapView'
+import SearchModal from './components/SearchModal'
 import WatchlistModal from './components/WatchlistModal'
 import OnboardCameraModal from './components/OnboardCameraModal'
-import LoginModal     from './components/LoginModal'
-import VendorModal    from './components/VendorModal'
+import LoginModal from './components/LoginModal'
+import VendorModal from './components/VendorModal'
 import TestDiagnosticsModal from './components/TestDiagnosticsModal'
 
 const MAX_LIVE_ALERTS = 300
@@ -87,17 +87,15 @@ export default function App() {
 
   useEffect(() => {
     if (path === '/investigations' && authReady && !showSearch) setShowSearch(true)
+    if (path === '/test' && authReady && testEnabled && !testMode && !showTestDiagnostics) setShowTestDiagnostics(true)
     if (path !== '/investigations' && showSearch && !searchInit) setShowSearch(false)
-  }, [path, authReady, showSearch, searchInit])
+  }, [path, authReady, testEnabled, testMode, showTestDiagnostics, showSearch, searchInit])
 
   const alertsByCam = (alerts || []).reduce((acc, a) => {
     if (a.cam_id && !a.acknowledged) acc[a.cam_id] = (acc[a.cam_id] || 0) + 1
     return acc
   }, {})
-  const analyticsByCam = (analytics || []).reduce((acc, item) => {
-    if (item.cam_id) acc[item.cam_id] = item
-    return acc
-  }, {})
+  const analyticsByCam = (analytics || []).reduce((acc, item) => { if (item.cam_id) acc[item.cam_id] = item; return acc }, {})
 
   useEffect(() => {
     if (!authReady || (authRequired && !principal) || testMode) return
@@ -128,10 +126,7 @@ export default function App() {
 
   useEffect(() => {
     if (!authReady || (authRequired && !principal) || testMode) return
-    const t = setInterval(() => {
-      api.getAlertCounts().then(setCounts).catch(console.warn)
-      api.getRecentAnalytics().then(setAnalytics).catch(console.warn)
-    }, 10000)
+    const t = setInterval(() => { api.getAlertCounts().then(setCounts).catch(console.warn); api.getRecentAnalytics().then(setAnalytics).catch(console.warn) }, 10000)
     return () => clearInterval(t)
   }, [authReady, authRequired, principal, testMode])
 
@@ -156,63 +151,51 @@ export default function App() {
   useWebSocket(websocketUrl, onMessage)
 
   const ack = useCallback(async id => {
-    try {
-      await api.ackAlert(id)
-      setAlerts(a => a.map(x => (x.alert_id === id || x.id === id) ? { ...x, acknowledged:true } : x))
-      setCounts(c => c ? { ...c, unacknowledged:Math.max(0,(c.unacknowledged || 1)-1) } : c)
-    } catch (e) { console.warn('ack failed:', e) }
+    try { await api.ackAlert(id); setAlerts(a => a.map(x => (x.alert_id === id || x.id === id) ? { ...x, acknowledged:true } : x)); setCounts(c => c ? { ...c, unacknowledged:Math.max(0,(c.unacknowledged || 1)-1) } : c) }
+    catch (e) { console.warn('ack failed:', e) }
   }, [])
 
-  const toggleAlerts = useCallback(() => setAlertsCollapsed(value => { const next = !value; localStorage.setItem('sentinel.alerts.collapsed.v1', String(next)); return next }), [])
-  const locateCamera = useCallback(camera => { if (!camera?.id) return; setMapFocus(previous => ({ id:camera.id, nonce:previous.nonce + 1 })); navigate('/map') }, [navigate])
-  const openCamera = useCallback(camera => { if (!camera?.id) return; setCameraFocus(previous => ({ id:camera.id, nonce:previous.nonce + 1 })); navigate('/feeds') }, [navigate])
-  const locateRoute = useCallback(sightings => { if (!Array.isArray(sightings) || !sightings.length) return; setVehicleRoute(previous => ({ sightings, nonce:previous.nonce + 1 })); navigate('/map') }, [navigate])
+  const toggleAlerts = useCallback(() => setAlertsCollapsed(value => { const next=!value; localStorage.setItem('sentinel.alerts.collapsed.v1', String(next)); return next }), [])
+  const locateCamera = useCallback(camera => { if (!camera?.id) return; setMapFocus(previous => ({ id:camera.id, nonce:previous.nonce+1 })); navigate('/map') }, [navigate])
+  const openCamera = useCallback(camera => { if (!camera?.id) return; setCameraFocus(previous => ({ id:camera.id, nonce:previous.nonce+1 })); navigate('/feeds') }, [navigate])
+  const locateRoute = useCallback(sightings => { if (!Array.isArray(sightings) || !sightings.length) return; setVehicleRoute(previous => ({ sightings, nonce:previous.nonce+1 })); navigate('/map') }, [navigate])
   const login = useCallback(async credentials => { const response = await api.login(credentials); localStorage.setItem('sentinel.jwt', response.access_token); setPrincipal(response.user); setAuthReady(true); setAuthConfigError('') }, [])
   const logout = useCallback(async () => { try { await api.logout() } catch {} localStorage.removeItem('sentinel.jwt'); setPrincipal(null); setAlerts([]); setCounts(null); setAuthReady(!authRequired); navigate('/dashboard') }, [authRequired, navigate])
   const onboard = useCallback(async body => { const camera = await api.onboardCamera(body); setCameras(current => [...current,camera].sort((a,b)=>(a.stream_id || 0)-(b.stream_id || 0))); return camera }, [])
   const importCameras = useCallback(async file => { const result = await api.importCameras(file); setCameras(await api.getCameras()); return result }, [])
   const exportDetections = useCallback(async () => { const blob = await api.downloadDetections(); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href=url; link.download='sentinel-detections.csv'; link.click(); URL.revokeObjectURL(url) }, [])
-  const startTest = useCallback(session => { setTestSession(session); setTestMode(true); navigate('/test') }, [navigate])
-  const openTest = useCallback(async () => { try { const session = await api.getActiveTestSession(); if (session) return startTest(session) } catch (error) { console.warn('test session lookup:', error) } setShowTestDiagnostics(true); navigate('/test') }, [startTest, navigate])
+  const startTest = useCallback(session => { setTestSession(session); setTestMode(true); setShowTestDiagnostics(false); navigate('/test') }, [navigate])
+  const openTest = useCallback(async () => { try { const session=await api.getActiveTestSession(); if (session) return startTest(session) } catch (error) { console.warn('test session lookup:',error) } setShowTestDiagnostics(true); navigate('/test') }, [startTest,navigate])
   const exitTest = useCallback(() => { setTestMode(false); setTestSession(null); setAlerts([]); api.getCameras().then(rows => { setCameras(rows); setProductionCameras(rows) }).catch(console.warn); navigate('/feeds') }, [navigate])
   const clearTest = useCallback(async () => { if (!testSession) return; await api.closeTestSession(testSession.id); exitTest() }, [testSession, exitTest])
-  const exportTest = useCallback(async () => { if (!testSession) return; const blob = await api.downloadTestResults(testSession.id); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href=url; link.download='sentinel-test-results.csv'; link.click(); URL.revokeObjectURL(url) }, [testSession])
+  const exportTest = useCallback(async () => { if (!testSession) return; const blob=await api.downloadTestResults(testSession.id); const url=URL.createObjectURL(blob); const link=document.createElement('a'); link.href=url; link.download='sentinel-test-results.csv'; link.click(); URL.revokeObjectURL(url) }, [testSession])
 
-  if (authRequired === null) return <div style={{ minHeight:'100vh', display:'grid', placeItems:'center', background:'var(--bg)', color:'var(--text2)', fontSize:12 }}>Loading Sentinel…</div>
+  if (authRequired === null) return <div style={{ minHeight:'100vh',display:'grid',placeItems:'center',background:'var(--bg)',color:'var(--text2)',fontSize:12 }}>Loading Sentinel…</div>
   if (authRequired && !principal) return <LoginModal onLogin={login} error={authConfigError}/>
 
   const showMap = path === '/map'
   const showFeeds = path === '/dashboard' || path === '/feeds' || path === '/alerts' || path === '/test'
-  return (
-    <div style={{ display:'flex', flexDirection:'column', height:'100vh', overflow:'hidden' }}>
-      <Navbar path={path} onNavigate={navigate} alertCount={counts?.unacknowledged || 0}
-        onSearchOpen={() => { setSearchInit(null); setShowSearch(true); navigate('/investigations') }}
-        onWatchlistOpen={() => setShowWatchlist(true)} onOnboardOpen={() => setShowOnboard(true)}
-        onVendorsOpen={() => setShowVendors(true)} onTestOpen={testEnabled ? () => testMode ? exitTest() : openTest() : null}
-        testMode={testMode} onReportExport={exportDetections} principal={principal} onLogout={logout}/>
-      <div style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 14px', background:'var(--surface)', borderBottom:'1px solid var(--border)', flexShrink:0 }}>
-        <div style={{ display:'flex', gap:14, fontSize:11 }}>
-          <span style={{ color:testMode ? 'var(--accent)' : 'var(--text2)' }}>{testMode ? 'ISOLATED TEST MODE' : `${cameras.length} cameras`}</span>
-          <span style={{ color:'var(--high)', fontWeight:counts?.high ? 700 : 400 }}>{counts?.high || 0} HIGH</span>
-          <span style={{ color:'var(--medium)' }}>{counts?.medium || 0} MED</span><span style={{ color:'var(--low)' }}>{counts?.low || 0} LOW</span>
-        </div>
-        {testMode && <div style={{ display:'flex',gap:6,marginLeft:10 }}><button onClick={exportTest} style={smallButton}>Export test results</button><button onClick={clearTest} style={{ ...smallButton,color:'var(--high)',borderColor:'var(--high)' }}>Clear test data</button></div>}
-        <div style={{ flex:1 }}/>{pipelineStats && <div style={{ display:'flex',alignItems:'center',gap:10,background:'var(--surface2)',borderRadius:6,padding:'3px 10px',border:'1px solid var(--border)',fontSize:10,color:'var(--text2)' }}><span>Pipeline</span>{[['Frames',pipelineStats.raw_frames],['Detect',pipelineStats.detections]].map(([label,value]) => <span key={label} style={{ display:'flex',alignItems:'center',gap:3 }}><span style={{ opacity:.6 }}>{label}</span><span style={{ fontWeight:700,color:label === 'Frames' ? 'var(--green)' : 'var(--accent)' }}>{(value || 0).toLocaleString()}</span></span>)}</div>}
-      </div>
-      <div style={{ display:'flex',flex:1,overflow:'hidden' }}>
-        <div style={{ flex:1,overflow:'hidden',position:'relative',display:'flex',flexDirection:'column' }}>
-          {showMap ? <MapView cameras={productionCameras} alerts={testMode ? [] : alerts} focusCameraId={mapFocus.id} focusNonce={mapFocus.nonce} route={vehicleRoute.sightings} routeFocusNonce={vehicleRoute.nonce}/> : showFeeds ? <div style={{ flex:1,minHeight:0 }}><CameraGrid cameras={cameras} alertsByCam={alertsByCam} analyticsByCam={analyticsByCam} pipelineStats={pipelineStats} onLocate={testMode ? (() => {}) : locateCamera} focusCameraId={cameraFocus.id} focusNonce={cameraFocus.nonce}/></div> : null}
-        </div>
-        <div style={{ width:alertsCollapsed ? 38 : 320,transition:'width .18s ease',flexShrink:0,display:'flex',flexDirection:'column',overflow:'hidden' }}>
-          <AlertPanel alerts={alerts} onAck={testMode ? (() => {}) : ack} counts={counts} collapsed={alertsCollapsed} onToggle={toggleAlerts} onOpenSearch={async init => { if (init?.tab === 'track' && init.query) { try { const result = await api.searchTrack(init.query); locateRoute(result.sightings || []) } catch (error) { console.warn('journey lookup:', error) } } else { setSearchInit(init); setShowSearch(true); navigate('/investigations') } }}/>
-        </div>
-      </div>
-      {showSearch && <SearchModal init={searchInit} testMode={testMode} testSession={testSession} onClose={() => { setShowSearch(false); setSearchInit(null); navigate('/feeds') }} onViewCamera={openCamera} onLocateCamera={locateCamera} onLocateRoute={locateRoute}/>} 
-      {showWatchlist && <WatchlistModal onClose={() => setShowWatchlist(false)}/>} 
-      {showOnboard && <OnboardCameraModal onClose={() => setShowOnboard(false)} onSaved={onboard} onImport={importCameras}/>} 
-      {showVendors && <VendorModal onClose={() => setShowVendors(false)}/>} 
-      {showTestDiagnostics && <TestDiagnosticsModal onClose={() => setShowTestDiagnostics(false)} onStarted={startTest}/>} 
+  return <div style={{ display:'flex',flexDirection:'column',height:'100vh',overflow:'hidden' }}>
+    <Navbar path={path} onNavigate={navigate} alertCount={counts?.unacknowledged || 0}
+      onSearchOpen={() => { setSearchInit(null); setShowSearch(true); navigate('/investigations') }}
+      onWatchlistOpen={() => setShowWatchlist(true)} onOnboardOpen={() => setShowOnboard(true)} onVendorsOpen={() => setShowVendors(true)}
+      onTestOpen={testEnabled ? () => testMode ? exitTest() : openTest() : null} testMode={testMode} onReportExport={exportDetections} principal={principal} onLogout={logout}/>
+    <div style={{ display:'flex',alignItems:'center',gap:8,padding:'6px 14px',background:'var(--surface)',borderBottom:'1px solid var(--border)',flexShrink:0 }}>
+      <div style={{ display:'flex',gap:14,fontSize:11 }}><span style={{ color:testMode ? 'var(--accent)':'var(--text2)' }}>{testMode ? 'ISOLATED TEST MODE' : `${cameras.length} cameras`}</span><span style={{ color:'var(--high)',fontWeight:counts?.high ? 700:400 }}>{counts?.high || 0} HIGH</span><span style={{ color:'var(--medium)' }}>{counts?.medium || 0} MED</span><span style={{ color:'var(--low)' }}>{counts?.low || 0} LOW</span></div>
+      {testMode && <div style={{ display:'flex',gap:6,marginLeft:10 }}><button onClick={exportTest} style={smallButton}>Export test results</button><button onClick={clearTest} style={{ ...smallButton,color:'var(--high)',borderColor:'var(--high)' }}>Clear test data</button></div>}
+      <div style={{ flex:1 }}/>{pipelineStats && <div style={{ display:'flex',alignItems:'center',gap:10,background:'var(--surface2)',borderRadius:6,padding:'3px 10px',border:'1px solid var(--border)',fontSize:10,color:'var(--text2)' }}><span>Pipeline</span>{[['Frames',pipelineStats.raw_frames],['Detect',pipelineStats.detections]].map(([label,value]) => <span key={label}><span style={{ opacity:.6 }}>{label} </span><b style={{ color:label === 'Frames' ? 'var(--green)':'var(--accent)' }}>{(value || 0).toLocaleString()}</b></span>)}</div>}
     </div>
-  )
+    <div style={{ display:'flex',flex:1,overflow:'hidden' }}>
+      <div style={{ flex:1,overflow:'hidden',position:'relative',display:'flex',flexDirection:'column' }}>
+        {showMap ? <MapView cameras={productionCameras} alerts={testMode ? [] : alerts} focusCameraId={mapFocus.id} focusNonce={mapFocus.nonce} route={vehicleRoute.sightings} routeFocusNonce={vehicleRoute.nonce}/> : showFeeds ? <div style={{ flex:1,minHeight:0 }}><CameraGrid cameras={cameras} alertsByCam={alertsByCam} analyticsByCam={analyticsByCam} pipelineStats={pipelineStats} onLocate={testMode ? (() => {}) : locateCamera} focusCameraId={cameraFocus.id} focusNonce={cameraFocus.nonce}/></div> : null}
+      </div>
+      <div style={{ width:alertsCollapsed ? 38:320,transition:'width .18s ease',flexShrink:0,display:'flex',flexDirection:'column',overflow:'hidden' }}><AlertPanel alerts={alerts} onAck={testMode ? (() => {}) : ack} counts={counts} collapsed={alertsCollapsed} onToggle={toggleAlerts} onOpenSearch={async init => { if (init?.tab === 'track' && init.query) { try { const result=await api.searchTrack(init.query); locateRoute(result.sightings || []) } catch(error) { console.warn('journey lookup:',error) } } else { setSearchInit(init); setShowSearch(true); navigate('/investigations') } }}/></div>
+    </div>
+    {showSearch && <SearchModal init={searchInit} testMode={testMode} testSession={testSession} onClose={() => { setShowSearch(false); setSearchInit(null); navigate('/feeds') }} onViewCamera={openCamera} onLocateCamera={locateCamera} onLocateRoute={locateRoute}/>} 
+    {showWatchlist && <WatchlistModal onClose={() => setShowWatchlist(false)}/>} 
+    {showOnboard && <OnboardCameraModal onClose={() => setShowOnboard(false)} onSaved={onboard} onImport={importCameras}/>} 
+    {showVendors && <VendorModal onClose={() => setShowVendors(false)}/>} 
+    {showTestDiagnostics && <TestDiagnosticsModal onClose={() => { setShowTestDiagnostics(false); if (path === '/test' && !testMode) navigate('/feeds') }} onStarted={startTest}/>} 
+  </div>
 }
 const smallButton = { padding:'4px 7px',borderRadius:5,border:'1px solid var(--border)',background:'transparent',color:'var(--text2)',cursor:'pointer',fontSize:10 }
