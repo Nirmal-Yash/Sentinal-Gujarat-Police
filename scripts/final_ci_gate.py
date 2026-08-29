@@ -8,7 +8,7 @@ required = [
     'ai_engine/event_schema.py','intelligence/sighting_store.py','intelligence/alert_engine.py','intelligence/evidence_capture.py',
     'api/auth.py','api/migrations.py','api/routes/cameras.py','api/routes/search.py','api/routes/reports.py','api/routes/alerts.py','api/routes/evidence.py','api/routes/operations.py','api/routes/test.py','api/routes/test_alerts.py',
     'dashboard/src/components/MapView.jsx','dashboard/src/components/AlertPanel.jsx',
-    'database/migrations/011_vehicle_journey_domain.sql','database/migrations/012_runtime_integrity_and_dedup.sql','database/migrations/020_test_alert_lifecycle.sql',
+    'database/migrations/011_vehicle_journey_domain.sql','database/migrations/012_runtime_integrity_and_dedup.sql','database/migrations/020_test_alert_lifecycle.sql','database/migrations/021_audit_integrity.sql',
 ]
 missing = [p for p in required if not (ROOT / p).exists()]
 for p in required:
