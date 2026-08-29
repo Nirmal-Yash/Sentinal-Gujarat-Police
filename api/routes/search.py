@@ -63,7 +63,7 @@ async def recent_alerts(minutes:int=Query(60,ge=1,le=1440),priority:str|None=Non
     q+=' ORDER BY a.created_at DESC LIMIT 200';result=await db.execute(text(q),params);return [dict(r) for r in result.mappings().all()]
 
 @router.post('/person/validate',dependencies=[Depends(rate_limit('person-investigation',int(os.getenv('PERSON_SEARCH_RATE_LIMIT','20')),int(os.getenv('PERSON_SEARCH_RATE_WINDOW','60'))))])
-async def validate_person_photo(file:UploadFile=File(...),db:AsyncSession=Depends(get_db),principal:Principal=Depends(require_permission('search:read')):
+async def validate_person_photo(file: UploadFile = File(...), db: AsyncSession = Depends(get_db), principal: Principal = Depends(require_permission('search:read'))):
     if not file.content_type or not file.content_type.startswith('image/'):raise HTTPException(415,'Upload an image file')
     payload=await file.read()
     if not payload or len(payload)>10*1024*1024:raise HTTPException(413,'Image must be between 1 byte and 10 MB')
