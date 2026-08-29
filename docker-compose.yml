@@ -47,9 +47,6 @@ services:
       - CATALOGUE_SYNC_INTERVAL=${CATALOGUE_SYNC_INTERVAL:-300}
       - TEST_FRAME_FPS=${TEST_FRAME_FPS:-3}
       - TEST_RTSP_BASE=rtsp://mediamtx:8554
-    volumes:
-      - ./videos:/videos:ro
-      - test_videos:/test_videos
 
   ai_worker:
     build: ./ai_engine
@@ -64,6 +61,16 @@ services:
       - FRAME_SKIP=${FRAME_SKIP:-3}
       - YOLO_WORKERS=${YOLO_WORKERS:-4}
       - ANPR_ENABLED=${ANPR_ENABLED:-true}
+      - ANPR_OCR_GPU=${ANPR_OCR_GPU:-false}
+      - ANPR_OCR_INTERVAL_SECS=${ANPR_OCR_INTERVAL_SECS:-0.8}
+      - ANPR_OCR_MIN_CONF=${ANPR_OCR_MIN_CONF:-0.35}
+      - ANPR_CONFIRM_OBSERVATIONS=${ANPR_CONFIRM_OBSERVATIONS:-2}
+      - ANPR_TRACK_EXPIRY_SECS=${ANPR_TRACK_EXPIRY_SECS:-30}
+      - ANPR_MIN_VEHICLE_W=${ANPR_MIN_VEHICLE_W:-80}
+      - ANPR_MIN_VEHICLE_H=${ANPR_MIN_VEHICLE_H:-60}
+      - ANPR_MIN_PLATE_WIDTH=${ANPR_MIN_PLATE_WIDTH:-45}
+      - ANPR_MIN_PLATE_HEIGHT=${ANPR_MIN_PLATE_HEIGHT:-15}
+      - ANPR_MAX_CONCURRENT_TRACKS=${ANPR_MAX_CONCURRENT_TRACKS:-128}
       - FACE_ENABLED=${FACE_ENABLED:-true}
       - BEHAVIOR_ENABLED=${BEHAVIOR_ENABLED:-true}
     shm_size: '2gb'
@@ -86,6 +93,16 @@ services:
       - FRAME_SKIP=${TEST_FRAME_SKIP:-2}
       - YOLO_WORKERS=1
       - ANPR_ENABLED=true
+      - ANPR_OCR_GPU=${TEST_ANPR_OCR_GPU:-false}
+      - ANPR_OCR_INTERVAL_SECS=${ANPR_OCR_INTERVAL_SECS:-0.8}
+      - ANPR_OCR_MIN_CONF=${ANPR_OCR_MIN_CONF:-0.35}
+      - ANPR_CONFIRM_OBSERVATIONS=${ANPR_CONFIRM_OBSERVATIONS:-2}
+      - ANPR_TRACK_EXPIRY_SECS=${ANPR_TRACK_EXPIRY_SECS:-30}
+      - ANPR_MIN_VEHICLE_W=${ANPR_MIN_VEHICLE_W:-80}
+      - ANPR_MIN_VEHICLE_H=${ANPR_MIN_VEHICLE_H:-60}
+      - ANPR_MIN_PLATE_WIDTH=${ANPR_MIN_PLATE_WIDTH:-45}
+      - ANPR_MIN_PLATE_HEIGHT=${ANPR_MIN_PLATE_HEIGHT:-15}
+      - ANPR_MAX_CONCURRENT_TRACKS=${ANPR_MAX_CONCURRENT_TRACKS:-128}
       - FACE_ENABLED=${TEST_FACE_ENABLED:-false}
       - BEHAVIOR_ENABLED=${TEST_BEHAVIOR_ENABLED:-true}
     shm_size: '1gb'
@@ -107,8 +124,6 @@ services:
       - CROSS_CAM_WINDOW=${CROSS_CAM_WINDOW:-300}
       - EVIDENCE_ROOT=/evidence
       - MAX_EVIDENCE_BYTES=${MAX_EVIDENCE_BYTES:-4194304}
-    volumes:
-      - evidence_data:/evidence
 
   test_intelligence:
     build: ./intelligence
@@ -123,8 +138,9 @@ services:
       - DATABASE_URL=postgresql://sentinel:${POSTGRES_PASSWORD}@postgres:5432/sentinel
       - TEST_MODE=true
       - EVIDENCE_ROOT=/evidence
-    volumes:
-      - evidence_data:/evidence
+      - MAX_EVIDENCE_BYTES=${MAX_EVIDENCE_BYTES:-4194304}
+      - ALERT_COOLDOWN=${ALERT_COOLDOWN:-60}
+      - CROSS_CAM_WINDOW=${CROSS_CAM_WINDOW:-300}
 
   api:
     build:
@@ -146,9 +162,11 @@ services:
       - TEST_ENDPOINT_ENABLED=${TEST_ENDPOINT_ENABLED:-false}
       - TEST_VIDEO_DIR=/videos
       - TEST_UPLOAD_DIR=/test_videos
+      - TEST_MAX_UPLOAD_BYTES=${TEST_MAX_UPLOAD_BYTES:-2147483648}
       - TEST_RTSP_BASE=rtsp://mediamtx:8554
       - TEST_HLS_BASE=/test-hls
       - EVIDENCE_ROOT=/evidence
+      - MAX_EVIDENCE_BYTES=${MAX_EVIDENCE_BYTES:-4194304}
     volumes:
       - ./videos:/videos:ro
       - test_videos:/test_videos
