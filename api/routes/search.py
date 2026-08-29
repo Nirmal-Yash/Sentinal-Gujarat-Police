@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from auth import require_permission, Principal
 from database import get_db
 from rate_limit import rate_limit
-import re
+import re, os, base64, json, time, uuid
 from sqlalchemy import text
 
 router = APIRouter(prefix='/search', tags=['search'], dependencies=[Depends(require_permission('search:read'))])
@@ -28,7 +28,7 @@ async def search_cameras(q: str = Query(..., min_length=1, max_length=100), limi
         LIMIT :limit OFFSET :offset'''), {'needle': q.strip(), 'pattern': f'%{q.strip()}%', 'limit': limit, 'offset': offset})
     return {'query': q, 'items': [dict(row) for row in result.mappings()], 'limit': limit, 'offset': offset}
 
-@router.get('/plate', dependencies=[Depends(rate_limit('plate-search', int(__import__('os').getenv('PLATE_SEARCH_RATE_LIMIT','60')), int(__import__('os').getenv('PLATE_SEARCH_RATE_WINDOW','60'))))])
+@router.get('/plate', dependencies=[Depends(rate_limit('plate-search', int(os.getenv('PLATE_SEARCH_RATE_LIMIT','60')), int(os.getenv('PLATE_SEARCH_RATE_WINDOW','60'))))])
 async def search_plate(q: str = Query(..., min_length=1, max_length=100), limit: int = Query(20, ge=1, le=100), db: AsyncSession = Depends(get_db)):
     normalized = re.sub(r'[^A-Z0-9]', '', q.upper())
     if len(normalized) < 3: return {'query': q, 'detections': [], 'watchlist_hits': [], 'journeys': []}
@@ -90,7 +90,7 @@ async def recent_alerts(minutes: int = Query(60, ge=1, le=1440), priority: str |
     result = await db.execute(text(q), params)
     return [dict(r) for r in result.mappings().all()]
 
-@router.post('/person/validate', dependencies=[Depends(rate_limit('person-investigation', int(__import__('os').getenv('PERSON_SEARCH_RATE_LIMIT','20')), int(__import__('os').getenv('PERSON_SEARCH_RATE_WINDOW','60'))))])
+@router.post('/person/validate', dependencies=[Depends(rate_limit('person-investigation', int(os.getenv('PERSON_SEARCH_RATE_LIMIT','20')), int(os.getenv('PERSON_SEARCH_RATE_WINDOW','60'))))])
 async def validate_person_photo(file: UploadFile = File(...), db: AsyncSession = Depends(get_db), principal: Principal = Depends(require_permission('search:read'))):
     if not file.content_type or not file.content_type.startswith('image/'):
         raise HTTPException(415, 'Upload an image file')
@@ -109,3 +109,51 @@ async def validate_person_photo(file: UploadFile = File(...), db: AsyncSession =
         raise
     except Exception as exc:
         raise HTTPException(422, 'Unable to validate image') from exc
+
+@router.post('/person/investigate', dependencies=[Depends(rate_limit('person-investigation-run', int(os.getenv('PERSON_SEARCH_RUN_RATE_LIMIT','10')), int(os.getenv('PERSON_SEARCH_RUN_RATE_WINDOW','300'))))])
+async def investigate_person(files: list[UploadFile] = File(...), db: AsyncSession = Depends(get_db)):
+    if not files: raise HTTPException(400, 'Upload at least one reference image')
+    files = files[:10]
+    r = __import__('redis.asyncio', fromlist=['from_url']).from_url(os.getenv('REDIS_URL','redis://localhost:6379'), decode_responses=False)
+    request_id = uuid.uuid4().hex
+    embeddings = []
+    try:
+        for file in files:
+            if not file.content_type or not file.content_type.startswith('image/'): continue
+            payload = await file.read()
+            if not payload or len(payload) > 10*1024*1024: continue
+            key=f'person:image:{request_id}:{uuid.uuid4().hex}'
+            rkey=f'person:result:{request_id}'
+            await r.set(key, payload, ex=30)
+            await r.xadd('person:investigations', {'request_id':request_id,'image_key':key,'result_key':rkey}, maxlen=1000, approximate=True)
+            deadline=time.monotonic()+float(os.getenv('PERSON_INVESTIGATION_TIMEOUT','20'))
+            result=None
+            while time.monotonic()<deadline:
+                raw=await r.get(rkey)
+                if raw: result=json.loads(raw); break
+                await __import__('asyncio').sleep(0.15)
+            if result and result.get('status')=='ok': embeddings.extend(result.get('embeddings',[]))
+        if not embeddings:
+            return {'status':'no_match','matches':[],'message':'No usable face embedding was produced'}
+        matches=[]
+        for encoded in embeddings:
+            vector=np.frombuffer(base64.b64decode(encoded), dtype=np.float32).tolist()
+            vector_literal='['+','.join(str(float(v)) for v in vector)+']'
+            result=await db.execute(text('''
+                SELECT gt.id,gt.entity_type,gt.first_seen_cam,gt.last_seen_cam,gt.first_seen_at,gt.last_seen_at,gt.cam_history,gt.plate_text,
+                       1-(gt.embedding <=> CAST(:vector AS vector)) AS similarity
+                FROM global_tracks gt
+                WHERE gt.entity_type='person' AND gt.embedding IS NOT NULL
+                ORDER BY gt.embedding <=> CAST(:vector AS vector)
+                LIMIT 20'''), {'vector':vector_literal})
+            matches.extend(dict(row) for row in result.mappings())
+        grouped={}
+        for m in matches:
+            key=str(m['id']); grouped[key]=m if key not in grouped else (m if float(m['similarity'] or 0)<float(grouped[key]['similarity'] or 0) else grouped[key])
+        threshold=float(os.getenv('FACE_INVESTIGATION_THRESHOLD','0.65'))
+        ranked=sorted(grouped.values(), key=lambda x: float(x['similarity'] or 0), reverse=True)
+        ranked=[m for m in ranked if float(m['similarity'] or 0)>=threshold][:20]
+        return {'status':'matches' if ranked else 'no_match','matches':ranked,'threshold':threshold}
+    finally:
+        try: await r.close()
+        except Exception: pass
