@@ -19,7 +19,9 @@ class UserCreate(Login):
 async def config():
     return {
         "auth_required": AUTH_REQUIRED,
-        "test_enabled": os.getenv("TEST_ENDPOINT_ENABLED", "false").lower() == "true",
+        "test_enabled": os.getenv("TEST_ENDPOINT_ENABLED", "true").lower() == "true",
+        "session_persistent": True,
+        "bootstrap_admin_configured": bool(os.getenv("BOOTSTRAP_ADMIN_USERNAME", "").strip() and os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")),
     }
 
 @router.post("/login")
@@ -35,7 +37,6 @@ async def login(body: Login, db: AsyncSession = Depends(get_db)):
 
 @router.post("/refresh")
 async def refresh(principal: Principal = Depends(current_principal), db: AsyncSession = Depends(get_db)):
-    """Rotate an authenticated session without extending a revoked session."""
     if not AUTH_REQUIRED:
         return {"access_token": None, "token_type": "bearer", "expires_at": None, "user": {"id": principal.user_id, "username": principal.username, "role": principal.role}}
     if not principal.user_id or not principal.jti:
@@ -63,7 +64,7 @@ async def me(principal: Principal = Depends(current_principal)):
 @router.post("/users", status_code=201)
 async def create_user(body: UserCreate, principal: Principal = Depends(require_role("SUPERADMIN")), db: AsyncSession = Depends(get_db)):
     role = body.role.upper()
-    if role not in {"SUPERADMIN", "ADMIN", "OPERATOR", "VIEWER"}:
+    if role not in {"SUPERADMIN", "ADMIN", "OPERATOR", "INVESTIGATOR", "AUDITOR", "VIEWER"}:
         raise HTTPException(422, "Invalid role")
     try:
         row = (await db.execute(text("""INSERT INTO users(username,password_hash,role) VALUES(:username,:hash,:role)
