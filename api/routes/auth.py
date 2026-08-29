@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
-from auth import AUTH_REQUIRED, current_principal, require_role, Principal, verify_password, hash_password, issue_token
+from auth import AUTH_REQUIRED, current_principal, require_role, Principal, verify_password, issue_token, hash_password
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -16,13 +16,10 @@ class UserCreate(Login):
     role: str = "VIEWER"
 
 @router.get("/config")
-async def config():
-    return {
-        "auth_required": AUTH_REQUIRED,
-        "test_enabled": os.getenv("TEST_ENDPOINT_ENABLED", "true").lower() == "true",
-        "session_persistent": True,
-        "bootstrap_admin_configured": bool(os.getenv("BOOTSTRAP_ADMIN_USERNAME", "").strip() and os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")),
-    }
+async def config(db: AsyncSession = Depends(get_db)):
+    admin_exists = bool(await db.scalar(text("SELECT 1 FROM users WHERE role IN ('ADMIN','SUPERADMIN') AND is_active=TRUE LIMIT 1")))
+    bootstrap_configured = bool(os.getenv("BOOTSTRAP_ADMIN_USERNAME", "").strip() and os.getenv("BOOTSTRAP_ADMIN_PASSWORD", ""))
+    return {"auth_required": AUTH_REQUIRED, "test_enabled": os.getenv("TEST_ENDPOINT_ENABLED", "true").lower() == "true", "session_persistent": True, "bootstrap_admin_configured": bootstrap_configured, "admin_available": admin_exists, "login_available": (not AUTH_REQUIRED) or admin_exists}
 
 @router.post("/login")
 async def login(body: Login, db: AsyncSession = Depends(get_db)):
@@ -67,8 +64,7 @@ async def create_user(body: UserCreate, principal: Principal = Depends(require_r
     if role not in {"SUPERADMIN", "ADMIN", "OPERATOR", "INVESTIGATOR", "AUDITOR", "VIEWER"}:
         raise HTTPException(422, "Invalid role")
     try:
-        row = (await db.execute(text("""INSERT INTO users(username,password_hash,role) VALUES(:username,:hash,:role)
-            RETURNING id,username,role,created_at"""), {"username": body.username, "hash": hash_password(body.password), "role": role})).mappings().one()
+        row = (await db.execute(text("INSERT INTO users(username,password_hash,role) VALUES(:username,:hash,:role) RETURNING id,username,role,created_at"), {"username": body.username, "hash": hash_password(body.password), "role": role})).mappings().one()
         await db.commit()
         return dict(row)
     except Exception as exc:
