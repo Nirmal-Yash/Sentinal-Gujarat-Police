@@ -31,11 +31,13 @@ function BufferIndicator({ buffered, buffering, compact = false }) {
 
 function LivePlayer({ cam, muted = true, onLiveStatus, onAspectChange, fit = 'contain' }) {
   const videoRef = useRef(null), hlsRef = useRef(null), fallbackRef = useRef(null), bufferTimerRef = useRef(null), stallTimerRef = useRef(null)
+  const liveRef = useRef(false), bufferedRef = useRef(0)
   const [mode, setMode] = useState(cam.hls_url ? 'hls' : cam.stream_url ? 'stream' : 'snapshot')
   const [snapshot, setSnapshot] = useState(null), [live, setLive] = useState(false), [buffering, setBuffering] = useState(true), [buffered, setBuffered] = useState(0)
   const snapshotUrl = `/api/cameras/${cam.id}/snapshot`
-  const cleanupTimers = useCallback(() => { clearTimeout(fallbackRef.current); clearTimeout(stallTimerRef.current); clearInterval(bufferTimerRef.current) }, [])
-  const advance = useCallback(from => { cleanupTimers(); setMode(from === 'hls' && cam.stream_url ? 'stream' : from === 'stream' ? 'snapshot' : 'error'); setLive(false); setBuffering(false); setBuffered(0) }, [cam.stream_url, cleanupTimers])
+  const cleanupTimers = useCallback(() => { clearTimeout(fallbackRef.current); clearTimeout(stallTimerRef.current); clearInterval(bufferTimerRef.current); bufferTimerRef.current = null }, [])
+  const advance = useCallback(from => { cleanupTimers(); setMode(from === 'hls' && cam.stream_url ? 'stream' : from === 'stream' ? 'snapshot' : 'error'); setLive(false); liveRef.current = false; setBuffering(false); setBuffered(0); bufferedRef.current = 0 }, [cam.stream_url, cleanupTimers])
+  const updateBuffered = useCallback(value => { const safe = Math.round(Math.max(0, Math.min(100, Number(value) || 0))); bufferedRef.current = safe; setBuffered(safe) }, [])
   const readBuffer = useCallback(() => {
     const video = videoRef.current
     if (!video) return
@@ -47,111 +49,65 @@ function LivePlayer({ cam, muted = true, onLiveStatus, onAspectChange, fit = 'co
         const start = video.buffered.start(i), end = video.buffered.end(i)
         if (current >= start - .25 && current <= end + .25) { ahead = Math.max(0, end - Math.max(current, start)); break }
       }
-      const pct = duration > 0 ? Math.min(100, ahead / Math.max(1, Math.min(duration, 12)) * 100) : Math.min(100, ahead * 12)
-      setBuffered(Math.round(pct))
-    } catch { setBuffered(0) }
-  }, [])
-  const markPlaying = useCallback(() => { cleanupTimers(); setLive(true); setBuffering(false); setBuffered(100) }, [cleanupTimers])
+      updateBuffered(duration > 0 ? Math.min(100, ahead / Math.max(1, Math.min(duration, 12)) * 100) : Math.min(100, ahead * 12))
+    } catch { updateBuffered(0) }
+  }, [updateBuffered])
+  const markPlaying = useCallback(() => { cleanupTimers(); liveRef.current = true; setLive(true); setBuffering(false); updateBuffered(100) }, [cleanupTimers, updateBuffered])
   const markWaiting = useCallback(() => {
-    setLive(false); setBuffering(true); readBuffer(); clearTimeout(stallTimerRef.current)
+    liveRef.current = false; setLive(false); setBuffering(true); readBuffer(); clearTimeout(stallTimerRef.current)
     stallTimerRef.current = setTimeout(() => {
       const hls = hlsRef.current, video = videoRef.current
       if (hls && video) {
-        try {
-          if (video.error) hls.recoverMediaError()
-          else hls.startLoad()
-        } catch {}
+        try { if (video.error) hls.recoverMediaError(); else hls.startLoad() } catch {}
       } else if (video) video.play().catch(() => {})
     }, 4500)
   }, [readBuffer])
   useEffect(() => { onLiveStatus?.(live) }, [live, onLiveStatus])
   useEffect(() => {
-    hlsRef.current?.destroy(); cleanupTimers();
-    setMode(cam.hls_url ? 'hls' : cam.stream_url ? 'stream' : 'snapshot'); setSnapshot(null); setLive(false); setBuffering(true); setBuffered(0)
+    hlsRef.current?.destroy(); cleanupTimers()
+    setMode(cam.hls_url ? 'hls' : cam.stream_url ? 'stream' : 'snapshot'); setSnapshot(null); setLive(false); liveRef.current = false; setBuffering(true); setBuffered(0); bufferedRef.current = 0
   }, [cam.id, cam.hls_url, cam.stream_url, cleanupTimers])
-
   useEffect(() => {
     let cancelled = false, objectUrl = null
     const loadSnapshot = async () => {
-      try {
-        const response = await fetch(`${snapshotUrl}?t=${Date.now()}`)
-        if (!response.ok) return
-        const blob = await response.blob(); objectUrl = URL.createObjectURL(blob)
-        if (!cancelled) setSnapshot(objectUrl); else URL.revokeObjectURL(objectUrl)
-      } catch {}
+      try { const response = await fetch(`${snapshotUrl}?t=${Date.now()}`); if (!response.ok) return; const blob = await response.blob(); objectUrl = URL.createObjectURL(blob); if (!cancelled) setSnapshot(objectUrl); else URL.revokeObjectURL(objectUrl) } catch {}
     }
-    loadSnapshot()
-    const timer = setInterval(() => { if (!live) loadSnapshot() }, 4000)
+    loadSnapshot(); const timer = setInterval(() => { if (!liveRef.current) loadSnapshot() }, 4000)
     return () => { cancelled = true; clearInterval(timer); if (objectUrl) URL.revokeObjectURL(objectUrl) }
-  }, [snapshotUrl, live])
-
+  }, [snapshotUrl])
   useEffect(() => {
     if (mode !== 'hls') return
     if (!cam.hls_url) { advance('hls'); return }
     const video = videoRef.current
     fallbackRef.current = setTimeout(() => advance('hls'), 12000)
     if (Hls.isSupported()) {
-      const hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: true,
-        backBufferLength: 8,
-        maxBufferLength: 15,
-        maxMaxBufferLength: 30,
-        liveSyncDurationCount: 3,
-        liveMaxLatencyDurationCount: 6,
-        maxBufferHole: 0.5,
-        highBufferWatchdogPeriod: 2,
-        fragLoadingMaxRetry: 3,
-        fragLoadingRetryDelay: 500,
-        fragLoadingMaxRetryTimeout: 4000,
-        manifestLoadingMaxRetry: 3,
-        manifestLoadingRetryDelay: 500,
-        manifestLoadingMaxRetryTimeout: 4000
-      })
-      hls.attachMedia(video)
-      hls.on(Hls.Events.MANIFEST_PARSED, () => { clearTimeout(fallbackRef.current); setBuffering(true); setBuffered(Math.max(5, buffered)) })
-      hls.on(Hls.Events.FRAG_BUFFERED, () => { readBuffer(); if (!live) setBuffering(true) })
-      hls.on(Hls.Events.BUFFER_APPENDED, readBuffer)
-      hls.on(Hls.Events.ERROR, (_, detail) => {
+      const hls = new Hls({ enableWorker: true, lowLatencyMode: true, backBufferLength: 8, maxBufferLength: 15, maxMaxBufferLength: 30, liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 6, maxBufferHole: 0.5, highBufferWatchdogPeriod: 2, fragLoadingMaxRetry: 3, fragLoadingRetryDelay: 500, fragLoadingMaxRetryTimeout: 4000, manifestLoadingMaxRetry: 3, manifestLoadingRetryDelay: 500, manifestLoadingMaxRetryTimeout: 4000 })
+      const handleManifest = () => { clearTimeout(fallbackRef.current); setBuffering(true); updateBuffered(Math.max(5, bufferedRef.current)) }
+      const handleFrag = () => { readBuffer(); if (!liveRef.current) setBuffering(true) }
+      const handleError = (_, detail) => {
         if (!detail.fatal) return
         clearTimeout(fallbackRef.current)
-        if (detail.type === Hls.ErrorTypes.MEDIA_ERROR) {
-          try { hls.recoverMediaError(); setBuffering(true); return } catch {}
-        }
-        if (detail.type === Hls.ErrorTypes.NETWORK_ERROR) {
-          try { hls.startLoad(); setBuffering(true) } catch {}
-          setTimeout(() => { if (!live && hlsRef.current === hls) advance('hls') }, 15000)
-          return
-        }
+        if (detail.type === Hls.ErrorTypes.MEDIA_ERROR) { try { hls.recoverMediaError(); setBuffering(true); return } catch {} }
+        if (detail.type === Hls.ErrorTypes.NETWORK_ERROR) { try { hls.startLoad(); setBuffering(true) } catch {}; window.setTimeout(() => { if (!liveRef.current && hlsRef.current === hls) advance('hls') }, 15000); return }
         hls.destroy(); advance('hls')
-      })
-      hlsRef.current = hls
-      bufferTimerRef.current = setInterval(readBuffer, 500)
+      }
+      hls.attachMedia(video); hls.on(Hls.Events.MANIFEST_PARSED, handleManifest); hls.on(Hls.Events.FRAG_BUFFERED, handleFrag); hls.on(Hls.Events.BUFFER_APPENDED, readBuffer); hls.on(Hls.Events.ERROR, handleError); hlsRef.current = hls; bufferTimerRef.current = setInterval(readBuffer, 500)
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = cam.hls_url
-      video.addEventListener('waiting', markWaiting)
-      video.addEventListener('playing', markPlaying, { once: false })
-      bufferTimerRef.current = setInterval(readBuffer, 500)
+      video.src = cam.hls_url; video.addEventListener('waiting', markWaiting); video.addEventListener('playing', markPlaying); bufferTimerRef.current = setInterval(readBuffer, 500)
     } else advance('hls')
-    return () => { cleanupTimers(); hlsRef.current?.destroy(); hlsRef.current = null; video?.removeEventListener('waiting', markWaiting); video?.removeEventListener('playing', markPlaying) }
-  }, [mode, cam.hls_url, advance, cleanupTimers, live, markPlaying, markWaiting, readBuffer, buffered])
-
+    return () => { cleanupTimers(); hlsRef.current?.destroy(); hlsRef.current = null; video?.removeEventListener('waiting', markWaiting); video?.removeEventListener('playing', markPlaying); video?.removeAttribute('src'); video?.load() }
+  }, [mode, cam.hls_url, advance, cleanupTimers, markPlaying, markWaiting, readBuffer, updateBuffered])
   useEffect(() => {
     if (mode !== 'stream' || !cam.stream_url) return
-    const video = videoRef.current
-    const token = cam.is_test ? localStorage.getItem('sentinel.jwt') : null
+    const video = videoRef.current, token = cam.is_test ? localStorage.getItem('sentinel.jwt') : null
     const streamUrl = token ? `${cam.stream_url}${cam.stream_url.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(token)}` : cam.stream_url
-    setBuffering(true); setBuffered(0); video.preload = 'auto'; video.src = streamUrl
-    const failed = () => advance('stream')
-    const started = () => { clearTimeout(fallbackRef.current); markPlaying() }
+    setBuffering(true); setBuffered(0); bufferedRef.current = 0; video.preload = 'auto'; video.src = streamUrl
+    const failed = () => advance('stream'), started = () => { clearTimeout(fallbackRef.current); markPlaying() }
     video.addEventListener('error', failed); video.addEventListener('playing', started); video.addEventListener('canplay', readBuffer); video.addEventListener('progress', readBuffer); video.addEventListener('waiting', markWaiting); video.addEventListener('stalled', markWaiting)
-    fallbackRef.current = setTimeout(failed, 20000)
-    bufferTimerRef.current = setInterval(readBuffer, 500)
-    video.play().catch(() => {})
+    fallbackRef.current = setTimeout(failed, 20000); bufferTimerRef.current = setInterval(readBuffer, 500); video.play().catch(() => {})
     return () => { cleanupTimers(); video.removeEventListener('error', failed); video.removeEventListener('playing', started); video.removeEventListener('canplay', readBuffer); video.removeEventListener('progress', readBuffer); video.removeEventListener('waiting', markWaiting); video.removeEventListener('stalled', markWaiting); video.removeAttribute('src'); video.load() }
   }, [mode, cam.stream_url, advance, cleanupTimers, markPlaying, markWaiting, readBuffer])
-
-  useEffect(() => { if (mode !== 'snapshot') return; bufferTimerRef.current = setInterval(() => setBuffering(false), 250); return () => clearInterval(bufferTimerRef.current) }, [mode])
+  useEffect(() => { if (mode !== 'snapshot') return; setBuffering(false); return undefined }, [mode])
   const updateAspect = event => { const { videoWidth, videoHeight, naturalWidth, naturalHeight } = event.currentTarget; const w = videoWidth || naturalWidth, h = videoHeight || naturalHeight; if (w && h) onAspectChange?.(w / h) }
   return <div style={{ position: 'absolute', inset: 0, background: '#000' }}>
     {snapshot && !live && <img src={snapshot} alt="Latest camera frame" onLoad={updateAspect} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: fit }}/>} 
