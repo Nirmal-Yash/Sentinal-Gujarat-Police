@@ -19,70 +19,148 @@ const ExpandIcon = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="n
 const CloseIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m18 6-12 12M6 6l12 12"/></svg>
 const GridIcon = ({ n }) => <svg width="14" height="14" viewBox="0 0 12 12" fill="currentColor">{n === 2 && <><rect width="5" height="12" rx="1"/><rect x="7" width="5" height="12" rx="1"/></>}{n === 3 && <><rect width="3" height="12" rx="1"/><rect x="4.5" width="3" height="12" rx="1"/><rect x="9" width="3" height="12" rx="1"/></>}{n === 4 && [0, 3.2, 6.3, 9.5].flatMap(x => [0, 6.5].map(y => <rect key={`${x}-${y}`} x={x} y={y} width="2.5" height="5.5" rx=".5"/>))}{n === 5 && [0, 2.5, 5, 7.5, 10].flatMap(x => [0, 6.5].map(y => <rect key={`${x}-${y}`} x={x} y={y} width="2" height="5.5" rx=".5"/>))}</svg>
 
-function LivePlayer({ cam, muted = true, onLiveStatus, onAspectChange, fit = 'contain' }) {
-  const videoRef = useRef(null), hlsRef = useRef(null), timerRef = useRef(null)
-  const [mode, setMode] = useState(cam.hls_url ? 'hls' : cam.stream_url ? 'stream' : 'snapshot')
-  const [snapshot, setSnapshot] = useState(null), [live, setLive] = useState(false)
-  const snapshotUrl = `/api/cameras/${cam.id}/snapshot`
-  const advance = useCallback(from => { setMode(from === 'hls' && cam.stream_url ? 'stream' : from === 'stream' ? 'snapshot' : 'error'); setLive(false) }, [cam.stream_url])
-  useEffect(() => { onLiveStatus?.(live) }, [live, onLiveStatus])
-  useEffect(() => { hlsRef.current?.destroy(); clearInterval(timerRef.current); setMode(cam.hls_url ? 'hls' : cam.stream_url ? 'stream' : 'snapshot'); setSnapshot(null); setLive(false) }, [cam.id, cam.hls_url, cam.stream_url])
+function BufferIndicator({ buffered, buffering, compact = false }) {
+  if (!buffering) return null
+  return <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', pointerEvents: 'none', background: compact ? 'rgba(0,0,0,.18)' : 'rgba(0,0,0,.38)', zIndex: 4 }}>
+    <div style={{ minWidth: compact ? 92 : 138, padding: compact ? '7px 9px' : '9px 12px', borderRadius: 8, background: 'rgba(0,0,0,.76)', border: '1px solid rgba(245,158,11,.35)', boxShadow: '0 10px 28px rgba(0,0,0,.35)', color: '#fff' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: compact ? 9 : 10, fontWeight: 700 }}><span style={{ width: 10, height: 10, borderRadius: '50%', border: '2px solid rgba(245,158,11,.25)', borderTopColor: 'var(--accent)', animation: 'mediaSpin .8s linear infinite' }}/><span>Buffering media</span><span style={{ marginLeft: 'auto', opacity: .7 }}>{Math.round(Math.max(0, Math.min(100, buffered)))}%</span></div>
+      <div style={{ marginTop: 6, height: 3, borderRadius: 2, background: 'rgba(255,255,255,.12)', overflow: 'hidden' }}><span style={{ display: 'block', height: '100%', width: `${Math.max(2, Math.min(100, buffered))}%`, background: 'var(--accent)', transition: 'width .25s ease' }}/></div>
+    </div>
+  </div>
+}
 
-  // Warm the visual surface immediately from the ingestion snapshot cache. This
-  // avoids a blank card while HLS/browser playback negotiates or a provider is
-  // slow, while the actual live player continues trying in parallel.
+function LivePlayer({ cam, muted = true, onLiveStatus, onAspectChange, fit = 'contain' }) {
+  const videoRef = useRef(null), hlsRef = useRef(null), fallbackRef = useRef(null), bufferTimerRef = useRef(null), stallTimerRef = useRef(null)
+  const [mode, setMode] = useState(cam.hls_url ? 'hls' : cam.stream_url ? 'stream' : 'snapshot')
+  const [snapshot, setSnapshot] = useState(null), [live, setLive] = useState(false), [buffering, setBuffering] = useState(true), [buffered, setBuffered] = useState(0)
+  const snapshotUrl = `/api/cameras/${cam.id}/snapshot`
+  const cleanupTimers = useCallback(() => { clearTimeout(fallbackRef.current); clearTimeout(stallTimerRef.current); clearInterval(bufferTimerRef.current) }, [])
+  const advance = useCallback(from => { cleanupTimers(); setMode(from === 'hls' && cam.stream_url ? 'stream' : from === 'stream' ? 'snapshot' : 'error'); setLive(false); setBuffering(false); setBuffered(0) }, [cam.stream_url, cleanupTimers])
+  const readBuffer = useCallback(() => {
+    const video = videoRef.current
+    if (!video) return
+    try {
+      const duration = Number.isFinite(video.duration) ? video.duration : 0
+      const current = Number(video.currentTime || 0)
+      let ahead = 0
+      for (let i = 0; i < video.buffered.length; i++) {
+        const start = video.buffered.start(i), end = video.buffered.end(i)
+        if (current >= start - .25 && current <= end + .25) { ahead = Math.max(0, end - Math.max(current, start)); break }
+      }
+      const pct = duration > 0 ? Math.min(100, ahead / Math.max(1, Math.min(duration, 12)) * 100) : Math.min(100, ahead * 12)
+      setBuffered(Math.round(pct))
+    } catch { setBuffered(0) }
+  }, [])
+  const markPlaying = useCallback(() => { cleanupTimers(); setLive(true); setBuffering(false); setBuffered(100) }, [cleanupTimers])
+  const markWaiting = useCallback(() => {
+    setLive(false); setBuffering(true); readBuffer(); clearTimeout(stallTimerRef.current)
+    stallTimerRef.current = setTimeout(() => {
+      const hls = hlsRef.current, video = videoRef.current
+      if (hls && video) {
+        try {
+          if (video.error) hls.recoverMediaError()
+          else hls.startLoad()
+        } catch {}
+      } else if (video) video.play().catch(() => {})
+    }, 4500)
+  }, [readBuffer])
+  useEffect(() => { onLiveStatus?.(live) }, [live, onLiveStatus])
   useEffect(() => {
-    let cancelled = false
+    hlsRef.current?.destroy(); cleanupTimers();
+    setMode(cam.hls_url ? 'hls' : cam.stream_url ? 'stream' : 'snapshot'); setSnapshot(null); setLive(false); setBuffering(true); setBuffered(0)
+  }, [cam.id, cam.hls_url, cam.stream_url, cleanupTimers])
+
+  useEffect(() => {
+    let cancelled = false, objectUrl = null
     const loadSnapshot = async () => {
       try {
         const response = await fetch(`${snapshotUrl}?t=${Date.now()}`)
         if (!response.ok) return
-        const blob = await response.blob()
-        if (!cancelled) setSnapshot(URL.createObjectURL(blob))
+        const blob = await response.blob(); objectUrl = URL.createObjectURL(blob)
+        if (!cancelled) setSnapshot(objectUrl); else URL.revokeObjectURL(objectUrl)
       } catch {}
     }
     loadSnapshot()
     const timer = setInterval(() => { if (!live) loadSnapshot() }, 4000)
-    return () => { cancelled = true; clearInterval(timer) }
+    return () => { cancelled = true; clearInterval(timer); if (objectUrl) URL.revokeObjectURL(objectUrl) }
   }, [snapshotUrl, live])
 
   useEffect(() => {
     if (mode !== 'hls') return
     if (!cam.hls_url) { advance('hls'); return }
     const video = videoRef.current
-    const fallbackTimer = setTimeout(() => advance('hls'), 8000)
+    fallbackRef.current = setTimeout(() => advance('hls'), 12000)
     if (Hls.isSupported()) {
-      const hls = new Hls({ enableWorker: true, lowLatencyMode: true, backBufferLength: 6 })
-      hls.loadSource(cam.hls_url); hls.attachMedia(video)
-      hls.on(Hls.Events.MANIFEST_PARSED, () => clearTimeout(fallbackTimer))
-      hls.on(Hls.Events.ERROR, (_, detail) => { if (detail.fatal) { clearTimeout(fallbackTimer); hls.destroy(); advance('hls') } })
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+        backBufferLength: 8,
+        maxBufferLength: 15,
+        maxMaxBufferLength: 30,
+        liveSyncDurationCount: 3,
+        liveMaxLatencyDurationCount: 6,
+        maxBufferHole: 0.5,
+        highBufferWatchdogPeriod: 2,
+        fragLoadingMaxRetry: 3,
+        fragLoadingRetryDelay: 500,
+        fragLoadingMaxRetryTimeout: 4000,
+        manifestLoadingMaxRetry: 3,
+        manifestLoadingRetryDelay: 500,
+        manifestLoadingMaxRetryTimeout: 4000
+      })
+      hls.attachMedia(video)
+      hls.on(Hls.Events.MANIFEST_PARSED, () => { clearTimeout(fallbackRef.current); setBuffering(true); setBuffered(Math.max(5, buffered)) })
+      hls.on(Hls.Events.FRAG_BUFFERED, () => { readBuffer(); if (!live) setBuffering(true) })
+      hls.on(Hls.Events.BUFFER_APPENDED, readBuffer)
+      hls.on(Hls.Events.ERROR, (_, detail) => {
+        if (!detail.fatal) return
+        clearTimeout(fallbackRef.current)
+        if (detail.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          try { hls.recoverMediaError(); setBuffering(true); return } catch {}
+        }
+        if (detail.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          try { hls.startLoad(); setBuffering(true) } catch {}
+          setTimeout(() => { if (!live && hlsRef.current === hls) advance('hls') }, 15000)
+          return
+        }
+        hls.destroy(); advance('hls')
+      })
       hlsRef.current = hls
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')) video.src = cam.hls_url
-    else advance('hls')
-    return () => { clearTimeout(fallbackTimer); hlsRef.current?.destroy(); hlsRef.current = null }
-  }, [mode, cam.hls_url, advance])
+      bufferTimerRef.current = setInterval(readBuffer, 500)
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = cam.hls_url
+      video.addEventListener('waiting', markWaiting)
+      video.addEventListener('playing', markPlaying, { once: false })
+      bufferTimerRef.current = setInterval(readBuffer, 500)
+    } else advance('hls')
+    return () => { cleanupTimers(); hlsRef.current?.destroy(); hlsRef.current = null; video?.removeEventListener('waiting', markWaiting); video?.removeEventListener('playing', markPlaying) }
+  }, [mode, cam.hls_url, advance, cleanupTimers, live, markPlaying, markWaiting, readBuffer, buffered])
+
   useEffect(() => {
     if (mode !== 'stream' || !cam.stream_url) return
     const video = videoRef.current
     const token = cam.is_test ? localStorage.getItem('sentinel.jwt') : null
     const streamUrl = token ? `${cam.stream_url}${cam.stream_url.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(token)}` : cam.stream_url
-    video.src = streamUrl
+    setBuffering(true); setBuffered(0); video.preload = 'auto'; video.src = streamUrl
     const failed = () => advance('stream')
-    const fallbackTimer = setTimeout(failed, 12000)
-    video.addEventListener('error', failed)
-    video.addEventListener('playing', () => clearTimeout(fallbackTimer), { once: true })
+    const started = () => { clearTimeout(fallbackRef.current); markPlaying() }
+    video.addEventListener('error', failed); video.addEventListener('playing', started); video.addEventListener('canplay', readBuffer); video.addEventListener('progress', readBuffer); video.addEventListener('waiting', markWaiting); video.addEventListener('stalled', markWaiting)
+    fallbackRef.current = setTimeout(failed, 20000)
+    bufferTimerRef.current = setInterval(readBuffer, 500)
     video.play().catch(() => {})
-    return () => { clearTimeout(fallbackTimer); video.removeEventListener('error', failed); video.removeAttribute('src'); video.load() }
-  }, [mode, cam.stream_url, advance])
-  useEffect(() => { if (mode !== 'snapshot') return; timerRef.current = setInterval(() => {}, 10000); return () => clearInterval(timerRef.current) }, [mode])
+    return () => { cleanupTimers(); video.removeEventListener('error', failed); video.removeEventListener('playing', started); video.removeEventListener('canplay', readBuffer); video.removeEventListener('progress', readBuffer); video.removeEventListener('waiting', markWaiting); video.removeEventListener('stalled', markWaiting); video.removeAttribute('src'); video.load() }
+  }, [mode, cam.stream_url, advance, cleanupTimers, markPlaying, markWaiting, readBuffer])
+
+  useEffect(() => { if (mode !== 'snapshot') return; bufferTimerRef.current = setInterval(() => setBuffering(false), 250); return () => clearInterval(bufferTimerRef.current) }, [mode])
   const updateAspect = event => { const { videoWidth, videoHeight, naturalWidth, naturalHeight } = event.currentTarget; const w = videoWidth || naturalWidth, h = videoHeight || naturalHeight; if (w && h) onAspectChange?.(w / h) }
   return <div style={{ position: 'absolute', inset: 0, background: '#000' }}>
     {snapshot && !live && <img src={snapshot} alt="Latest camera frame" onLoad={updateAspect} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: fit }}/>} 
-    <video ref={videoRef} autoPlay muted={muted} playsInline loop={cam.is_test} onPlaying={() => setLive(true)} onWaiting={() => setLive(false)} onLoadedMetadata={updateAspect} style={{ position: 'absolute', inset: 0, display: mode === 'hls' || mode === 'stream' ? 'block' : 'none', width: '100%', height: '100%', objectFit: fit }}/>
+    <video ref={videoRef} autoPlay muted={muted} playsInline loop={cam.is_test} onPlaying={markPlaying} onWaiting={markWaiting} onLoadedMetadata={updateAspect} style={{ position: 'absolute', inset: 0, display: mode === 'hls' || mode === 'stream' ? 'block' : 'none', width: '100%', height: '100%', objectFit: fit }}/>
     {mode === 'snapshot' && !snapshot && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: 'var(--text2)', fontSize: 11 }}>Waiting for camera frame…</div>}
     {mode === 'error' && !snapshot && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: 'var(--text2)', fontSize: 11 }}>Feed unavailable</div>}
     {(mode === 'hls' || mode === 'stream') && !live && !snapshot && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,.45)', color: 'rgba(255,255,255,.65)', fontSize: 10 }}>Connecting</div>}
-    {live && <span style={{ position: 'absolute', right: 8, bottom: 6, color: '#fff', fontSize: 9, letterSpacing: .5 }}><i style={{ display: 'inline-block', width: 5, height: 5, marginRight: 3, borderRadius: '50%', background: '#f85149' }}/>LIVE</span>}
+    <BufferIndicator buffered={buffered} buffering={buffering && !snapshot} compact={!live}/>
+    {live && <span style={{ position: 'absolute', right: 8, bottom: 6, color: '#fff', fontSize: 9, letterSpacing: .5, zIndex: 5 }}><i style={{ display: 'inline-block', width: 5, height: 5, marginRight: 3, borderRadius: '50%', background: '#f85149' }}/>LIVE</span>}
   </div>
 }
 
@@ -123,5 +201,5 @@ export default function CameraGrid({ cameras, alertsByCam, analyticsByCam = {}, 
   const [cols, setCols] = useState(() => { const saved = Number(localStorage.getItem('sentinel.camera-grid.columns.v1')); return [2, 3, 4, 5].includes(saved) ? saved : 3 }), [focused, setFocused] = useState(null)
   const handleColChange = n => { setCols(n); localStorage.setItem('sentinel.camera-grid.columns.v1', String(n)) }
   useEffect(() => { if (!focusCameraId) return; const camera = cameras.find(item => item.id === focusCameraId); if (camera) setFocused(camera) }, [focusCameraId, focusNonce, cameras])
-  return <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg)', overflow: 'hidden' }}><header style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}><CamIcon size={13} color="var(--text2)"/><b style={{ fontSize: 12 }}>{cameras.length} Cameras</b>{pipelineStats && <span style={{ color: 'var(--text2)', fontSize: 10 }}>Frames {Number(pipelineStats.raw_frames || 0).toLocaleString()} · Detections {Number(pipelineStats.detections || 0).toLocaleString()}</span>}<div style={{ marginLeft: 'auto', display: 'flex', gap: 3 }}>{[2, 3, 4, 5].map(n => <button key={n} onClick={() => handleColChange(n)} title={`${n} columns`} aria-label={`${n} camera columns`} style={{ width: 28, height: 28, borderRadius: 5, border: `1px solid ${cols === n ? 'var(--accent)' : 'var(--border)'}`, background: cols === n ? 'var(--accent)22' : 'transparent', color: cols === n ? 'var(--accent)' : 'var(--text2)', cursor: 'pointer' }}><GridIcon n={n}/></button>)}</div></header><main style={{ flex: 1, overflowY: 'auto', padding: 10 }}><div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap: 8, alignContent: 'start' }}>{cameras.map((cam, index) => <CameraCard key={cam.id} cam={cam} alertCount={alertsByCam[cam.id] || 0} analytics={analyticsByCam[cam.id]} onFocus={setFocused} onLocate={onLocate} animDelay={Math.min(index * 30, 300)}/>)}{!cameras.length && <div style={{ gridColumn: '1 / -1', padding: 48, textAlign: 'center', color: 'var(--text2)' }}>Syncing camera registry…</div>}</div></main>{focused && <FullscreenModal cam={focused} alertCount={alertsByCam[focused.id] || 0} analytics={analyticsByCam[focused.id]} onClose={() => setFocused(null)} onLocate={onLocate}/>}<style>{`@keyframes cardIn{from{opacity:0;transform:translateY(10px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}.camera-card:hover .camera-actions,.camera-card:focus-within .camera-actions{opacity:1!important;transform:translateY(0)!important}`}</style></div>
+  return <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg)', overflow: 'hidden' }}><header style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}><CamIcon size={13} color="var(--text2)"/><b style={{ fontSize: 12 }}>{cameras.length} Cameras</b>{pipelineStats && <span style={{ color: 'var(--text2)', fontSize: 10 }}>Frames {Number(pipelineStats.raw_frames || 0).toLocaleString()} · Detections {Number(pipelineStats.detections || 0).toLocaleString()}</span>}<div style={{ marginLeft: 'auto', display: 'flex', gap: 3 }}>{[2, 3, 4, 5].map(n => <button key={n} onClick={() => handleColChange(n)} title={`${n} columns`} aria-label={`${n} camera columns`} style={{ width: 28, height: 28, borderRadius: 5, border: `1px solid ${cols === n ? 'var(--accent)' : 'var(--border)'}`, background: cols === n ? 'var(--accent)22' : 'transparent', color: cols === n ? 'var(--accent)' : 'var(--text2)', cursor: 'pointer' }}><GridIcon n={n}/></button>)}</div></header><main style={{ flex: 1, overflowY: 'auto', padding: 10 }}><div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap: 8, alignContent: 'start' }}>{cameras.map((cam, index) => <CameraCard key={cam.id} cam={cam} alertCount={alertsByCam[cam.id] || 0} analytics={analyticsByCam[cam.id]} onFocus={setFocused} onLocate={onLocate} animDelay={Math.min(index * 30, 300)}/>)}{!cameras.length && <div style={{ gridColumn: '1 / -1', padding: 48, textAlign: 'center', color: 'var(--text2)' }}>Syncing camera registry…</div>}</div></main>{focused && <FullscreenModal cam={focused} alertCount={alertsByCam[focused.id] || 0} analytics={analyticsByCam[focused.id]} onClose={() => setFocused(null)} onLocate={onLocate}/>}<style>{`@keyframes cardIn{from{opacity:0;transform:translateY(10px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}@keyframes mediaSpin{to{transform:rotate(360deg)}}`}</style></div>
 }
