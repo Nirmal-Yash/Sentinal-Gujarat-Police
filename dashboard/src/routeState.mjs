@@ -11,10 +11,10 @@ export function routeFromLocation(location = window.location) {
 
 export function navigateHistory(target, { replace = false } = {}) {
   const next = normalizePath(target)
-  const current = normalizePath(window.location.pathname)
+  const current = window.location.pathname
   if (current !== next) {
     const method = replace ? 'replaceState' : 'pushState'
-    window.history[method]({ sentinelRoute: next }, '', next)
+    window.history[method]({ ...window.history.state, sentinelRoute: next }, '', next)
   }
   window.dispatchEvent(new PopStateEvent('popstate'))
   return next
