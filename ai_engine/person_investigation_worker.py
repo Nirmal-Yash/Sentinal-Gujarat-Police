@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
-"""On-demand person investigation embedding worker.
-
-Uses the same InsightFace model as live face analytics, but only runs when an
-investigator explicitly submits a reference image. Results are short-lived in
-Redis and never enter the live detection stream.
-"""
+"""On-demand person investigation and reference-photo validation worker."""
 import base64, json, logging, os, uuid
-import cv2
+from io import BytesIO
+
 import numpy as np
 import redis
+from PIL import Image, ImageOps
 from insightface.app import FaceAnalysis
 
 log = logging.getLogger("person_investigation")
@@ -16,6 +13,9 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 STREAM = "person:investigations"
 GROUP = "person_investigation_workers"
 RESULT_TTL = int(os.getenv("PERSON_INVESTIGATION_RESULT_TTL", "120"))
+DET_SIZE = int(os.getenv("PERSON_FACE_DET_SIZE", "640"))
+DET_THRESH = float(os.getenv("PERSON_FACE_DET_THRESHOLD", "0.55"))
+MAX_IMAGE_BYTES = int(os.getenv("PERSON_MAX_IMAGE_BYTES", str(10 * 1024 * 1024)))
 
 
 def ensure_group(r):
@@ -25,15 +25,36 @@ def ensure_group(r):
         pass
 
 
+def prepare_image(raw: bytes) -> np.ndarray:
+    if not raw or len(raw) > MAX_IMAGE_BYTES:
+        raise ValueError("image exceeds configured size limit")
+    with Image.open(BytesIO(raw)) as image:
+        image = ImageOps.exif_transpose(image)
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+        width, height = image.size
+        scale = max(1.0, 160.0 / max(1, min(width, height)))
+        if scale > 1.0:
+            image = image.resize((max(160, int(width * scale)), max(160, int(height * scale))), Image.Resampling.LANCZOS)
+        return np.asarray(image, dtype=np.uint8)
+
+
+def encode_embedding(face) -> str:
+    emb = np.asarray(face.embedding, dtype=np.float32)
+    emb /= np.linalg.norm(emb) + 1e-9
+    return base64.b64encode(emb.tobytes()).decode()
+
+
 def run():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [PERSON][%(levelname)s] %(message)s")
     log.info("Loading on-demand InsightFace investigator …")
     app = FaceAnalysis(name="buffalo_s", providers=["CPUExecutionProvider"])
-    app.prepare(ctx_id=0, det_size=(320, 320))
+    app.prepare(ctx_id=0, det_size=(DET_SIZE, DET_SIZE), det_thresh=DET_THRESH)
     r = redis.from_url(REDIS_URL, decode_responses=False)
     ensure_group(r)
     consumer = f"person-{uuid.uuid4().hex[:8]}"
     log.info("Person investigation worker ready.")
+
     while True:
         try:
             messages = r.xreadgroup(GROUP, consumer, {STREAM: ">"}, count=1, block=1000)
@@ -44,42 +65,42 @@ def run():
             raise
         if not messages:
             continue
+
         for _, entries in messages:
             for message_id, data in entries:
                 request_id = data.get(b"request_id", b"").decode()
                 result_key = data.get(b"result_key", f"person:result:{request_id}".encode()).decode()
+                operation = data.get(b"operation", b"investigate").decode()
                 try:
                     raw = r.get(data[b"image_key"])
-                    if not raw:
-                        raise ValueError("reference image expired")
-                    image = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
-                    if image is None:
-                        raise ValueError("reference image could not be decoded")
+                    image = prepare_image(raw)
                     faces = app.get(image)
-                    detections = []
-                    embeddings = []
-                    for face in faces:
-                        emb = face.embedding.astype(np.float32)
-                        emb /= np.linalg.norm(emb) + 1e-9
-                        embeddings.append(base64.b64encode(emb.tobytes()).decode())
-                        x1, y1, x2, y2 = [int(v) for v in face.bbox.tolist()]
-                        detections.append({
-                            "x": x1,
-                            "y": y1,
-                            "width": max(0, x2 - x1),
-                            "height": max(0, y2 - y1),
-                            "confidence": float(face.det_score),
-                        })
-                    result = {
-                        "status": "ok" if detections else "no_face",
-                        "embeddings": embeddings,
-                        "face_count": len(detections),
-                        "faces": detections,
-                    }
+                    face_rows = [{
+                        "x": int(face.bbox[0]), "y": int(face.bbox[1]),
+                        "width": int(max(0, face.bbox[2] - face.bbox[0])),
+                        "height": int(max(0, face.bbox[3] - face.bbox[1])),
+                        "confidence": float(face.det_score),
+                    } for face in faces]
+                    if operation == "validate":
+                        result = {
+                            "status": "ok" if faces else "no_face",
+                            "face_count": len(faces),
+                            "faces": face_rows,
+                            "embeddings": [],
+                            "message": "Face detected" if faces else "No visible face detected",
+                        }
+                    else:
+                        embeddings = [encode_embedding(face) for face in faces]
+                        result = {
+                            "status": "ok" if embeddings else "no_face",
+                            "face_count": len(faces),
+                            "faces": face_rows,
+                            "embeddings": embeddings,
+                        }
                     r.set(result_key, json.dumps(result).encode(), ex=RESULT_TTL)
                 except Exception as exc:
-                    log.error("Investigation %s failed: %s", request_id, exc, exc_info=True)
-                    r.set(result_key, json.dumps({"status": "error", "error": "Person analysis failed", "embeddings": [], "face_count": 0, "faces": []}).encode(), ex=RESULT_TTL)
+                    log.error("Person operation %s failed: %s", request_id, exc, exc_info=True)
+                    r.set(result_key, json.dumps({"status":"error","error":"Person image analysis failed","embeddings":[],"faces":[],"face_count":0}).encode(), ex=RESULT_TTL)
                 finally:
                     r.xack(STREAM, GROUP, message_id)
                     if request_id:
