@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import psycopg2
 
 DB_URL = os.getenv("DATABASE_URL", "")
+ALERT_COOLDOWN = max(1, int(os.getenv("ALERT_COOLDOWN", "60")))
 
 
 def _value(data, name, default=""):
@@ -24,8 +25,12 @@ def _truthy(data, name):
     return _value(data, name).strip().lower() in {"1", "true", "yes"}
 
 
+def _normalize_plate(value):
+    return "".join(ch for ch in (value or "").upper() if ch.isalnum()) or None
+
+
 def persist(data: dict):
-    """Store test analytics; only confirmed plates create test business alerts."""
+    """Store test analytics and create an alert only for a real watchlist hit."""
     session_id, detection_id = _value(data, "session_id"), _value(data, "detection_id") or _value(data, "event_id")
     if not session_id or not detection_id:
         raise ValueError("test event is missing session_id or detection_id")
@@ -34,7 +39,7 @@ def persist(data: dict):
     kind = _value(data, "detection_type", "unknown")
     camera_label = f"Test Camera {stream_id}"
     track_id = _value(data, "track_id") or None
-    plate = "".join(value for value in _value(data, "plate_text").upper() if value.isalnum()) or None
+    plate = _normalize_plate(_value(data, "plate_text"))
     confidence = max(0.0, min(1.0, float(_value(data, "conf", "0") or 0)))
     bbox = {key: _value(data, key) for key in ("x1","y1","x2","y2") if key.encode() in data}
     details = {
@@ -44,6 +49,7 @@ def persist(data: dict):
         "pts_ms": _value(data, "pts_ms", "0"),
         "plate_validated": _value(data, "plate_validated", ""),
         "anpr_consensus": _value(data, "anpr_consensus", ""),
+        "track_id": track_id,
     }
     global_track = f"test:{stream_id}:{kind}:{track_id or detection_id}"
     conn = psycopg2.connect(DB_URL)
@@ -57,17 +63,36 @@ def persist(data: dict):
             cur.execute("""INSERT INTO test_tracks(session_id,global_track_id,entity_type,first_camera_label,last_camera_label,first_seen_at,last_seen_at,sightings)
               VALUES(%s::uuid,%s,%s,%s,%s,%s,%s,jsonb_build_array(jsonb_build_object('camera_label',%s,'timestamp',%s)))
               ON CONFLICT(session_id,global_track_id) DO UPDATE SET last_camera_label=EXCLUDED.last_camera_label,last_seen_at=EXCLUDED.last_seen_at,sightings=test_tracks.sightings || EXCLUDED.sightings""",
-              (session_id,global_track,"vehicle" if kind in {"car","motorcycle","bus","truck","plate"} else kind,camera_label,camera_label,timestamp,timestamp,camera_label,timestamp.isoformat()))
+              (session_id,global_track,camera_label,camera_label,timestamp,timestamp,camera_label,timestamp.isoformat()))
             alert = None
-            if kind == "plate" and _truthy(data, "plate_validated") and _truthy(data, "anpr_consensus"):
-                cur.execute("""INSERT INTO test_alerts(session_id,detection_id,alert_type,priority,event_at,details)
-                  VALUES(%s::uuid,%s::uuid,'test_plate_detected','LOW',%s,%s::jsonb) RETURNING id""",
-                  (session_id,detection_id,timestamp,json.dumps({"plate_text": plate, "camera_label": camera_label, "test": True})))
-                alert = cur.fetchone()[0]
+            watchlist_match = None
+            if kind == "plate" and plate and _truthy(data, "plate_validated") and _truthy(data, "anpr_consensus"):
+                cur.execute("""SELECT id,name,description,alert_priority FROM watchlist
+                    WHERE is_active=TRUE AND plate_number IS NOT NULL
+                    AND regexp_replace(upper(plate_number),'[^A-Z0-9]','','g')=%s LIMIT 1""", (plate,))
+                watchlist_match = cur.fetchone()
+                if watchlist_match:
+                    wl_id, wl_name, wl_description, wl_priority = watchlist_match
+                    cur.execute("""SELECT id FROM test_alerts
+                        WHERE session_id=%s::uuid
+                          AND alert_type='watchlist_match'
+                          AND details->>'watchlist_id'=%s
+                          AND COALESCE(details->>'track_id','')=COALESCE(%s,'')
+                          AND event_at >= %s - (%s * INTERVAL '1 second')
+                        ORDER BY event_at DESC LIMIT 1""", (session_id,str(wl_id),track_id,timestamp,ALERT_COOLDOWN))
+                    existing = cur.fetchone()
+                    if not existing:
+                        cur.execute("""INSERT INTO test_alerts(session_id,detection_id,alert_type,priority,event_at,details)
+                          VALUES(%s::uuid,%s::uuid,'watchlist_match',%s,%s,%s::jsonb) RETURNING id""",
+                          (session_id,detection_id,wl_priority or 'HIGH',timestamp,json.dumps({
+                              "plate_text": plate, "camera_label": camera_label, "watchlist_id": str(wl_id),
+                              "watchlist_name": wl_name, "description": wl_description or "", "track_id": track_id, "test": True
+                          })))
+                        alert = cur.fetchone()[0]
         conn.commit()
     finally:
         conn.close()
-    return {"session_id": session_id,"detection_id": detection_id,"camera_label": camera_label,"alert_id": str(alert) if alert else None,"confidence": confidence,"kind": kind}
+    return {"session_id":session_id,"detection_id":detection_id,"camera_label":camera_label,"alert_id":str(alert) if alert else None,"watchlist_match":bool(watchlist_match),"confidence":confidence,"kind":kind}
 
 
 class TestSightingStoreContract(unittest.TestCase):
@@ -83,7 +108,7 @@ class TestSightingStoreContract(unittest.TestCase):
         self.assertLessEqual(parsed, after)
 
     def test_plate_normalization_is_stable(self):
-        self.assertEqual("GJ01AB1234", "".join(c for c in "gj 01-ab 1234".upper() if c.isalnum()))
+        self.assertEqual("GJ01AB1234", _normalize_plate("gj 01-ab 1234"))
 
     def test_unconfirmed_plate_is_not_a_business_alert(self):
         self.assertFalse(_truthy({b"plate_validated": b"1", b"anpr_consensus": b"0"}, "anpr_consensus"))
