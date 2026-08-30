@@ -5,7 +5,7 @@ Uses the same InsightFace model as live face analytics, but only runs when an
 investigator explicitly submits a reference image. Results are short-lived in
 Redis and never enter the live detection stream.
 """
-import base64, logging, os, time, uuid
+import base64, json, logging, os, uuid
 import cv2
 import numpy as np
 import redis
@@ -23,12 +23,6 @@ def ensure_group(r):
         r.xgroup_create(STREAM, GROUP, id="$", mkstream=True)
     except redis.exceptions.ResponseError:
         pass
-
-
-def choose_face(faces):
-    if not faces:
-        return None
-    return max(faces, key=lambda f: float(f.det_score))
 
 
 def run():
@@ -62,21 +56,30 @@ def run():
                     if image is None:
                         raise ValueError("reference image could not be decoded")
                     faces = app.get(image)
-                    if not faces:
-                        result = {"status": "no_face", "embeddings": [], "face_count": 0}
-                    else:
-                        embeddings = []
-                        for face in faces:
-                            emb = face.embedding.astype(np.float32)
-                            emb /= np.linalg.norm(emb) + 1e-9
-                            embeddings.append(base64.b64encode(emb.tobytes()).decode())
-                        result = {"status": "ok", "embeddings": embeddings, "face_count": len(faces)}
-                    import json
+                    detections = []
+                    embeddings = []
+                    for face in faces:
+                        emb = face.embedding.astype(np.float32)
+                        emb /= np.linalg.norm(emb) + 1e-9
+                        embeddings.append(base64.b64encode(emb.tobytes()).decode())
+                        x1, y1, x2, y2 = [int(v) for v in face.bbox.tolist()]
+                        detections.append({
+                            "x": x1,
+                            "y": y1,
+                            "width": max(0, x2 - x1),
+                            "height": max(0, y2 - y1),
+                            "confidence": float(face.det_score),
+                        })
+                    result = {
+                        "status": "ok" if detections else "no_face",
+                        "embeddings": embeddings,
+                        "face_count": len(detections),
+                        "faces": detections,
+                    }
                     r.set(result_key, json.dumps(result).encode(), ex=RESULT_TTL)
                 except Exception as exc:
-                    import json
                     log.error("Investigation %s failed: %s", request_id, exc, exc_info=True)
-                    r.set(result_key, json.dumps({"status":"error","error":"Person analysis failed","embeddings":[]}).encode(), ex=RESULT_TTL)
+                    r.set(result_key, json.dumps({"status": "error", "error": "Person analysis failed", "embeddings": [], "face_count": 0, "faces": []}).encode(), ex=RESULT_TTL)
                 finally:
                     r.xack(STREAM, GROUP, message_id)
                     if request_id:
