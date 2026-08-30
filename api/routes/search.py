@@ -33,13 +33,12 @@ async def search_cameras(q: str = Query(..., min_length=1, max_length=100), limi
 async def search_plate(q: str = Query(..., min_length=1, max_length=100), x_test_session_id: str | None = Header(None, alias='X-Test-Session-Id'), limit: int = Query(20, ge=1, le=100), db: AsyncSession = Depends(get_db)):
     normalized = re.sub(r'[^A-Z0-9]', '', q.upper())
     if len(normalized) < 3: return {'query': q, 'detections': [], 'watchlist_hits': [], 'journeys': [], 'session_id': x_test_session_id}
-
     if x_test_session_id:
         try: session_uuid = str(uuid.UUID(x_test_session_id))
         except ValueError as exc: raise HTTPException(400, 'Invalid X-Test-Session-Id') from exc
         active = await db.scalar(text("SELECT 1 FROM test_sessions WHERE id=CAST(:id AS uuid) AND status IN ('starting','active')"), {'id': session_uuid})
         if not active: raise HTTPException(404, 'Test session not active')
-        result = await db.execute(text('''SELECT td.id,td.stream_id AS cam_id,td.event_at AS timestamp,td.plate_text,safe_confidence(td.confidence) AS confidence,
+        result = await db.execute(text('''SELECT td.id,td.stream_id AS cam_id,td.event_at AS timestamp,td.plate_text,td.confidence,
                 COALESCE(f.camera_label,td.camera_label) AS cam_name,NULL AS location,NULL AS lat,NULL AS lng,td.track_id,NULL AS global_vehicle_id,NULL AS journey_id
             FROM test_detections td LEFT JOIN test_session_feeds f ON f.session_id=td.session_id AND f.stream_id=td.stream_id
             WHERE td.session_id=CAST(:session AS uuid) AND regexp_replace(upper(COALESCE(td.plate_text,'')),'[^A-Z0-9]','','g') ILIKE :pat
@@ -49,7 +48,6 @@ async def search_plate(q: str = Query(..., min_length=1, max_length=100), x_test
         result = await db.execute(text('''SELECT s.id,s.camera_id AS cam_id,s.source_timestamp AS timestamp,s.normalized_plate AS plate_text,s.confidence,c.name AS cam_name,c.location,c.lat,c.lng,s.track_id,s.global_vehicle_id,s.journey_id
             FROM vehicle_sightings s JOIN cameras c ON c.id=s.camera_id WHERE s.normalized_plate ILIKE :pat ORDER BY s.source_timestamp DESC LIMIT :limit'''), {'pat': f'%{normalized}%', 'limit': limit})
         rows=[dict(r) for r in result.mappings().all()]
-
     wl=await db.execute(text('SELECT id,name,description,alert_priority FROM watchlist WHERE plate_number ILIKE :pat AND is_active=TRUE'), {'pat':f'%{normalized}%'})
     journeys=[] if x_test_session_id else [dict(r) for r in (await db.execute(text('SELECT j.id,j.started_at,j.ended_at,j.sighting_count,j.journey_confidence,j.status FROM vehicle_journeys j JOIN vehicle_identities v ON v.id=j.vehicle_identity_id WHERE v.normalized_plate=:plate ORDER BY j.started_at DESC LIMIT 20'), {'plate':normalized})).mappings().all()]
     return {'query':q,'detections':rows,'watchlist_hits':[dict(r) for r in wl.mappings().all()],'journeys':journeys,'session_id':x_test_session_id}
@@ -77,7 +75,6 @@ async def recent_alerts(minutes:int=Query(60,ge=1,le=1440),priority:str|None=Non
     q+=' ORDER BY a.created_at DESC LIMIT 200';result=await db.execute(text(q),params);return [dict(r) for r in result.mappings().all()]
 
 def _prepare_face_image(payload: bytes):
-    """Normalize EXIF orientation, alpha channel and tiny images before detection."""
     from PIL import Image, ImageOps
     from io import BytesIO
     with Image.open(BytesIO(payload)) as image:
