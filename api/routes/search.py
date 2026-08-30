@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, File, UploadFile, HTTPException
+from fastapi import APIRouter, Depends, Query, File, UploadFile, HTTPException, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from auth import require_permission, Principal
 from database import get_db
@@ -30,15 +30,29 @@ async def search_cameras(q: str = Query(..., min_length=1, max_length=100), limi
     return {'query': q, 'items': [dict(row) for row in result.mappings()], 'limit': limit, 'offset': offset}
 
 @router.get('/plate', dependencies=[Depends(rate_limit('plate-search', int(os.getenv('PLATE_SEARCH_RATE_LIMIT','60')), int(os.getenv('PLATE_SEARCH_RATE_WINDOW','60'))))])
-async def search_plate(q: str = Query(..., min_length=1, max_length=100), limit: int = Query(20, ge=1, le=100), db: AsyncSession = Depends(get_db)):
+async def search_plate(q: str = Query(..., min_length=1, max_length=100), x_test_session_id: str | None = Header(None, alias='X-Test-Session-Id'), limit: int = Query(20, ge=1, le=100), db: AsyncSession = Depends(get_db)):
     normalized = re.sub(r'[^A-Z0-9]', '', q.upper())
-    if len(normalized) < 3: return {'query': q, 'detections': [], 'watchlist_hits': [], 'journeys': []}
-    result = await db.execute(text('''SELECT s.id,s.camera_id AS cam_id,s.source_timestamp AS timestamp,s.normalized_plate AS plate_text,s.confidence,c.name AS cam_name,c.location,c.lat,c.lng,s.track_id,s.global_vehicle_id,s.journey_id
-        FROM vehicle_sightings s JOIN cameras c ON c.id=s.camera_id WHERE s.normalized_plate ILIKE :pat ORDER BY s.source_timestamp DESC LIMIT :limit'''), {'pat': f'%{normalized}%', 'limit': limit})
-    rows=[dict(r) for r in result.mappings().all()]
+    if len(normalized) < 3: return {'query': q, 'detections': [], 'watchlist_hits': [], 'journeys': [], 'session_id': x_test_session_id}
+
+    if x_test_session_id:
+        try: session_uuid = str(uuid.UUID(x_test_session_id))
+        except ValueError as exc: raise HTTPException(400, 'Invalid X-Test-Session-Id') from exc
+        active = await db.scalar(text("SELECT 1 FROM test_sessions WHERE id=CAST(:id AS uuid) AND status IN ('starting','active')"), {'id': session_uuid})
+        if not active: raise HTTPException(404, 'Test session not active')
+        result = await db.execute(text('''SELECT td.id,td.stream_id AS cam_id,td.event_at AS timestamp,td.plate_text,safe_confidence(td.confidence) AS confidence,
+                COALESCE(f.camera_label,td.camera_label) AS cam_name,NULL AS location,NULL AS lat,NULL AS lng,td.track_id,NULL AS global_vehicle_id,NULL AS journey_id
+            FROM test_detections td LEFT JOIN test_session_feeds f ON f.session_id=td.session_id AND f.stream_id=td.stream_id
+            WHERE td.session_id=CAST(:session AS uuid) AND regexp_replace(upper(COALESCE(td.plate_text,'')),'[^A-Z0-9]','','g') ILIKE :pat
+            ORDER BY td.event_at DESC LIMIT :limit'''), {'session': session_uuid, 'pat': f'%{normalized}%', 'limit': limit})
+        rows = [dict(r) for r in result.mappings().all()]
+    else:
+        result = await db.execute(text('''SELECT s.id,s.camera_id AS cam_id,s.source_timestamp AS timestamp,s.normalized_plate AS plate_text,s.confidence,c.name AS cam_name,c.location,c.lat,c.lng,s.track_id,s.global_vehicle_id,s.journey_id
+            FROM vehicle_sightings s JOIN cameras c ON c.id=s.camera_id WHERE s.normalized_plate ILIKE :pat ORDER BY s.source_timestamp DESC LIMIT :limit'''), {'pat': f'%{normalized}%', 'limit': limit})
+        rows=[dict(r) for r in result.mappings().all()]
+
     wl=await db.execute(text('SELECT id,name,description,alert_priority FROM watchlist WHERE plate_number ILIKE :pat AND is_active=TRUE'), {'pat':f'%{normalized}%'})
-    journeys=await db.execute(text('SELECT j.id,j.started_at,j.ended_at,j.sighting_count,j.journey_confidence,j.status FROM vehicle_journeys j JOIN vehicle_identities v ON v.id=j.vehicle_identity_id WHERE v.normalized_plate=:plate ORDER BY j.started_at DESC LIMIT 20'), {'plate':normalized})
-    return {'query':q,'detections':rows,'watchlist_hits':[dict(r) for r in wl.mappings().all()],'journeys':[dict(r) for r in journeys.mappings().all()]}
+    journeys=[] if x_test_session_id else [dict(r) for r in (await db.execute(text('SELECT j.id,j.started_at,j.ended_at,j.sighting_count,j.journey_confidence,j.status FROM vehicle_journeys j JOIN vehicle_identities v ON v.id=j.vehicle_identity_id WHERE v.normalized_plate=:plate ORDER BY j.started_at DESC LIMIT 20'), {'plate':normalized})).mappings().all()]
+    return {'query':q,'detections':rows,'watchlist_hits':[dict(r) for r in wl.mappings().all()],'journeys':journeys,'session_id':x_test_session_id}
 
 @router.get('/plate/{plate}/journey')
 async def search_plate_journey(plate: str, db:AsyncSession=Depends(get_db)):
@@ -68,12 +82,10 @@ def _prepare_face_image(payload: bytes):
     from io import BytesIO
     with Image.open(BytesIO(payload)) as image:
         image = ImageOps.exif_transpose(image)
-        if image.mode != 'RGB':
-            image = image.convert('RGB')
+        if image.mode != 'RGB': image = image.convert('RGB')
         width, height = image.size
         scale = max(1.0, 160.0 / max(1, min(width, height)))
-        if scale > 1.0:
-            image = image.resize((max(160, int(width * scale)), max(160, int(height * scale))), Image.Resampling.LANCZOS)
+        if scale > 1.0: image = image.resize((max(160, int(width * scale)), max(160, int(height * scale))), Image.Resampling.LANCZOS)
         return np.asarray(image, dtype=np.uint8)
 
 @router.post('/person/validate',dependencies=[Depends(rate_limit('person-investigation',int(os.getenv('PERSON_SEARCH_RATE_LIMIT','20')),int(os.getenv('PERSON_SEARCH_RATE_WINDOW','60'))))])
