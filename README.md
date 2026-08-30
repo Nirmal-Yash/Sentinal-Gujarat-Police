@@ -1,168 +1,128 @@
 # 🛡️ Sentinel AI — Gujarat Police Innovation Challenge 2026
 
-AI-powered unified CCTV surveillance platform.  
-Single developer · Single machine · 100% open-source · ₹0 cost
+AI-powered unified CCTV surveillance platform.
 
----
+## Docker Quick Start
+
+Prerequisites: Docker Desktop/Engine with Compose, 8 GB RAM minimum (16 GB recommended), and adequate free disk space.
+
+### Create the environment file
+
+Linux/macOS:
+
+```bash
+cp .env.example .env
+```
+
+Windows PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+### Required Compose variables
+
+`docker-compose.yml` requires `POSTGRES_PASSWORD` and `SECRET_KEY`. If either is missing, Docker Compose fails during variable interpolation before any service starts. Typical error:
+
+```text
+required variable POSTGRES_PASSWORD is missing a value: POSTGRES_PASSWORD must be supplied
+```
+
+For local/demo use, set at least:
+
+```dotenv
+POSTGRES_PASSWORD=change-me
+SECRET_KEY=change-me
+BOOTSTRAP_ADMIN_USERNAME=admin
+BOOTSTRAP_ADMIN_PASSWORD=change-me
+BOOTSTRAP_ADMIN_ROLE=SUPERADMIN
+```
+
+Use strong, non-default values outside local development.
+
+### Validate and start
+
+```bash
+docker compose config -q
+docker compose up -d --build
+```
+
+On PowerShell the same commands work unchanged.
+
+### If the error still appears
+
+Check what Compose receives:
+
+```powershell
+docker compose config | Select-String "POSTGRES_PASSWORD|SECRET_KEY"
+```
+
+If `POSTGRES_PASSWORD` is absent, verify that `.env` exists in the same directory as `docker-compose.yml` and contains a non-empty value. Do not rely on setting the variable only in another terminal/session.
+
+Important: a persistent PostgreSQL volume keeps the existing database role password. Changing `POSTGRES_PASSWORD` in `.env` does **not** change the password of an already-initialized PostgreSQL role. If the API later reports `password authentication failed for user "sentinel"`, update the existing role password from a privileged PostgreSQL session, or recreate the local database volume only when deleting its data is acceptable.
+
+Do not run `docker compose down` or `docker compose build` expecting either command to bypass missing required environment variables: Compose interpolates the file before executing the requested operation.
+
+Dashboard: http://localhost:3000
+API docs: http://localhost:8000/docs
 
 ## Architecture
 
-```
-Camera Simulator (mediamtx RTSP)
-        ↓  RTSP pull
-Ingestion Workers (opencv · onvif-zeep · ffmpeg)
-        ↓  Redis Stream: raw_frames
-AI Analytics Workers (YOLOv8 · EasyOCR · InsightFace · DeepSORT · OpenCV)
-        ↓  Redis Stream: detections
-Intelligence Engine (FAISS · cross-camera re-ID · watchlist match)
-        ↓  Redis Stream: alerts
-API + Dashboard (FastAPI · WebSocket · React · Leaflet.js)
-        ↕  PostgreSQL + pgvector · Redis · FAISS
-```
-
----
-
-## Prerequisites
-
-- Docker Desktop (or Docker Engine + Compose plugin)
-- 8 GB RAM minimum (16 GB recommended for AI models)
-- 20 GB free disk space (AI model downloads ~4 GB)
-
----
-
-## Quick Start
-
-```bash
-# 1. Clone / copy this project
-cd sentinel-ai
-
-# 2. Copy environment file
-cp .env.example .env
-
-# 3. Generate test camera videos (one-time, ~3 min)
-mkdir -p camera_sim/videos
-docker-compose run --rm generate_videos
-
-# 4. Start everything
-docker-compose up --build
-
-# 5. (Optional) Seed watchlist with demo embeddings
-docker-compose exec intelligence python /app/scripts/seed_watchlist.py
+```text
+Camera / Test Video
+      ↓
+Ingestion
+      ↓
+Redis Streams
+      ↓
+YOLOv8 + DeepSORT + ANPR/OCR + InsightFace
+      ↓
+Intelligence / Watchlist / Alerts
+      ↓
+FastAPI + WebSocket + React + Leaflet
+      ↕
+PostgreSQL + PostGIS + pgvector + Redis
 ```
 
-**Dashboard → http://localhost:3000**  
-**API docs  → http://localhost:8000/docs**
-
-### Optional Groq operator assistant
-
-Set the key in the VS Code PowerShell terminal without committing it, then recreate only the API:
-
-```powershell
-$env:GROQ_API_KEY = "<your-key>"
-docker compose up -d --build api
-```
-
-The authenticated endpoint is `POST /assistant/chat`; `GET /assistant/status` reports configuration without exposing the key. The dashboard client exposes `api.groqChat(...)` for project UI integrations.
-
-### Registry migration note
-
-The Compose database image now includes PostGIS as well as pgvector. On startup,
-the API applies the additive `database/migrations/001_model1_registry.sql` migration
-to existing volumes before serving requests. It adds the canonical Model-1 registry,
-PostGIS geometry, registry search indexes, audit log, runtime health observations and
-durable vehicle sightings; it does not remove existing camera, RTSP, Redis or AI data.
-
-See [architecture decisions and extension points](docs/architecture-decisions.md)
-for the deliberately deferred enterprise capabilities and their activation
-criteria. This keeps the PoC extensible without adding unused infrastructure.
-
----
+The system intentionally remains modular and Docker-based; larger deployments can introduce GPU inference, distributed event infrastructure, object storage and regional/edge processing when measured scale requirements justify them.
 
 ## Services
 
-| Service       | Port  | Description                             |
-|---------------|-------|-----------------------------------------|
-| redis         | 6379  | Message bus + snapshot cache            |
-| postgres      | 5432  | Events, alerts, watchlist, tracks       |
-| mediamtx      | 8554  | RTSP camera simulator                   |
-| ingestion     | —     | Frame extraction → raw_frames stream    |
-| ai_worker     | —     | YOLOv8 · ANPR · FaceNet · Behavior AI  |
-| intelligence  | —     | Cross-camera tracking · watchlist match |
-| api           | 8000  | FastAPI REST + WebSocket                |
-| dashboard     | 3000  | React dashboard (nginx)                 |
+| Service | Port | Purpose |
+|---|---:|---|
+| redis | 6379 | Message bus/cache |
+| postgres | 5432 | Registry, events, alerts, watchlist, tracks |
+| mediamtx | 8554 | Test/camera media gateway |
+| ingestion | — | Frame ingestion |
+| ai_worker | — | Detection, tracking, ANPR and analytics |
+| person_investigation | — | On-demand face investigation |
+| intelligence | — | Watchlist, correlation and alerts |
+| api | 8000 | REST API + WebSocket |
+| dashboard | 3000 | React operator UI |
 
----
+## Core Workflows
 
-## Key API Endpoints
+- Monitor: heterogeneous camera feeds with buffering and fallback handling.
+- GIS: Gujarat-first camera map, clustering, alerts and vehicle journeys.
+- Investigate: submit-driven plate investigation and photo-based person investigation.
+- Watchlist: background plate/face matching with lifecycle alerts.
+- Test Mode: isolated video sessions, detections, sightings, alerts, search and exports.
+- Camera Registry: manual onboarding, bulk CSV/XLSX import, vendor/model validation and GIS location.
+- Authentication/RBAC: JWT/WebSocket authorization with VIEWER, OPERATOR, INVESTIGATOR, AUDITOR, ADMIN and SUPERADMIN roles.
 
-```
-GET  /cameras/                    List all cameras
-GET  /cameras/{id}/snapshot       Live JPEG snapshot
-GET  /alerts/?priority=HIGH       Filter alerts
-POST /alerts/{id}/acknowledge     Acknowledge alert
-GET  /watchlist/                  View watchlist
-POST /watchlist/                  Add to watchlist
-GET  /search/plate?q=GJ03AA1234  Search by plate
-GET  /search/track/{id}          Track across cameras
-WS   /ws/alerts                  Real-time alert stream
-```
-
----
-
-## Technology Stack (all open-source, zero cost)
-
-| Component        | Library                | License      |
-|------------------|------------------------|--------------|
-| Object detection | ultralytics (YOLOv8n)  | AGPL-3.0     |
-| Number plates    | EasyOCR                | Apache-2.0   |
-| Face embeddings  | InsightFace ArcFace    | MIT          |
-| Object tracking  | deep-sort-realtime     | MIT          |
-| Behavior AI      | OpenCV optical flow    | Apache-2.0   |
-| ANN search       | FAISS (faiss-cpu)      | MIT          |
-| Message bus      | Redis 7 Streams        | BSD-3        |
-| Database         | PostgreSQL 16          | PostgreSQL   |
-| Vector search    | pgvector               | PostgreSQL   |
-| API framework    | FastAPI                | MIT          |
-| Frontend         | React 18 + Leaflet.js  | MIT / BSD-2  |
-| Container        | Docker CE              | Apache-2.0   |
-
-**Total cost: ₹0**
-
----
-
-## Development
+## Development / Diagnostics
 
 ```bash
-# View logs per service
-docker-compose logs -f ai_worker
-docker-compose logs -f intelligence
-docker-compose logs -f api
-
-# Run health check
+docker compose logs -f api
+docker compose logs -f ai_worker
+docker compose logs -f intelligence
 python scripts/test_system.py
-
-# Inspect Redis streams
-docker-compose exec redis redis-cli XLEN raw_frames
-docker-compose exec redis redis-cli XLEN detections
-docker-compose exec redis redis-cli XLEN alerts
-
-# Add to watchlist via API
-curl -X POST http://localhost:8000/watchlist/ \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Test Suspect","entity_type":"person","alert_priority":"HIGH"}'
 ```
 
----
+For Test Mode, use the Dashboard → Test Mode workflow. Test data is kept isolated from production camera data.
 
-## Stage 2 Demo Scenario
+## Important Environment Notes
 
-1. Start system: `docker-compose up`
-2. Open dashboard: http://localhost:3000
-3. Go to **Watchlist → Add Entry** → add a plate number (e.g. GJ03AA1234)
-4. Watch the AI detect vehicles → plates matched → HIGH alert fires in real time
-5. Switch to **Map View** → see alert pulse on camera location
-6. Use **Search → License Plate** → full detection history
+See `.env.example` for the full configuration surface, including ANPR tuning, feed reconnect settings, Test Mode, RBAC bootstrap and evidence limits.
 
----
-
-*Built for Gujarat Police Innovation Challenge 2026 · Category 1*
+Never commit `.env` or real credentials to the repository.
