@@ -19,13 +19,10 @@ const ExpandIcon = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="n
 const CloseIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m18 6-12 12M6 6l12 12"/></svg>
 const GridIcon = ({ n }) => <svg width="14" height="14" viewBox="0 0 12 12" fill="currentColor">{n === 2 && <><rect width="5" height="12" rx="1"/><rect x="7" width="5" height="12" rx="1"/></>}{n === 3 && <><rect width="3" height="12" rx="1"/><rect x="4.5" width="3" height="12" rx="1"/><rect x="9" width="3" height="12" rx="1"/></>}{n === 4 && [0, 3.2, 6.3, 9.5].flatMap(x => [0, 6.5].map(y => <rect key={`${x}-${y}`} x={x} y={y} width="2.5" height="5.5" rx=".5"/>))}{n === 5 && [0, 2.5, 5, 7.5, 10].flatMap(x => [0, 6.5].map(y => <rect key={`${x}-${y}`} x={x} y={y} width="2" height="5.5" rx=".5"/>))}</svg>
 
-function BufferIndicator({ buffered, buffering, compact = false }) {
+function BufferIndicator({ buffering }) {
   if (!buffering) return null
-  return <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', pointerEvents: 'none', background: compact ? 'rgba(0,0,0,.18)' : 'rgba(0,0,0,.38)', zIndex: 4 }}>
-    <div style={{ minWidth: compact ? 92 : 138, padding: compact ? '7px 9px' : '9px 12px', borderRadius: 8, background: 'rgba(0,0,0,.76)', border: '1px solid rgba(245,158,11,.35)', boxShadow: '0 10px 28px rgba(0,0,0,.35)', color: '#fff' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: compact ? 9 : 10, fontWeight: 700 }}><span style={{ width: 10, height: 10, borderRadius: '50%', border: '2px solid rgba(245,158,11,.25)', borderTopColor: 'var(--accent)', animation: 'mediaSpin .8s linear infinite' }}/><span>Buffering media</span><span style={{ marginLeft: 'auto', opacity: .7 }}>{Math.round(Math.max(0, Math.min(100, buffered)))}%</span></div>
-      <div style={{ marginTop: 6, height: 3, borderRadius: 2, background: 'rgba(255,255,255,.12)', overflow: 'hidden' }}><span style={{ display: 'block', height: '100%', width: `${Math.max(2, Math.min(100, buffered))}%`, background: 'var(--accent)', transition: 'width .25s ease' }}/></div>
-    </div>
+  return <div aria-label="Buffering" style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', pointerEvents: 'none', background: 'rgba(0,0,0,.16)', zIndex: 4 }}>
+    <span style={{ width: 24, height: 24, boxSizing: 'border-box', borderRadius: '50%', border: '3px solid rgba(255,255,255,.22)', borderTopColor: 'var(--accent)', animation: 'mediaSpin .8s linear infinite', filter: 'drop-shadow(0 2px 8px rgba(0,0,0,.45))' }} />
   </div>
 }
 
@@ -114,8 +111,7 @@ function LivePlayer({ cam, muted = true, onLiveStatus, onAspectChange, fit = 'co
     <video ref={videoRef} autoPlay muted={muted} playsInline loop={cam.is_test} onPlaying={markPlaying} onWaiting={markWaiting} onLoadedMetadata={updateAspect} style={{ position: 'absolute', inset: 0, display: mode === 'hls' || mode === 'stream' ? 'block' : 'none', width: '100%', height: '100%', objectFit: fit }}/>
     {mode === 'snapshot' && !snapshot && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: 'var(--text2)', fontSize: 11 }}>Waiting for camera frame…</div>}
     {mode === 'error' && !snapshot && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: 'var(--text2)', fontSize: 11 }}>Feed unavailable</div>}
-    {(mode === 'hls' || mode === 'stream') && !live && !snapshot && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,.45)', color: 'rgba(255,255,255,.65)', fontSize: 10 }}>Connecting</div>}
-    <BufferIndicator buffered={buffered} buffering={buffering && !snapshot} compact={!live}/>
+    {(mode === 'hls' || mode === 'stream') && !live && !snapshot && <BufferIndicator buffering={true}/>} 
     {live && <span style={{ position: 'absolute', right: 8, bottom: 6, color: '#fff', fontSize: 9, letterSpacing: .5, zIndex: 5 }}><i style={{ display: 'inline-block', width: 5, height: 5, marginRight: 3, borderRadius: '50%', background: '#f85149' }}/>LIVE</span>}
   </div>
 }
