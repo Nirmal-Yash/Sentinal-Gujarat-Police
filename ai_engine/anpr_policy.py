@@ -6,7 +6,10 @@ from dataclasses import dataclass, field
 from math import isfinite
 from typing import Optional
 
-from plate_normalise import normalize_plate, is_valid_indian_plate
+try:
+    from .plate_normalise import normalize_plate, is_valid_indian_plate
+except ImportError:
+    from plate_normalise import normalize_plate, is_valid_indian_plate
 
 
 @dataclass
