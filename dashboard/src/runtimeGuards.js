@@ -13,15 +13,23 @@ function snapshotKey(input) {
   }
 }
 
-async function readSnapshotResult(response) {
-  const body = await response.arrayBuffer()
-  const headers = new Headers()
-  const contentType = response.headers.get('content-type')
-  if (contentType) headers.set('content-type', contentType)
-  return { body, headers, status: response.status, statusText: response.statusText }
+function cloneHeaders(headers) {
+  const copy = new Headers()
+  for (const [key, value] of headers.entries()) copy.set(key, value)
+  return copy
 }
 
-function responseFromCache(result) {
+async function readSnapshotResult(response) {
+  const body = await response.arrayBuffer()
+  return {
+    body,
+    headers: cloneHeaders(response.headers),
+    status: response.status,
+    statusText: response.statusText,
+  }
+}
+
+function responseFromResult(result) {
   return new Response(result.body.slice(0), {
     status: result.status,
     statusText: result.statusText,
@@ -41,34 +49,27 @@ function installSnapshotGuard() {
     const now = Date.now()
     const cached = SNAPSHOT_CACHE.get(key)
     if (cached && now - cached.timestamp < SNAPSHOT_CACHE_TTL_MS) {
-      return responseFromCache(cached.result)
+      return responseFromResult(cached.result)
     }
 
     const existing = SNAPSHOT_INFLIGHT.get(key)
     if (existing) {
-      return responseFromCache(await existing)
+      return responseFromResult(await existing)
     }
 
     const request = originalFetch(input, init)
-      .then(async response => {
-        if (!response.ok) return {
-          body: new ArrayBuffer(0),
-          headers: new Headers(response.headers),
-          status: response.status,
-          statusText: response.statusText,
-        }
-        return readSnapshotResult(response)
+      .then(response => readSnapshotResult(response))
+      .then(result => {
+        // Cache both successful snapshots and short-lived failures. This prevents
+        // an unavailable/unauthenticated camera from generating a request every
+        // few seconds while the player is still waiting for HLS.
+        SNAPSHOT_CACHE.set(key, { timestamp: Date.now(), result })
+        return result
       })
       .finally(() => SNAPSHOT_INFLIGHT.delete(key))
 
     SNAPSHOT_INFLIGHT.set(key, request)
-    const result = await request
-
-    if (result.status >= 200 && result.status < 300 && result.body.byteLength > 0) {
-      SNAPSHOT_CACHE.set(key, { timestamp: Date.now(), result })
-    }
-
-    return responseFromCache(result)
+    return responseFromResult(await request)
   }
 }
 
@@ -76,9 +77,7 @@ function installMetadataGuard() {
   const hideCollapse = () => {
     document
       .querySelectorAll('button[aria-label="Collapse metadata"], button[aria-label="Expand metadata"]')
-      .forEach(button => {
-        button.remove()
-      })
+      .forEach(button => button.remove())
   }
 
   hideCollapse()
