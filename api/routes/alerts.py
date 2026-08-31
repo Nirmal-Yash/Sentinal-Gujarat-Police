@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy import select, update, desc, text
-from sqlalchemy.ext.asyncio import AsyncSession
 from models import Alert, AlertOut
 from auth import require_permission, Principal
 from database import get_db
@@ -14,7 +13,7 @@ VALID_TRANSITIONS = {"NEW": {"ACKNOWLEDGED"}, "ACKNOWLEDGED": {"INVESTIGATING", 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
 @router.get("/", response_model=list[AlertOut])
-async def list_alerts(priority: Optional[str] = None, alert_type: Optional[str] = None, cam_id: Optional[uuid.UUID] = None, status: Optional[str] = None, unacked: bool = False, limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0), db: AsyncSession = Depends(get_db)):
+async def list_alerts(priority: Optional[str] = None, alert_type: Optional[str] = None, cam_id: Optional[uuid.UUID] = None, status: Optional[str] = None, unacked: bool = False, limit: int = Query(300, ge=1, le=300), offset: int = Query(0, ge=0), db: AsyncSession = Depends(get_db)):
     q = select(Alert).order_by(desc(Alert.created_at)).limit(limit).offset(offset)
     if priority: q = q.where(Alert.priority == priority.upper())
     if alert_type: q = q.where(Alert.alert_type.ilike(f"%{alert_type}%"))
@@ -35,7 +34,6 @@ async def _broadcast_transition(alert: Alert, from_status: str, to_status: str, 
         }
         r.xadd("alerts", payload, maxlen=10000, approximate=True)
     except Exception:
-        # Database lifecycle state remains authoritative even when realtime publication is temporarily unavailable.
         pass
 
 async def _transition(alert_id, target, principal, db, reason=None):
