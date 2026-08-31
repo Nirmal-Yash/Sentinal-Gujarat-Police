@@ -8,19 +8,16 @@ from __future__ import annotations
 
 import os
 import re
-import time
 from urllib.parse import urljoin, urlparse
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
-from auth import require_authenticated
 from services.cctv_gateway import get_cctv_gateway
 
 router = APIRouter(
     prefix="/cctv",
     tags=["cctv"],
-    dependencies=[Depends(require_authenticated)],
 )
 
 _URI_ATTR = re.compile(r'URI="([^"]+)"')
