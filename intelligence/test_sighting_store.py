@@ -1,5 +1,5 @@
 """Persistence boundary and regression tests for isolated test mode."""
-import json, os, unittest
+import base64, json, os, unittest
 from datetime import datetime, timezone
 import psycopg2
 
@@ -29,6 +29,16 @@ def _normalize_plate(value):
     return "".join(ch for ch in (value or "").upper() if ch.isalnum()) or None
 
 
+def _vector_literal(encoded):
+    raw = base64.b64decode(encoded)
+    import numpy as np
+    values = np.frombuffer(raw, dtype=np.float32)
+    if values.size != 512:
+        raise ValueError("test face embedding must contain 512 float32 values")
+    values = values / (np.linalg.norm(values) + 1e-9)
+    return "[" + ",".join(str(float(v)) for v in values) + "]"
+
+
 def persist(data: dict):
     """Store test analytics and create an alert only for a real watchlist hit."""
     session_id, detection_id = _value(data, "session_id"), _value(data, "detection_id") or _value(data, "event_id")
@@ -41,17 +51,15 @@ def persist(data: dict):
     track_id = _value(data, "track_id") or None
     plate = _normalize_plate(_value(data, "plate_text"))
     confidence = max(0.0, min(1.0, float(_value(data, "conf", "0") or 0)))
-    bbox = {key: _value(data, key) for key in ("x1","y1","x2","y2") if key.encode() in data}
+    bbox = {key: _value(data, key) for key in ("x1", "y1", "x2", "y2") if key.encode() in data}
     details = {
-        "schema_version": _value(data, "schema_version", "1.0"),
-        "event_id": _value(data, "event_id", detection_id),
-        "raw_ocr": _value(data, "raw_ocr", ""),
-        "pts_ms": _value(data, "pts_ms", "0"),
-        "plate_validated": _value(data, "plate_validated", ""),
-        "anpr_consensus": _value(data, "anpr_consensus", ""),
+        "schema_version": _value(data, "schema_version", "1.0"), "event_id": _value(data, "event_id", detection_id),
+        "raw_ocr": _value(data, "raw_ocr", ""), "pts_ms": _value(data, "pts_ms", "0"),
+        "plate_validated": _value(data, "plate_validated", ""), "anpr_consensus": _value(data, "anpr_consensus", ""),
         "track_id": track_id,
     }
     global_track = f"test:{stream_id}:{kind}:{track_id or detection_id}"
+    embedding = _value(data, "embedding") or None
     conn = psycopg2.connect(DB_URL)
     try:
         with conn.cursor() as cur:
@@ -64,6 +72,8 @@ def persist(data: dict):
               VALUES(%s::uuid,%s,%s,%s,%s,%s,%s,jsonb_build_array(jsonb_build_object('camera_label',%s,'timestamp',%s)))
               ON CONFLICT(session_id,global_track_id) DO UPDATE SET last_camera_label=EXCLUDED.last_camera_label,last_seen_at=EXCLUDED.last_seen_at,sightings=test_tracks.sightings || EXCLUDED.sightings""",
               (session_id,global_track,camera_label,camera_label,timestamp,timestamp,camera_label,timestamp.isoformat()))
+            if embedding and kind == "face":
+                cur.execute("UPDATE test_tracks SET embedding=CAST(%s AS vector) WHERE session_id=%s::uuid AND global_track_id=%s", (_vector_literal(embedding), session_id, global_track))
             alert = None
             watchlist_match = None
             if kind == "plate" and plate and _truthy(data, "plate_validated") and _truthy(data, "anpr_consensus"):
@@ -74,20 +84,15 @@ def persist(data: dict):
                 if watchlist_match:
                     wl_id, wl_name, wl_description, wl_priority = watchlist_match
                     cur.execute("""SELECT id FROM test_alerts
-                        WHERE session_id=%s::uuid
-                          AND alert_type='watchlist_match'
-                          AND details->>'watchlist_id'=%s
+                        WHERE session_id=%s::uuid AND alert_type='watchlist_match' AND details->>'watchlist_id'=%s
                           AND COALESCE(details->>'track_id','')=COALESCE(%s,'')
-                          AND event_at >= %s - (%s * INTERVAL '1 second')
-                        ORDER BY event_at DESC LIMIT 1""", (session_id,str(wl_id),track_id,timestamp,ALERT_COOLDOWN))
+                          AND event_at >= %s - (%s * INTERVAL '1 second') ORDER BY event_at DESC LIMIT 1""",
+                        (session_id,str(wl_id),track_id,timestamp,ALERT_COOLDOWN))
                     existing = cur.fetchone()
                     if not existing:
                         cur.execute("""INSERT INTO test_alerts(session_id,detection_id,alert_type,priority,event_at,details)
                           VALUES(%s::uuid,%s::uuid,'watchlist_match',%s,%s,%s::jsonb) RETURNING id""",
-                          (session_id,detection_id,wl_priority or 'HIGH',timestamp,json.dumps({
-                              "plate_text": plate, "camera_label": camera_label, "watchlist_id": str(wl_id),
-                              "watchlist_name": wl_name, "description": wl_description or "", "track_id": track_id, "test": True
-                          })))
+                          (session_id,detection_id,wl_priority or 'HIGH',timestamp,json.dumps({"plate_text":plate,"camera_label":camera_label,"watchlist_id":str(wl_id),"watchlist_name":wl_name,"description":wl_description or "","track_id":track_id,"test":True})))
                         alert = cur.fetchone()[0]
         conn.commit()
     finally:
@@ -97,15 +102,11 @@ def persist(data: dict):
 
 class TestSightingStoreContract(unittest.TestCase):
     def test_missing_identity_rejected(self):
-        with self.assertRaises(ValueError):
-            persist({b"session_id": b"", b"detection_id": b""})
+        with self.assertRaises(ValueError): persist({b"session_id": b"", b"detection_id": b""})
 
     def test_timestamp_falls_back_safely(self):
-        before = datetime.now(timezone.utc)
-        parsed = _timestamp({})
-        after = datetime.now(timezone.utc)
-        self.assertGreaterEqual(parsed, before)
-        self.assertLessEqual(parsed, after)
+        before = datetime.now(timezone.utc); parsed = _timestamp({}); after = datetime.now(timezone.utc)
+        self.assertGreaterEqual(parsed, before); self.assertLessEqual(parsed, after)
 
     def test_plate_normalization_is_stable(self):
         self.assertEqual("GJ01AB1234", _normalize_plate("gj 01-ab 1234"))
@@ -114,5 +115,4 @@ class TestSightingStoreContract(unittest.TestCase):
         self.assertFalse(_truthy({b"plate_validated": b"1", b"anpr_consensus": b"0"}, "anpr_consensus"))
 
 
-if __name__ == "__main__":
-    unittest.main()
+if __name__ == "__main__": unittest.main()
