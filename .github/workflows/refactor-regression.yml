@@ -96,6 +96,8 @@ jobs:
         run: |
           ! git ls-files -z | grep -F -z -E '(^|/)__pycache__/|\.pyc$'
           test -z "$(git ls-files .env)"
+      - name: Validate browser playback and fallback invariants
+        run: node scripts/p0_browser_regression.mjs
       - name: Validate refactor invariants
         run: python scripts/validate_refactor.py
       - name: Validate Compose configuration
