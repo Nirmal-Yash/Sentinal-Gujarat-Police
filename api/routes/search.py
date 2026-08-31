@@ -12,7 +12,8 @@ router = APIRouter(prefix='/search', tags=['search'], dependencies=[Depends(requ
 @router.get('/cameras')
 async def search_cameras(q: str = Query(..., min_length=1, max_length=100), limit: int = Query(20, ge=1, le=100), offset: int = Query(0, ge=0), db: AsyncSession = Depends(get_db)):
     result = await db.execute(text('''SELECT id, stream_id, name, location, lat, lng, hls_url, whep_url,
-        ('https://live.corp8.cloud/stream/' || stream_id::text) AS stream_url,department,owner_organization,camera_type,status,health_status,
+        ('/api/cctv/cam' || LPAD(stream_id::text, 2, '0') || '/index.m3u8') AS stream_url,
+        department,owner_organization,camera_type,status,health_status,
         COALESCE(observed_codec,codec) AS effective_codec,COALESCE(observed_width,width) AS effective_width,
         COALESCE(observed_height,height) AS effective_height,COALESCE(observed_source_fps,observed_fps,fps) AS effective_fps
         FROM cameras WHERE status <> 'deleted' AND (name ILIKE :pattern OR location ILIKE :pattern OR department ILIKE :pattern
@@ -36,7 +37,7 @@ async def search_plate(q:str=Query(...,min_length=1,max_length=100),x_test_sessi
         rows=[dict(r) for r in result.mappings().all()]
     else:
         result=await db.execute(text('''SELECT s.id,s.camera_id AS cam_id,s.source_timestamp AS timestamp,s.normalized_plate AS plate_text,s.confidence,c.name AS cam_name,c.location,c.lat,c.lng,s.track_id,s.global_vehicle_id,s.journey_id
-            FROM vehicle_sightings s JOIN cameras c ON c.id=s.camera_id WHERE s.normalized_plate=:plate ORDER BY s.source_timestamp DESC LIMIT :limit'''),{'plate':normalized,'limit':limit})
+            FROM vehicle_sightings s JOIN cameras c ON c.id=s.camera_id WHERE s.normalized_plate=:plate ORDER BY s.source_timestamp DESC LIMIT :limit'''),{'plate':normalized})
         rows=[dict(r) for r in result.mappings().all()]
     wl=await db.execute(text("SELECT id,name,description,alert_priority FROM watchlist WHERE regexp_replace(upper(COALESCE(plate_number,'')),'[^A-Z0-9]','','g')=:plate AND is_active=TRUE"),{'plate':normalized})
     journeys=[] if x_test_session_id else [dict(r) for r in (await db.execute(text('SELECT j.id,j.started_at,j.ended_at,j.sighting_count,j.journey_confidence,j.status FROM vehicle_journeys j JOIN vehicle_identities v ON v.id=j.vehicle_identity_id WHERE v.normalized_plate=:plate ORDER BY j.started_at DESC LIMIT 20'),{'plate':normalized})).mappings().all()]
