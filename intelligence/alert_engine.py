@@ -1,9 +1,5 @@
-"""Durable alert engine with entity-aware deduplication and evidence capture."""
-import os
-import json
-import uuid
-import time
-import logging
+"""Durable alert engine with Redis-first deduplication and durable DB uniqueness."""
+import os, json, uuid, time, hashlib, logging
 import psycopg2
 try:
     from .evidence_capture import capture_snapshot
@@ -13,14 +9,42 @@ except ImportError:
 log = logging.getLogger("alert_engine")
 DB_URL = os.getenv("DATABASE_URL", "")
 COOLDOWN_SECS = max(1.0, float(os.getenv("ALERT_COOLDOWN", "60")))
+REDIS_DEDUP_PREFIX = os.getenv("ALERT_DEDUP_PREFIX", "sentinel:alert:dedup:")
 ALERT_STREAM = "alerts"
 ALERT_MAX = 10000
 
+
 class AlertEngine:
-    def _dedup_key(self, payload):
+    @staticmethod
+    def _dedup_key(payload):
         details = payload.get("details") or {}
-        entity = details.get("plate_text") or details.get("global_track_id") or details.get("watchlist_id") or payload.get("detection_id") or "unknown"
-        return ":".join(str(v or "") for v in (payload.get("cam_id"), payload.get("alert_type"), entity))
+        alert_type = str(payload.get("alert_type") or "unknown")
+        cam_id = str(payload.get("cam_id") or "")
+        normalized_plate = str(details.get("normalized_plate") or details.get("plate_text") or "").upper()
+        watchlist_id = details.get("watchlist_id")
+        global_track_id = details.get("global_track_id")
+        # Anomaly alerts represent a camera condition, not a unique frame.
+        if alert_type.startswith("anomaly") or alert_type in {"crowd_formation", "running_crowd", "abandoned_object", "loitering"}:
+            entity = f"camera:{cam_id}"
+        elif normalized_plate:
+            entity = f"plate:{normalized_plate}"
+        elif watchlist_id:
+            entity = f"watchlist:{watchlist_id}"
+        elif global_track_id:
+            entity = f"track:{global_track_id}"
+        else:
+            entity = f"detection:{payload.get('detection_id') or 'unknown'}"
+        return f"{cam_id}:{alert_type}:{entity}"
+
+    @staticmethod
+    def _redis_claim(r, raw_key, ttl):
+        redis_key = REDIS_DEDUP_PREFIX + hashlib.sha256(raw_key.encode()).hexdigest()
+        try:
+            claimed = r.set(redis_key, str(time.time()), nx=True, ex=max(1, int(ttl)))
+            return bool(claimed), redis_key
+        except Exception:
+            log.warning("Redis dedup unavailable; falling back to database uniqueness", exc_info=True)
+            return True, None
 
     def fire(self, r, payload):
         key = self._dedup_key(payload)
@@ -32,8 +56,14 @@ class AlertEngine:
             event_ts = now
         bucket = int(event_ts // COOLDOWN_SECS)
         dedup_key = f"{key}:{bucket}"
+        claimed, redis_key = self._redis_claim(r, dedup_key, COOLDOWN_SECS)
+        if not claimed:
+            return None
+
         alert_id = str(uuid.uuid4())
         details = dict(payload.get("details") or {})
+        details.setdefault("dedup_key", key)
+        details.setdefault("dedup_bucket", bucket)
         snapshot_path = evidence_key = evidence_sha = None
         cam_id = payload.get("cam_id")
         if cam_id:
@@ -53,7 +83,9 @@ class AlertEngine:
                       VALUES (%s,%s,%s::uuid,%s,%s,%s,%s,%s,%s,'NEW',to_timestamp(%s),to_timestamp(%s))
                       ON CONFLICT (dedup_key) WHERE dedup_key IS NOT NULL DO NOTHING RETURNING id""",
                       (alert_id, payload.get("detection_id"), cam_id or None, payload.get("alert_type"), payload.get("priority", "MEDIUM"), payload.get("confidence", 0.0), payload.get("entity_type", "unknown"), json.dumps(details), dedup_key, event_ts, now))
-                    if not cur.fetchone():
+                    inserted = cur.fetchone()
+                    if not inserted:
+                        # Another writer won the durable race. Keep the Redis claim for the cooldown.
                         if snapshot_path:
                             try: os.unlink(snapshot_path)
                             except OSError: pass
@@ -66,6 +98,9 @@ class AlertEngine:
             if snapshot_path:
                 try: os.unlink(snapshot_path)
                 except OSError: pass
+            if redis_key:
+                try: r.delete(redis_key)
+                except Exception: pass
             log.error("Alert persistence failed", exc_info=True)
             return None
         try:
