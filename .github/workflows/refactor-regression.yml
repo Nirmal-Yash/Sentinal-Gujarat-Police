@@ -2,7 +2,7 @@ name: Refactor regression
 
 on:
   push:
-    branches: ["test", "refactor/**"]
+    branches: ["main", "test", "refactor/**"]
   pull_request:
     branches: ["test", "main"]
 
