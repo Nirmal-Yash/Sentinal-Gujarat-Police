@@ -92,9 +92,6 @@ jobs:
   p0-dashboard-build:
     name: P0 Dashboard Build
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: dashboard
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -103,11 +100,12 @@ jobs:
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
       - name: Install dependencies
+        working-directory: dashboard
         run: npm ci --no-audit --no-fund
       - name: Run browser playback/fallback regression
-        working-directory: .
         run: node scripts/p0_browser_regression.mjs
       - name: Build dashboard
+        working-directory: dashboard
         run: npm run build
 
   p0-release-contract:
@@ -123,8 +121,30 @@ jobs:
       - name: Validate current CCTV architecture
         shell: bash
         run: |
-          ! git grep -n -I -E 'live\.corp8\.cloud|https?://live\.corp8\.cloud' -- ':!docs/*'
-          grep -n 'cctv\.corp8\.cloud' docker-compose.yml
+          python - <<'PY'
+          from pathlib import Path
+          needle = "live" + ".corp8.cloud"
+          ignored = {Path('.git')}
+          bad = []
+          for p in Path('.').rglob('*'):
+              if not p.is_file():
+                  continue
+              if any(part in {'.git','node_modules','dist','__pycache__'} for part in p.parts):
+                  continue
+              if p.as_posix().startswith('docs/'):
+                  continue
+              try:
+                  text = p.read_text(encoding='utf-8', errors='ignore')
+              except Exception:
+                  continue
+              if needle in text:
+                  bad.append(p.as_posix())
+          if bad:
+              raise SystemExit('Deprecated CCTV host references found: ' + ', '.join(bad))
+          compose = Path('docker-compose.yml').read_text(encoding='utf-8')
+          assert 'cctv.corp8.cloud' in compose, 'Current CCTV host missing from Compose'
+          print('Current CCTV architecture gate: PASS')
+          PY
       - name: Validate P0 source contracts
         run: python scripts/final_integration_gate.py
       - name: Validate repository hygiene
@@ -132,12 +152,12 @@ jobs:
         run: |
           test -z "$(git ls-files .env)"
           ! git ls-files -z | grep -F -z -E '(^|/)__pycache__/|\.pyc$'
-      - name: Validate required P0 workflows
+      - name: Validate three P0 checks are declared
         shell: bash
         run: |
-          test -f .github/workflows/p0-release-gate.yml
           grep -q 'p0-backend-regression:' .github/workflows/p0-release-gate.yml
           grep -q 'p0-dashboard-build:' .github/workflows/p0-release-gate.yml
           grep -q 'p0-release-contract:' .github/workflows/p0-release-gate.yml
+          echo 'Three P0 release checks declared: PASS'
       - name: Validate Compose configuration
         run: docker compose config -q
