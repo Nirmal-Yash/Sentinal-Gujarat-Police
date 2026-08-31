@@ -43,9 +43,12 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379
       - DATABASE_URL=postgresql://sentinel:${POSTGRES_PASSWORD}@postgres:5432/sentinel
-      - INGEST_API=${INGEST_API:-http://live.corp8.cloud/api/ingest}
-      - RTSP_HOST=${RTSP_HOST:-live.corp8.cloud}
-      - PLAYBACK_HOST=${PLAYBACK_HOST:-live.corp8.cloud}
+      - CCTV_BASE_URL=${CCTV_BASE_URL:-https://cctv.corp8.cloud}
+      - CCTV_LOGIN_PATH=${CCTV_LOGIN_PATH:-/auth/login}
+      - CCTV_CATALOGUE_PATH=${CCTV_CATALOGUE_PATH:-/cameras.json}
+      - CCTV_PASSWORD=${CCTV_PASSWORD:?CCTV_PASSWORD must be supplied}
+      - RTSP_HOST_IP=${RTSP_HOST_IP:-103.250.160.189}
+      - RTSP_PORT=${RTSP_PORT:-8554}
       - FRAME_FPS=${FRAME_FPS:-3}
       - JPEG_QUALITY=${JPEG_QUALITY:-70}
       - MAX_CONCURRENT_CAMERAS=${MAX_CONCURRENT_CAMERAS:-50}
@@ -185,6 +188,8 @@ services:
       - REDIS_URL=redis://redis:6379
       - DATABASE_URL=postgresql://sentinel:${POSTGRES_PASSWORD}@postgres:5432/sentinel
       - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be supplied}
+      - CCTV_BASE_URL=${CCTV_BASE_URL:-https://cctv.corp8.cloud}
+      - CCTV_PASSWORD=${CCTV_PASSWORD:?CCTV_PASSWORD must be supplied}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
       - AUTH_REQUIRED=${AUTH_REQUIRED:-true}
       - JWT_TOKEN_HOURS=${JWT_TOKEN_HOURS:-8}
@@ -203,9 +208,6 @@ services:
     ports:
       - "8000:8000"
     healthcheck:
-      # /health is a liveness check executed only after the API lifespan has
-      # completed. Database migrations and admin bootstrap therefore finish
-      # before Docker allows dependent services to start.
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()\""]
       interval: 5s
       timeout: 4s
