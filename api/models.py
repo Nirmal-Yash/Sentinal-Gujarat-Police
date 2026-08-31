@@ -36,8 +36,20 @@ class Camera(Base):
         if self.stream_id is None:return None
         return f"rtsp://{os.getenv('RTSP_HOST_IP','103.250.160.189')}:8554/stream/cam{int(self.stream_id):02d}"
 
-class Alert(BaseModel):
-    pass
+class Alert(Base):
+    __tablename__="alerts"
+    id=Column(UUID(as_uuid=True),primary_key=True,default=uuid.uuid4); detection_id=Column(String); cam_id=Column(UUID(as_uuid=True)); alert_type=Column(String(100),nullable=False)
+    priority=Column(String(20),default="MEDIUM"); confidence=Column(Float,default=0.0); entity_type=Column(String(50),default="unknown"); details=Column(JSONB,default=dict)
+    acknowledged=Column(Boolean,default=False); acknowledged_at=Column(DateTime(timezone=True)); acknowledged_by=Column(String(255)); status=Column(String(32),default="NEW")
+    created_at=Column(DateTime(timezone=True),default=datetime.utcnow); updated_at=Column(DateTime(timezone=True),default=datetime.utcnow); resolved_at=Column(DateTime(timezone=True)); resolved_by=Column(String(255)); closed_at=Column(DateTime(timezone=True)); closed_by=Column(String(255))
+
+class WatchlistEntry(Base):
+    __tablename__="watchlist"
+    id=Column(UUID(as_uuid=True),primary_key=True,default=uuid.uuid4); name=Column(String(255),nullable=False); entity_type=Column(String(50),default="person"); description=Column(Text,default=""); plate_number=Column(String(50)); embedding=Column(Vector(512)); alert_priority=Column(String(20),default="HIGH"); is_active=Column(Boolean,default=True); created_at=Column(DateTime(timezone=True),default=datetime.utcnow)
+
+class Detection(Base):
+    __tablename__="detections"
+    id=Column(UUID(as_uuid=True),primary_key=True,default=uuid.uuid4); cam_id=Column(UUID(as_uuid=True)); timestamp=Column(DateTime(timezone=True)); pts_ms=Column(BigInteger,default=0); detection_type=Column(String(50)); bbox=Column(JSONB); confidence=Column(Float); track_id=Column(String(255)); global_track_id=Column(String(255)); plate_text=Column(String(100)); anomaly_score=Column(Float,default=0); embedding=Column(Vector(512)); det_metadata=Column("metadata",JSONB,default=dict); created_at=Column(DateTime(timezone=True),default=datetime.utcnow)
 
 class CameraOut(BaseModel):
     model_config=ConfigDict(from_attributes=True)
