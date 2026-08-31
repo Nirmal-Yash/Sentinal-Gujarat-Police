@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 from urllib.parse import urlparse
-
 CSV_ALIASES={"camera_id":"external_id","id":"external_id","camera_name":"name","camera":"name","latitude":"lat","longitude":"lng","lon":"lng","owner":"owner_organization","ownership":"owner_organization","rtsp":"rtsp_url","hls":"hls_url","source":"source_system"}
 CORE_FIELDS={"name"}
 STREAM_FIELDS={"stream_id","rtsp_url","hls_url"}
@@ -31,8 +30,7 @@ def parse_coordinate(value:Any)->float:
     return direction*(nums[0]+(nums[1]/60 if len(nums)>1 else 0)+(nums[2]/3600 if len(nums)>2 else 0))
 
 def is_url(value:Any,schemes:set[str])->bool:
-    try:
-        p=urlparse(str(value).strip());return p.scheme.lower() in schemes and bool(p.netloc)
+    try:p=urlparse(str(value).strip());return p.scheme.lower() in schemes and bool(p.netloc)
     except Exception:return False
 
 def issue(code,severity,field,message,row):return {"code":code,"severity":severity,"field":field,"message":message,"row":row}
@@ -41,28 +39,24 @@ def analyze_row(row:dict[str,Any],row_number:int,header_mapping:dict[str,str])->
     normalized={};source_fields={}
     for raw,value in row.items():
         target=header_mapping.get(str(raw),normalize_header(raw));normalized[target]=value;source_fields[target]=str(raw)
-    issues=[];clean={}
-    name=str(normalized.get("name") or "").strip()
+    issues=[];clean={};name=str(normalized.get("name") or "").strip()
     if not name:issues.append(issue("MISSING_NAME","error","name","Camera name is required.",row_number))
     else:clean["name"]=name
-    stream_present=False
+    valid_stream=False
     for field in ("rtsp_url","hls_url"):
         value=str(normalized.get(field) or "").strip()
         if value:
-            stream_present=True;schemes={"rtsp","rtsps"} if field=="rtsp_url" else {"http","https"}
-            if not is_url(value,schemes):issues.append(issue("INVALID_STREAM_URL","error",field,f"{field} contains an invalid {field.replace('_url','').upper()} URL.",row_number))
-            else:clean[field]=value
+            schemes={"rtsp","rtsps"} if field=="rtsp_url" else {"http","https"}
+            if not is_url(value,schemes):issues.append(issue("INVALID_STREAM_URL","warning",field,f"{field} is malformed; it will be ignored.",row_number))
+            else:clean[field]=value;valid_stream=True
     raw_stream=normalized.get("stream_id")
     if raw_stream not in (None,""):
-        stream_present=True
         try:
             value=int(str(raw_stream).strip())
             if value<0:raise ValueError
-            clean["stream_id"]=value
-        except (TypeError,ValueError):issues.append(issue("INVALID_STREAM_ID","error","stream_id","Stream ID must be a non-negative integer.",row_number))
-    external=str(normalized.get("external_id") or "").strip()
-    if external:clean["external_id"]=external
-    if not stream_present:issues.append(issue("MISSING_STREAM_IDENTITY","error","stream_id/rtsp_url/hls_url","At least one usable stream identity is required: stream_id, RTSP URL, or HLS URL.",row_number))
+            clean["stream_id"]=value;valid_stream=True
+        except (TypeError,ValueError):issues.append(issue("INVALID_STREAM_ID","warning","stream_id","Stream ID is not a non-negative integer; it will be ignored.",row_number))
+    if not valid_stream:issues.append(issue("MISSING_STREAM_IDENTITY","error","stream_id/rtsp_url/hls_url","At least one usable stream identity is required: stream_id, RTSP URL, or HLS URL.",row_number))
     for field in ("location","department","owner_organization","source_system","storage_type","camera_type","protocol","coord_source"):
         value=str(normalized.get(field) or "").strip()
         if value:clean[field]=value
@@ -95,8 +89,7 @@ def analyze_row(row:dict[str,Any],row_number:int,header_mapping:dict[str,str])->
             except ValueError:issues.append(issue("INVALID_BOOLEAN","warning",field,f"{field} must be true/false and will use the system default.",row_number))
     capabilities=str(normalized.get("analytics_capabilities") or "").strip()
     if capabilities:clean["analytics_capabilities"]=[x.strip() for x in capabilities.split("|") if x.strip()]
-    errors=[i for i in issues if i["severity"]=="error"]
-    status="blocked" if errors else "warning" if issues else "ready"
+    errors=[i for i in issues if i["severity"]=="error"];status="blocked" if errors else "warning" if issues else "ready"
     return {"row":row_number,"status":status,"exact":status=="ready","issues":issues,"normalized":clean,"source_fields":source_fields}
 
 def summarize(rows,header_issues,expected_fields=None):
