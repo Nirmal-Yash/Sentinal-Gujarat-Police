@@ -2,7 +2,7 @@ name: Enterprise release gate
 
 on:
   push:
-    branches: ["refactor/enterprise-hardening"]
+    branches: ["main", "test", "refactor/enterprise-hardening"]
   pull_request:
     branches: ["test", "main"]
 
