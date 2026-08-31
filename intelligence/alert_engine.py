@@ -1,7 +1,10 @@
 """Durable alert engine with Redis-first deduplication and durable DB uniqueness."""
 import os, json, uuid, time, hashlib, logging
 import psycopg2
-from plate_normalise import normalize_plate
+try:
+    from .plate_normalise import normalize_plate
+except ImportError:
+    from plate_normalise import normalize_plate
 try:
     from .evidence_capture import capture_snapshot
 except ImportError:
