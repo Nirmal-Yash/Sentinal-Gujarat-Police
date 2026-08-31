@@ -26,11 +26,7 @@ const compose = read('docker-compose.yml')
 const packageJson = read('dashboard/package.json')
 
 requireText(runtime, 'SNAPSHOT_CACHE_TTL_MS = 15000', 'snapshot fallback cache is 15 seconds')
-if (runtime.includes('/api/cameras/') && runtime.includes('/snapshot')) {
-  console.log('[OK] snapshot guard targets camera snapshot API')
-} else {
-  failures.push('snapshot guard targets camera snapshot API')
-}
+requireText(runtime, 'SNAPSHOT_URL_RE', 'snapshot guard targets camera snapshot API')
 requireText(runtime, 'SNAPSHOT_INFLIGHT', 'concurrent snapshot requests are deduplicated')
 requireText(runtime, 'button[aria-label="Collapse metadata"]', 'obsolete metadata collapse control is removed at runtime')
 requireText(main, 'installSentinelRuntimeGuards()', 'runtime guards are installed by the application entrypoint')
