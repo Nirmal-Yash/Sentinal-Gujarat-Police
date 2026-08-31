@@ -198,8 +198,16 @@ services:
       - BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_ADMIN_PASSWORD:-}
       - BOOTSTRAP_ADMIN_ROLE=${BOOTSTRAP_ADMIN_ROLE:-SUPERADMIN}
       - PERSON_INVESTIGATION_TIMEOUT=${PERSON_INVESTIGATION_TIMEOUT:-20}
+      - STARTUP_RETRIES=${STARTUP_RETRIES:-30}
+      - STARTUP_RETRY_DELAY=${STARTUP_RETRY_DELAY:-2}
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3).read()\""]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+      start_period: 10s
     volumes:
       - ./videos:/videos:ro
       - test_videos:/test_videos
@@ -216,8 +224,10 @@ services:
     build: ./dashboard
     restart: unless-stopped
     depends_on:
-      - api
-      - mediamtx
+      api:
+        condition: service_healthy
+      mediamtx:
+        condition: service_started
     ports:
       - "3000:80"
 
