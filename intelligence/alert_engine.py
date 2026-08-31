@@ -1,6 +1,7 @@
 """Durable alert engine with Redis-first deduplication and durable DB uniqueness."""
 import os, json, uuid, time, hashlib, logging
 import psycopg2
+from plate_normalise import normalize_plate
 try:
     from .evidence_capture import capture_snapshot
 except ImportError:
@@ -20,10 +21,9 @@ class AlertEngine:
         details = payload.get("details") or {}
         alert_type = str(payload.get("alert_type") or "unknown")
         cam_id = str(payload.get("cam_id") or "")
-        normalized_plate = str(details.get("normalized_plate") or details.get("plate_text") or "").upper()
+        normalized_plate = normalize_plate(details.get("normalized_plate") or details.get("plate_text")) or ""
         watchlist_id = details.get("watchlist_id")
         global_track_id = details.get("global_track_id")
-        # Anomaly alerts represent a camera condition, not a unique frame.
         if alert_type.startswith("anomaly") or alert_type in {"crowd_formation", "running_crowd", "abandoned_object", "loitering"}:
             entity = f"camera:{cam_id}"
         elif normalized_plate:
@@ -50,20 +50,15 @@ class AlertEngine:
         key = self._dedup_key(payload)
         now = time.time()
         event_ts = payload.get("event_timestamp") or payload.get("timestamp")
-        try:
-            event_ts = float(event_ts) if event_ts is not None else now
-        except (TypeError, ValueError):
-            event_ts = now
+        try: event_ts = float(event_ts) if event_ts is not None else now
+        except (TypeError, ValueError): event_ts = now
         bucket = int(event_ts // COOLDOWN_SECS)
         dedup_key = f"{key}:{bucket}"
         claimed, redis_key = self._redis_claim(r, dedup_key, COOLDOWN_SECS)
-        if not claimed:
-            return None
-
+        if not claimed: return None
         alert_id = str(uuid.uuid4())
         details = dict(payload.get("details") or {})
-        details.setdefault("dedup_key", key)
-        details.setdefault("dedup_bucket", bucket)
+        details.setdefault("dedup_key", key); details.setdefault("dedup_bucket", bucket)
         snapshot_path = evidence_key = evidence_sha = None
         cam_id = payload.get("cam_id")
         if cam_id:
@@ -73,8 +68,7 @@ class AlertEngine:
                     snapshot_path, evidence_key, evidence_sha = captured
                     details.update({"evidence_available": True, "evidence_storage_key": evidence_key, "evidence_sha256": evidence_sha})
             except Exception:
-                log.error("Alert evidence capture failed", exc_info=True)
-                details["evidence_available"] = False
+                log.error("Alert evidence capture failed", exc_info=True); details["evidence_available"] = False
         try:
             with psycopg2.connect(DB_URL) as conn:
                 with conn.cursor() as cur:
@@ -85,7 +79,6 @@ class AlertEngine:
                       (alert_id, payload.get("detection_id"), cam_id or None, payload.get("alert_type"), payload.get("priority", "MEDIUM"), payload.get("confidence", 0.0), payload.get("entity_type", "unknown"), json.dumps(details), dedup_key, event_ts, now))
                     inserted = cur.fetchone()
                     if not inserted:
-                        # Another writer won the durable race. Keep the Redis claim for the cooldown.
                         if snapshot_path:
                             try: os.unlink(snapshot_path)
                             except OSError: pass
@@ -101,8 +94,7 @@ class AlertEngine:
             if redis_key:
                 try: r.delete(redis_key)
                 except Exception: pass
-            log.error("Alert persistence failed", exc_info=True)
-            return None
+            log.error("Alert persistence failed", exc_info=True); return None
         try:
             r.xadd(ALERT_STREAM, {
                 b"schema_version": b"1.0", b"alert_id": alert_id.encode(), b"id": alert_id.encode(), b"event_type": b"alert",
