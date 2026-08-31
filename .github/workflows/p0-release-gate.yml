@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+env:
+  POSTGRES_PASSWORD: sentinel
+  CCTV_PASSWORD: ci-placeholder
+
 jobs:
   p0-backend-regression:
     name: P0 Backend Regression
@@ -36,7 +40,6 @@ jobs:
     env:
       DATABASE_URL: postgresql://sentinel:sentinel@localhost:5432/sentinel_ci
       REDIS_URL: redis://localhost:6379
-      POSTGRES_PASSWORD: sentinel
       SECRET_KEY: ci-only-sentinel-signing-secret
       AUTH_REQUIRED: "true"
       ALERT_COOLDOWN: "60"
@@ -51,12 +54,12 @@ jobs:
           python-version: "3.11"
       - name: Install Python dependencies
         run: python -m pip install --disable-pip-version-check psycopg2-binary redis bcrypt PyJWT numpy
-      - name: Install PostGIS into CI PostgreSQL service
+      - name: Verify CI PostgreSQL service
         shell: bash
         run: |
           POSTGRES_CONTAINER="$(docker ps --filter ancestor=pgvector/pgvector:pg16 -q | sed -n '1p')"
           test -n "$POSTGRES_CONTAINER"
-          docker exec -u 0 "$POSTGRES_CONTAINER" bash -lc 'apt-get update && apt-get install -y --no-install-recommends postgresql-16-postgis-3 && rm -rf /var/lib/apt/lists/*'
+          docker exec "$POSTGRES_CONTAINER" psql -U sentinel -d sentinel_ci -c 'SELECT version();'
       - name: Bootstrap CI schema
         shell: bash
         run: |
