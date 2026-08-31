@@ -68,7 +68,9 @@ jobs:
       - name: Apply versioned P1 migrations
         shell: bash
         run: |
-          PGPASSWORD=sentinel psql -h 127.0.0.1 -U sentinel -d sentinel_ci -f database/migrations/013_p1_intelligence_consistency.sql
+          P1_MIGRATION="$(find database/migrations -maxdepth 1 -type f -name '*_p1_intelligence_consistency.sql' -print -quit)"
+          test -n "$P1_MIGRATION"
+          PGPASSWORD=sentinel psql -h 127.0.0.1 -U sentinel -d sentinel_ci -f "$P1_MIGRATION"
       - name: Compile Python services
         shell: bash
         run: |
@@ -156,18 +158,42 @@ jobs:
       - name: Validate P1 source contracts
         shell: bash
         run: |
-          test -f ai_engine/plate_normalise.py
-          test -f intelligence/plate_normalise.py
-          test -f api/plate_normalise.py
-          test -f ai_engine/behavior_policy.py
-          test -f database/migrations/013_p1_intelligence_consistency.sql
-          test -f scripts/p1_regression.py
-          grep -q 'WATCHLIST_RELOAD_SECS' intelligence/watchlist_engine.py
-          grep -q 'ALERT_DEDUP_PREFIX' intelligence/alert_engine.py
-          grep -q 'ANPR_VOTE_THRESHOLD' ai_engine/anpr_worker.py
-          grep -q 'AdaptiveBaseline' ai_engine/behavior_worker.py
-          grep -q 'X-Test-Session-Id' api/routes/search.py
-          echo 'P1 source contract gate: PASS'
+          python - <<'PY'
+          from pathlib import Path
+          required = [
+              Path('ai_engine/plate_normalise.py'),
+              Path('intelligence/plate_normalise.py'),
+              Path('api/plate_normalise.py'),
+              Path('ai_engine/behavior_policy.py'),
+              Path('scripts/p1_regression.py'),
+          ]
+          missing = [p.as_posix() for p in required if not p.is_file()]
+          if missing:
+              raise SystemExit('Missing required P1 source files: ' + ', '.join(missing))
+          migrations = sorted(Path('database/migrations').glob('*_p1_intelligence_consistency.sql'))
+          if len(migrations) != 1:
+              raise SystemExit(f'Expected exactly one P1 intelligence migration, found {len(migrations)}: {[p.name for p in migrations]}')
+          if 'vector(512)' not in migrations[0].read_text(encoding='utf-8'):
+              raise SystemExit('P1 intelligence migration does not define test face embeddings')
+          watchlist = Path('intelligence/watchlist_engine.py').read_text(encoding='utf-8')
+          alert = Path('intelligence/alert_engine.py').read_text(encoding='utf-8')
+          anpr = Path('ai_engine/anpr_worker.py').read_text(encoding='utf-8')
+          behavior = Path('ai_engine/behavior_worker.py').read_text(encoding='utf-8')
+          search = Path('api/routes/search.py').read_text(encoding='utf-8')
+          checks = {
+              'WATCHLIST_RELOAD_SECS': 'WATCHLIST_RELOAD_SECS' in watchlist,
+              'watchlist:updated': 'watchlist:updated' in watchlist,
+              'ALERT_DEDUP_PREFIX': 'ALERT_DEDUP_PREFIX' in alert,
+              'ANPR_VOTE_THRESHOLD': 'ANPR_VOTE_THRESHOLD' in anpr,
+              'AdaptiveBaseline': 'AdaptiveBaseline' in behavior,
+              'CROWD_PERSISTENCE_SECS': 'CROWD_PERSISTENCE_SECS' in behavior,
+              'X-Test-Session-Id': 'X-Test-Session-Id' in search,
+          }
+          failed = [name for name, ok in checks.items() if not ok]
+          if failed:
+              raise SystemExit('Missing P1 source contracts: ' + ', '.join(failed))
+          print('P1 source contract gate: PASS')
+          PY
       - name: Validate repository hygiene
         shell: bash
         run: |
