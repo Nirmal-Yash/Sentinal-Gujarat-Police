@@ -4,7 +4,7 @@ from typing import Any, Optional
 from sqlalchemy import Column, String, Float, Boolean, DateTime, Date, Text, Integer, BigInteger
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from pgvector.sqlalchemy import Vector
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from database import Base
 
 
@@ -31,8 +31,10 @@ class Camera(Base):
     def effective_fps(self): return self.observed_source_fps if self.observed_source_fps is not None else (self.observed_fps if self.observed_fps is not None else self.fps)
     @property
     def stream_url(self):
+        if self.rtsp_url:
+            return self.rtsp_url
         if self.stream_id is None:return None
-        return f"https://{os.getenv('PLAYBACK_HOST','live.corp8.cloud')}/stream/{self.stream_id}"
+        return f"rtsp://{os.getenv('RTSP_HOST_IP','103.250.160.189')}:8554/stream/cam{int(self.stream_id):02d}"
 
 class Alert(Base):
     __tablename__="alerts"
@@ -51,11 +53,35 @@ class Detection(Base):
 
 class CameraOut(BaseModel):
     model_config=ConfigDict(from_attributes=True)
-    id:uuid.UUID; stream_id:Optional[int]; name:str; location:str; lat:Optional[float]; lng:Optional[float]; hls_url:str; whep_url:str; stream_url:Optional[str]
+    id:uuid.UUID; stream_id:Optional[int]; name:str; location:str; lat:Optional[float]; lng:Optional[float]; hls_url:str; whep_url:str; stream_url:Optional[str]; rtsp_url:Optional[str]
     codec:Optional[str]; width:Optional[int]; height:Optional[int]; fps:Optional[float]; effective_codec:Optional[str]; effective_width:Optional[int]; effective_height:Optional[int]; effective_fps:Optional[float]
     status:str; health_status:str; connectivity_status:str; department:str; owner_organization:str; camera_type:str; protocol:str; source_system:str; storage_type:str; retention_days:Optional[int]
     analytics_capabilities:Any; maintenance_status:str; observed_at:Optional[datetime]; last_frame_at:Optional[datetime]; observed_source_fps:Optional[float]; observed_decode_fps:Optional[float]; observed_published_fps:Optional[float]
     external_id:Optional[str]; installation_date:Optional[date]; ptz_capable:bool; night_vision_capable:bool; coord_source:str; coord_confidence:Optional[float]; department_source:str; department_confidence:Optional[float]; vendor_id:Optional[uuid.UUID]; model_id:Optional[uuid.UUID]; created_at:datetime; updated_at:datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def complete_playback_endpoints(cls, value):
+        stream_id = getattr(value, "stream_id", None)
+        if stream_id is None and isinstance(value, dict):
+            stream_id = value.get("stream_id")
+        if stream_id is not None:
+            number = int(stream_id)
+            cam_id = f"cam{number:02d}"
+            host = os.getenv("PLAYBACK_HOST", "cctv.corp8.cloud")
+            rtsp_host = os.getenv("RTSP_HOST_IP", "103.250.160.189")
+            def read(name, default=None):
+                if isinstance(value, dict): return value.get(name) if value.get(name) not in (None, "") else default
+                return getattr(value, name, None) or default
+            if isinstance(value, dict):
+                value = dict(value)
+            else:
+                value = {name: getattr(value, name) for name in cls.model_fields if hasattr(value, name)}
+            value["hls_url"] = read("hls_url", f"https://{host}/{cam_id}/index.m3u8")
+            value["rtsp_url"] = read("rtsp_url", f"rtsp://{rtsp_host}:8554/stream/{cam_id}")
+            value["stream_url"] = value["rtsp_url"]
+            value["whep_url"] = read("whep_url", f"http://{rtsp_host}:8889/stream/{cam_id}/whep")
+        return value
 
 class CameraCreate(BaseModel):
     stream_id:Optional[int]=Field(None,ge=0); name:str=Field(min_length=1,max_length=255); location:str=""; lat:Optional[float]=Field(None,ge=-90,le=90); lng:Optional[float]=Field(None,ge=-180,le=180); rtsp_url:Optional[str]=Field(None,max_length=512); hls_url:str=""; whep_url:str=""; department:str="Unassigned"; owner_organization:str="Unassigned"; camera_type:str="fixed"; protocol:str="rtsp"; source_system:str=""; external_id:Optional[str]=Field(None,max_length=255); storage_type:str=""; retention_days:Optional[int]=Field(None,ge=0); analytics_capabilities:list[str]=Field(default_factory=list); installation_date:Optional[date]=None; ptz_capable:bool=False; night_vision_capable:bool=False; coord_source:str="manual"; coord_confidence:Optional[float]=Field(1.0,ge=0,le=1); vendor_id:Optional[uuid.UUID]=None; model_id:Optional[uuid.UUID]=None
