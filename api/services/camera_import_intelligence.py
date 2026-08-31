@@ -7,6 +7,7 @@ CSV_ALIASES={"camera_id":"external_id","id":"external_id","camera_name":"name","
 CORE_FIELDS={"name"}
 STREAM_FIELDS={"stream_id","rtsp_url","hls_url"}
 OPTIONAL_FIELDS={"location","department","owner_organization","lat","lng","source_system","external_id","storage_type","retention_days","analytics_capabilities","installation_date","ptz_capable","night_vision_capable","coord_source","coord_confidence","camera_type","protocol","vendor_id","model_id"}
+KNOWN_FIELDS=CORE_FIELDS|STREAM_FIELDS|OPTIONAL_FIELDS
 
 def normalize_header(value:Any)->str:return str(value or "").strip().lower().replace(" ","_").replace("-","_")
 def normalize_headers(headers:list[Any])->tuple[dict[str,str],list[dict[str,str]]]:
@@ -16,6 +17,7 @@ def normalize_headers(headers:list[Any])->tuple[dict[str,str],list[dict[str,str]
         if not normalized:continue
         mapping[str(raw)]=target
         if target!=normalized:notices.append({"code":"HEADER_ALIAS","severity":"warning","column":str(raw),"message":f"Column '{raw}' is recognized as '{target}'."})
+        elif target not in KNOWN_FIELDS:notices.append({"code":"UNKNOWN_COLUMN","severity":"warning","column":str(raw),"message":f"Column '{raw}' is not part of the camera registry schema and will be ignored."})
     return mapping,notices
 
 def parse_bool(value:Any)->bool:
@@ -94,4 +96,4 @@ def analyze_row(row:dict[str,Any],row_number:int,header_mapping:dict[str,str])->
 
 def summarize(rows,header_issues,expected_fields=None):
     errors=sum(sum(i["severity"]=="error" for i in r["issues"]) for r in rows);warnings=len(header_issues)+sum(sum(i["severity"]=="warning" for i in r["issues"]) for r in rows)
-    return {"status":"blocked" if errors else "warning" if warnings else "ready","allow_upload":errors==0 and bool(rows),"requires_warning_ack":warnings>0,"total_rows":len(rows),"ready_rows":sum(r["status"]=="ready" for r in rows),"warning_rows":sum(r["status"]=="warning" for r in rows),"blocked_rows":sum(r["status"]=="blocked" for r in rows),"exact_rows":sum(r["exact"] for r in rows),"warning_count":warnings,"error_count":errors,"header_warnings":header_issues,"expected_fields":sorted(expected_fields or (CORE_FIELDS|STREAM_FIELDS|OPTIONAL_FIELDS))}
+    return {"status":"blocked" if errors else "warning" if warnings else "ready","allow_upload":errors==0 and bool(rows),"requires_warning_ack":warnings>0,"total_rows":len(rows),"ready_rows":sum(r["status"]=="ready" for r in rows),"warning_rows":sum(r["status"]=="warning" for r in rows),"blocked_rows":sum(r["status"]=="blocked" for r in rows),"exact_rows":sum(r["exact"] for r in rows),"warning_count":warnings,"error_count":errors,"header_warnings":header_issues,"expected_fields":sorted(expected_fields or KNOWN_FIELDS)}
