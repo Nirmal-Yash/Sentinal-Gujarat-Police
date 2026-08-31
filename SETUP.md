@@ -2,42 +2,12 @@
 
 ## What you already have ✓
 - Windows 11
-- Docker Desktop installed
-- Git installed
+- Docker Desktop
+- Git
 
----
+## 1. Configure the environment
 
-## Step 0 — Verify Docker Desktop is ready
-
-Open **Docker Desktop** from the Start menu and wait until the Linux engine is running.
-
-Then open **PowerShell** and run:
-```powershell
-docker --version
-docker compose version
-```
-
-### Memory allocation (important — 16 GB machine)
-Docker Desktop should be given enough RAM for the AI models.
-
-1. Docker Desktop → Settings → Resources → Advanced
-2. Set Memory to about 10 GB
-3. Set CPUs to about 6
-4. Apply & Restart
-
----
-
-## Step 1 — Get the project
-
-```powershell
-cd C:\path\to\sentinel-ai
-git pull origin main
-```
-
----
-
-## Step 2 — Configure environment
-
+From the repository root:
 ```powershell
 copy .env.example .env
 ```
@@ -56,7 +26,7 @@ RTSP_HOST_IP=103.250.160.189
 RTSP_PORT=8554
 ```
 
-Database for Docker:
+Docker PostgreSQL:
 ```text
 DATABASE_URL=postgresql://sentinel:sentinel@postgres:5432/sentinel
 ```
@@ -66,20 +36,16 @@ Use a long random local value for:
 SECRET_KEY=<long-random-secret>
 ```
 
-Do not commit `.env`.
+Never commit `.env`.
 
----
-
-## Step 3 — Build
+## 2. Validate and build
 
 ```powershell
 docker compose config -q
 docker compose build
 ```
 
----
-
-## Step 4 — Start
+## 3. Start the platform
 
 ```powershell
 docker compose up -d
@@ -102,11 +68,7 @@ intelligence
 dashboard
 ```
 
----
-
-## Step 5 — Expected feed flow
-
-The production source of truth is the authenticated CCTV gateway:
+## 4. Current production feed flow
 
 ```text
 https://cctv.corp8.cloud/auth/login
@@ -126,24 +88,18 @@ ai_worker
 YOLO / ANPR
 ```
 
-The retired `live.corp8.cloud` infrastructure is not part of the current runtime.
-
----
-
-## Step 6 — Open dashboard
+## 5. Open the dashboard
 
 ```text
 http://localhost:3000
 ```
 
-API:
+API explorer:
 ```text
 http://localhost:8000/docs
 ```
 
----
-
-## Step 7 — Verify pipeline
+## 6. Verify the live pipeline
 
 ```powershell
 docker compose logs --tail=150 ingestion
@@ -158,21 +114,19 @@ docker compose exec redis redis-cli XLEN anpr_requests
 docker compose exec redis redis-cli XLEN alerts
 ```
 
-Camera runtime telemetry:
+Camera telemetry:
 ```powershell
 docker compose exec postgres psql -U sentinel -d sentinel -c "SELECT stream_id,name,health_status,connectivity_status,last_frame_at,observed_decode_fps,observed_published_fps,reconnect_count,decode_failure_count FROM cameras ORDER BY stream_id;"
 ```
 
----
-
-## Step 8 — Browser playback diagnostics
+## 7. Browser HLS diagnostics
 
 Open:
 ```text
 F12 → Network → m3u8
 ```
 
-Healthy playback should show an application-local request similar to:
+Healthy playback should show an application-local request such as:
 ```text
 /api/cctv/cam01/index.m3u8?access_token=...
 ```
@@ -185,9 +139,7 @@ Response begins #EXTM3U
 
 The browser must never receive the CCTV provider password.
 
----
-
-## Step 9 — Run local regression checks
+## 8. Local regression checks
 
 ```powershell
 python scripts/test_system.py
@@ -196,9 +148,7 @@ python scripts/validate_refactor.py
 docker compose config -q
 ```
 
----
-
-## Troubleshooting
+## 9. Troubleshooting
 
 **Camera grid shows Connecting…**
 ```powershell
@@ -226,15 +176,7 @@ docker compose logs --since=30m ingestion | Select-String -Pattern "error while 
 Test-NetConnection localhost -Port 5432
 ```
 
-**Docker engine/image problems**
-```powershell
-docker info
-docker compose ps
-```
-
----
-
-## Production-oriented acceptance checklist
+## 10. Production acceptance checklist
 
 - [ ] CCTV password authentication succeeds
 - [ ] 30-camera catalogue sync succeeds
@@ -244,9 +186,9 @@ docker compose ps
 - [ ] YOLO detections are produced
 - [ ] ANPR requests are produced
 - [ ] HLS playback returns `#EXTM3U`
-- [ ] Browser does not receive CCTV password
+- [ ] Browser does not receive the CCTV password
 - [ ] `last_frame_at` is populated and advances
 - [ ] reconnects recover without permanent worker death
-- [ ] no runtime dependency on retired `live.corp8.cloud`
+- [ ] no runtime dependency on retired infrastructure
 - [ ] local validation scripts pass
-- [ ] all required CI gates pass on GitHub Actions
+- [ ] all three P0 CI gates pass on GitHub Actions
