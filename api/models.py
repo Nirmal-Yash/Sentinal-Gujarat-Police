@@ -69,7 +69,8 @@ class CameraOut(BaseModel):
             if isinstance(value,dict): value=dict(value)
             else: value={name:getattr(value,name) for name in cls.model_fields if hasattr(value,name)}
             stored_hls=value.get("hls_url")
-            if not stored_hls or "cctv.corp8.cloud" in str(stored_hls): value["hls_url"]=f"/cctv/{cam_id}/index.m3u8"
+            if not stored_hls or "cctv.corp8.cloud" in str(stored_hls) or str(stored_hls).startswith("/cctv/"):
+                value["hls_url"]=f"/api/cctv/{cam_id}/index.m3u8"
             if not value.get("rtsp_url"): value["rtsp_url"]=f"rtsp://{rtsp_host}:8554/stream/{cam_id}"
             value["stream_url"]=value["rtsp_url"]
             if not value.get("whep_url"): value["whep_url"]=f"http://{rtsp_host}:8889/stream/{cam_id}/whep"
