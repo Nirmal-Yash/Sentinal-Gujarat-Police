@@ -77,7 +77,7 @@ def main() -> int:
     client_text = (ROOT / "dashboard" / "src" / "api" / "client.js").read_text(encoding="utf-8")
     check("X-Test-Session-Id" in search_text, "Person investigation API accepts test-session scope")
     check("X-Test-Session-Id" in client_text, "Dashboard propagates test-session scope")
-    migration = (ROOT / "database" / "migrations" / "013_p1_intelligence_consistency.sql").read_text(encoding="utf-8")
+    migration = (ROOT / "database" / "migrations" / "023_p1_intelligence_consistency.sql").read_text(encoding="utf-8")
     check("test_tracks" in migration and "vector(512)" in migration, "P1 isolated face embedding schema exists")
     watchlist = (ROOT / "intelligence" / "watchlist_engine.py").read_text(encoding="utf-8")
     check("watchlist:updated" in watchlist and "WATCHLIST_RELOAD_SECS" in watchlist, "Watchlist is event-driven with periodic fallback")
