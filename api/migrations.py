@@ -2,9 +2,26 @@
 from pathlib import Path
 import os
 import re
+import time
+
 import psycopg2
 
 _VERSION_RE = re.compile(r"^(\d+)_.*\.sql$")
+MAX_CONNECT_ATTEMPTS = max(1, int(os.getenv("MIGRATION_CONNECT_ATTEMPTS", "12")))
+CONNECT_RETRY_DELAY = max(0.25, float(os.getenv("MIGRATION_CONNECT_RETRY_DELAY", "2")))
+
+
+def _connect_with_retry(database_url: str):
+    last_error = None
+    for attempt in range(1, MAX_CONNECT_ATTEMPTS + 1):
+        try:
+            return psycopg2.connect(database_url)
+        except psycopg2.OperationalError as exc:
+            last_error = exc
+            if attempt == MAX_CONNECT_ATTEMPTS:
+                raise
+            time.sleep(CONNECT_RETRY_DELAY)
+    raise last_error
 
 
 def apply_migrations():
@@ -24,7 +41,7 @@ def apply_migrations():
             raise RuntimeError(f"Duplicate migration version {version}: {previous.name} and {path.name}")
         seen[version] = path
 
-    conn = psycopg2.connect(database_url)
+    conn = _connect_with_retry(database_url)
     try:
         with conn.cursor() as cur:
             # Multiple API workers can start together; serialize DDL and the
