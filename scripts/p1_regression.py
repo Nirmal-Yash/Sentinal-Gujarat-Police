@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Deterministic P1 contract/regression tests with no live CCTV dependency."""
 from __future__ import annotations
+
 import importlib.util
 from pathlib import Path
 import sys
@@ -12,7 +13,6 @@ for rel in ("ai_engine", "intelligence", "api"):
 from anpr_policy import TrackANPRState, PlateObservation  # type: ignore
 from behavior_policy import AdaptiveBaseline  # type: ignore
 from alert_engine import AlertEngine  # type: ignore
-from plate_normalise import normalize_plate as api_or_current_normalize  # type: ignore
 
 
 def load_exact(path: Path, name: str):
@@ -20,6 +20,7 @@ def load_exact(path: Path, name: str):
     if not spec or not spec.loader:
         raise RuntimeError(f"Unable to load {path}")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
