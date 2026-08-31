@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministic P1 contract/regression tests with no live CCTV dependency."""
+"""Deterministic P1/P2 contract and regression tests with no live CCTV dependency."""
 from __future__ import annotations
 
 import importlib.util
@@ -77,7 +77,9 @@ def main() -> int:
     client_text = (ROOT / "dashboard" / "src" / "api" / "client.js").read_text(encoding="utf-8")
     check("X-Test-Session-Id" in search_text, "Person investigation API accepts test-session scope")
     check("X-Test-Session-Id" in client_text, "Dashboard propagates test-session scope")
-    migration = (ROOT / "database" / "migrations" / "023_p1_intelligence_consistency.sql").read_text(encoding="utf-8")
+    migration_path = next(iter((ROOT / "database" / "migrations").glob("*_p1_intelligence_consistency.sql")), None)
+    check(migration_path is not None, "P1 intelligence migration exists")
+    migration = migration_path.read_text(encoding="utf-8") if migration_path else ""
     check("test_tracks" in migration and "vector(512)" in migration, "P1 isolated face embedding schema exists")
     watchlist = (ROOT / "intelligence" / "watchlist_engine.py").read_text(encoding="utf-8")
     check("watchlist:updated" in watchlist and "WATCHLIST_RELOAD_SECS" in watchlist, "Watchlist is event-driven with periodic fallback")
@@ -86,6 +88,23 @@ def main() -> int:
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     for token in ("ANPR_VOTE_THRESHOLD", "ANPR_VOTE_WINDOW_FRAMES", "WATCHLIST_RELOAD_SECS", "ALERT_DEDUP_PREFIX", "CROWD_BASELINE_ALPHA", "CROWD_PERSISTENCE_SECS"):
         check(token in compose, f"Compose exposes P1 setting: {token}")
+
+    runtime = (ROOT / "dashboard" / "src" / "runtimeGuards.js").read_text(encoding="utf-8")
+    check("SNAPSHOT_CACHE_TTL_MS = 15000" in runtime, "P2 snapshot fallback interval is 15 seconds")
+    check("SNAPSHOT_INFLIGHT" in runtime and "SNAPSHOT_CACHE.set(key, { timestamp: Date.now(), result })" in runtime, "P2 snapshot errors and concurrent requests are throttled")
+
+    supervisor = (ROOT / "ai_engine" / "main.py").read_text(encoding="utf-8")
+    health = (ROOT / "ai_engine" / "process_health.py").read_text(encoding="utf-8")
+    check("AI_RESTART_MAX_DELAY_SECS" in supervisor and "AI_RESTART_BASE_DELAY_SECS" in supervisor, "P2 AI supervisor uses bounded restart backoff")
+    check("heartbeat(" in supervisor and "publish(" in supervisor and "expire(KEY_PREFIX + name" in health, "P2 AI process health expires stale workers")
+
+    operations = (ROOT / "api" / "routes" / "operations.py").read_text(encoding="utf-8")
+    check("ai_processes" in operations and "redis_streams" in operations, "P2 operations API exposes AI and stream telemetry")
+
+    if not migration_path:
+        raise AssertionError("P1 migration path missing")
+
+    print("\nAll P1/P2 regression gates passed.")
     return 0
 
 
