@@ -2,6 +2,7 @@
 import base64, json, os, unittest
 from datetime import datetime, timezone
 import psycopg2
+from plate_normalise import normalize_plate
 
 DB_URL = os.getenv("DATABASE_URL", "")
 ALERT_COOLDOWN = max(1, int(os.getenv("ALERT_COOLDOWN", "60")))
@@ -25,10 +26,6 @@ def _truthy(data, name):
     return _value(data, name).strip().lower() in {"1", "true", "yes"}
 
 
-def _normalize_plate(value):
-    return "".join(ch for ch in (value or "").upper() if ch.isalnum()) or None
-
-
 def _vector_literal(encoded):
     raw = base64.b64decode(encoded)
     import numpy as np
@@ -49,9 +46,9 @@ def persist(data: dict):
     kind = _value(data, "detection_type", "unknown")
     camera_label = f"Test Camera {stream_id}"
     track_id = _value(data, "track_id") or None
-    plate = _normalize_plate(_value(data, "plate_text"))
+    plate = normalize_plate(_value(data, "plate_text"))
     confidence = max(0.0, min(1.0, float(_value(data, "conf", "0") or 0)))
-    bbox = {key: _value(data, key) for key in ("x1", "y1", "x2", "y2") if key.encode() in data}
+    bbox = {key: _value(data, key) for key in ("x1","y1","x2","y2") if key.encode() in data}
     details = {
         "schema_version": _value(data, "schema_version", "1.0"), "event_id": _value(data, "event_id", detection_id),
         "raw_ocr": _value(data, "raw_ocr", ""), "pts_ms": _value(data, "pts_ms", "0"),
@@ -74,8 +71,7 @@ def persist(data: dict):
               (session_id,global_track,camera_label,camera_label,timestamp,timestamp,camera_label,timestamp.isoformat()))
             if embedding and kind == "face":
                 cur.execute("UPDATE test_tracks SET embedding=CAST(%s AS vector) WHERE session_id=%s::uuid AND global_track_id=%s", (_vector_literal(embedding), session_id, global_track))
-            alert = None
-            watchlist_match = None
+            alert = None; watchlist_match = None
             if kind == "plate" and plate and _truthy(data, "plate_validated") and _truthy(data, "anpr_consensus"):
                 cur.execute("""SELECT id,name,description,alert_priority FROM watchlist
                     WHERE is_active=TRUE AND plate_number IS NOT NULL
@@ -109,7 +105,7 @@ class TestSightingStoreContract(unittest.TestCase):
         self.assertGreaterEqual(parsed, before); self.assertLessEqual(parsed, after)
 
     def test_plate_normalization_is_stable(self):
-        self.assertEqual("GJ01AB1234", _normalize_plate("gj 01-ab 1234"))
+        self.assertEqual("GJ01AB1234", normalize_plate("gj 01-ab 1234"))
 
     def test_unconfirmed_plate_is_not_a_business_alert(self):
         self.assertFalse(_truthy({b"plate_validated": b"1", b"anpr_consensus": b"0"}, "anpr_consensus"))
