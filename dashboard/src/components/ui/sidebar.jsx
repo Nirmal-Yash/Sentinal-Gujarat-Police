@@ -7,7 +7,7 @@ export function SidebarHeader({children}){const child=React.Children.only(childr
 export function SidebarContent({children}){return <div className="ui-sidebar-content">{children}</div>}
 export function SidebarFooter({children}){return <div className="ui-sidebar-footer">{children}</div>}
 export function SidebarGroup({children}){return <section className="ui-sidebar-group">{children}</section>}
-export function SidebarGroupLabel({children}){return <div className="ui-sidebar-group-label">{children}</div>}
+export function SidebarGroupLabel({children}){return <div className="ui-sidebar-group-label" style={{padding:'0 9px 8px',color:'#b9aa98',fontSize:11,fontWeight:850,textTransform:'uppercase',letterSpacing:'1.1px',lineHeight:1.2,textShadow:'0 1px 10px rgba(0,0,0,.4)'}}>{children}</div>}
 export function SidebarGroupContent({children}){return <div className="ui-sidebar-group-content">{children}</div>}
 export function SidebarMenu({children}){return <nav className="ui-sidebar-menu">{children}</nav>}
 export function SidebarMenuItem({children}){return <div className="ui-sidebar-menu-item">{children}</div>}
