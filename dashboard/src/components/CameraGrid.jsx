@@ -13,16 +13,54 @@ const streamAspect = cam => {
   const width = Number(cam.effective_width ?? cam.width), height = Number(cam.effective_height ?? cam.height)
   return width > 0 && height > 0 ? width / height : 16 / 9
 }
+const protocolStatus = cam => [
+  cam.hls_url ? 'HLS' : null,
+  cam.stream_url ? 'RTSP' : null,
+  cam.webrtc_url || cam.whep_url ? 'WebRTC' : null,
+].filter(Boolean).join(' · ') || 'No media endpoint'
 const CamIcon = ({ size = 14, color = 'currentColor' }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.36a1 1 0 01-1.447.893L15 14"/><rect x="1" y="6" width="15" height="12" rx="2"/></svg>
 const MapPinIcon = ({ size = 14 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1116 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>
 const ExpandIcon = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M8 3H3v5M16 3h5v5M21 16v5h-5M3 16v5h5"/></svg>
 const CloseIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m18 6-12 12M6 6l12 12"/></svg>
+const InfoIcon = ({ size = 14 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>
 const GridIcon = ({ n }) => <svg width="14" height="14" viewBox="0 0 12 12" fill="currentColor">{n === 2 && <><rect width="5" height="12" rx="1"/><rect x="7" width="5" height="12" rx="1"/></>}{n === 3 && <><rect width="3" height="12" rx="1"/><rect x="4.5" width="3" height="12" rx="1"/><rect x="9" width="3" height="12" rx="1"/></>}{n === 4 && [0, 3.2, 6.3, 9.5].flatMap(x => [0, 6.5].map(y => <rect key={`${x}-${y}`} x={x} y={y} width="2.5" height="5.5" rx=".5"/>))}{n === 5 && [0, 2.5, 5, 7.5, 10].flatMap(x => [0, 6.5].map(y => <rect key={`${x}-${y}`} x={x} y={y} width="2" height="5.5" rx=".5"/>))}</svg>
 
 function BufferIndicator({ buffering }) {
   if (!buffering) return null
   return <div aria-label="Buffering" style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', pointerEvents: 'none', background: 'rgba(0,0,0,.16)', zIndex: 4 }}>
     <span style={{ width: 24, height: 24, boxSizing: 'border-box', borderRadius: '50%', border: '3px solid rgba(255,255,255,.22)', borderTopColor: 'var(--accent)', animation: 'mediaSpin .8s linear infinite', filter: 'drop-shadow(0 2px 8px rgba(0,0,0,.45))' }} />
+  </div>
+}
+
+function MetadataModal({ cam, onClose }) {
+  const padded = String(cam.stream_id || cam.id || '?').replace(/^cam/i, '').padStart(2, '0')
+  const rows = [
+    ['Camera', `CAM-${padded}`],
+    ['Name', cam.name || 'Unnamed camera'],
+    ['Location', cam.location || 'Location not registered'],
+    ['Protocol', protocolStatus(cam)],
+    ['Stream', streamMetadata(cam)],
+    ['Status', String(cam.health_status || cam.status || 'unknown').toUpperCase()],
+    ['Coordinates', Number.isFinite(Number(cam.latitude ?? cam.lat)) && Number.isFinite(Number(cam.longitude ?? cam.lng)) ? `${cam.latitude ?? cam.lat}, ${cam.longitude ?? cam.lng}` : 'Not available'],
+    ['Last frame', cam.last_frame_at || cam.observed_at || 'Not available'],
+    ['Source', cam.provided_source || cam.vms || cam.source || 'Registered camera source'],
+  ]
+  const endpoints = [
+    ['HLS', cam.hls_url],
+    ['RTSP', cam.stream_url],
+    ['WebRTC', cam.webrtc_url || cam.whep_url],
+  ].filter(([, value]) => value)
+  return <div onClick={event => event.target === event.currentTarget && onClose()} style={{ position: 'fixed', inset: 0, zIndex: 2500, display: 'grid', placeItems: 'center', padding: 18, background: 'rgba(0,0,0,.76)' }}>
+    <section role="dialog" aria-modal="true" aria-label={`${cam.name || 'Camera'} metadata`} style={{ width: 'min(560px,94vw)', maxHeight: '82vh', overflow: 'auto', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, boxShadow: '0 28px 90px rgba(0,0,0,.72)' }}>
+      <header style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '13px 16px', borderBottom: '1px solid var(--border)', background: 'var(--surface2)' }}>
+        <InfoIcon size={16}/><div style={{ minWidth: 0, flex: 1 }}><b style={{ display: 'block', fontSize: 14 }}>{cam.name || `CAM-${padded}`}</b><span style={{ color: 'var(--text2)', fontSize: 10 }}>Camera metadata</span></div>
+        <button onClick={onClose} title="Close metadata" aria-label="Close metadata" style={iconButton}><CloseIcon/></button>
+      </header>
+      <div style={{ display: 'grid', gap: 0 }}>
+        {rows.map(([label, value]) => <div key={label} style={{ display: 'grid', gridTemplateColumns: '120px minmax(0,1fr)', gap: 12, padding: '10px 16px', borderBottom: '1px solid var(--border)' }}><span style={{ color: 'var(--text2)', fontSize: 11 }}>{label}</span><span style={{ color: 'var(--text)', fontSize: 12, overflowWrap: 'anywhere' }}>{value}</span></div>)}
+      </div>
+      {endpoints.length > 0 && <div style={{ padding: 14 }}><div style={{ color: 'var(--text2)', fontSize: 10, fontWeight: 700, letterSpacing: .5, marginBottom: 8, textTransform: 'uppercase' }}>Media Endpoints</div><div style={{ display: 'grid', gap: 7 }}>{endpoints.map(([label, value]) => <div key={label} style={{ display: 'grid', gridTemplateColumns: '65px minmax(0,1fr)', gap: 10, padding: '8px 10px', borderRadius: 7, background: 'var(--surface2)', border: '1px solid var(--border)' }}><b style={{ fontSize: 10, color: 'var(--accent)' }}>{label}</b><span style={{ fontSize: 10, color: 'var(--text2)', overflowWrap: 'anywhere' }}>{value}</span></div>)}</div></div>}
+    </section>
   </div>
 }
 
@@ -111,13 +149,14 @@ function LivePlayer({ cam, muted = true, onLiveStatus, onAspectChange, fit = 'co
     <video ref={videoRef} autoPlay muted={muted} playsInline loop={cam.is_test} onPlaying={markPlaying} onWaiting={markWaiting} onLoadedMetadata={updateAspect} style={{ position: 'absolute', inset: 0, display: mode === 'hls' || mode === 'stream' ? 'block' : 'none', width: '100%', height: '100%', objectFit: fit }}/>
     {mode === 'snapshot' && !snapshot && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: 'var(--text2)', fontSize: 11 }}>Waiting for camera frame…</div>}
     {mode === 'error' && !snapshot && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: 'var(--text2)', fontSize: 11 }}>Feed unavailable</div>}
-    {(mode === 'hls' || mode === 'stream') && !live && !snapshot && <BufferIndicator buffering={true}/>} 
+    {(mode === 'hls' || mode === 'stream') && !live && !snapshot && <BufferIndicator buffering={buffering}/>} 
     {live && <span style={{ position: 'absolute', right: 8, bottom: 6, color: '#fff', fontSize: 9, letterSpacing: .5, zIndex: 5 }}><i style={{ display: 'inline-block', width: 5, height: 5, marginRight: 3, borderRadius: '50%', background: '#f85149' }}/>LIVE</span>}
   </div>
 }
 
 const iconButton = { width: 30, height: 30, display: 'grid', placeItems: 'center', background: 'rgba(88,166,255,.12)', border: '1px solid var(--accent)', borderRadius: 6, color: 'var(--accent)', cursor: 'pointer', padding: 0 }
 const hoverIconButton = { width: 25, height: 25, display: 'grid', placeItems: 'center', border: '1px solid rgba(255,255,255,.35)', borderRadius: 4, background: 'rgba(0,0,0,.7)', color: '#fff', cursor: 'pointer', padding: 0 }
+const metaButton = { width: 25, height: 25, display: 'grid', placeItems: 'center', border: '1px solid var(--border-strong)', borderRadius: 5, background: 'rgba(0,0,0,.72)', color: 'var(--accent)', cursor: 'pointer', padding: 0 }
 function PlateOverlay({ analytics, cam }) {
   const box = analytics?.bbox || {}, width = Number(cam.effective_width || cam.width), height = Number(cam.effective_height || cam.height)
   const x1 = Number(box.x1), y1 = Number(box.y1), x2 = Number(box.x2), y2 = Number(box.y2)
@@ -135,44 +174,36 @@ function PlateBadge({ analytics }) {
 }
 
 function FullscreenModal({ cam, alertCount, analytics, onClose, onLocate }) {
-  const [aspect, setAspect] = useState(() => streamAspect(cam)), padded = String(cam.stream_id || '?').padStart(2, '0')
+  const [aspect, setAspect] = useState(() => streamAspect(cam)), [metadataOpen, setMetadataOpen] = useState(false), padded = String(cam.stream_id || cam.id || '?').replace(/^cam/i, '').padStart(2, '0')
   useEffect(() => setAspect(streamAspect(cam)), [cam])
   useEffect(() => { const key = event => { if (event.key === 'Escape') onClose() }; window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key) }, [onClose])
   useEffect(() => { document.body.style.overflow = 'hidden'; return () => { document.body.style.overflow = '' } }, [])
-  return <div onClick={event => event.target === event.currentTarget && onClose()} style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,.88)', display: 'grid', placeItems: 'center', padding: 16 }}><section style={{ '--feed-aspect': aspect, width: 'min(92vw, calc(78vh * var(--feed-aspect)))', minWidth: 'min(92vw, 360px)', maxWidth: 1440, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', boxShadow: '0 32px 96px rgba(0,0,0,.8)' }}><header style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--surface2)', borderBottom: '1px solid var(--border)' }}><CamIcon size={16} color="var(--accent)"/><b style={{ fontSize: 14 }}>CAM-{padded}</b><span style={{ color: 'var(--text2)', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cam.name}</span><div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 7 }}>{alertCount > 0 && <span style={{ background: 'var(--high)', color: '#fff', borderRadius: 4, fontSize: 10, fontWeight: 700, padding: '2px 6px' }}>{alertCount} alerts</span>}<button onClick={() => onLocate(cam)} title="Locate on map" aria-label="Locate on map" style={iconButton}><MapPinIcon/></button><button onClick={onClose} title="Close live feed" aria-label="Close live feed" style={iconButton}><CloseIcon/></button></div></header><div style={{ position: 'relative', width: '100%', aspectRatio: aspect, maxHeight: '78vh', background: '#000' }}><LivePlayer cam={cam} muted={false} fit="contain" onAspectChange={setAspect}/><PlateOverlay analytics={analytics} cam={cam}/></div><footer style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '7px 14px', background: 'var(--surface2)', borderTop: '1px solid var(--border)', color: 'var(--text2)', fontSize: 11 }}><span>{cam.location || 'Location not registered'}</span><span>{streamMetadata(cam)} · Esc to close</span></footer></section></div>
+  return <div onClick={event => event.target === event.currentTarget && onClose()} style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,.88)', display: 'grid', placeItems: 'center', padding: 16 }}><section style={{ '--feed-aspect': aspect, width: 'min(92vw, calc(78vh * var(--feed-aspect)))', minWidth: 'min(92vw, 360px)', maxWidth: 1440, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', boxShadow: '0 32px 96px rgba(0,0,0,.8)' }}><header style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--surface2)', borderBottom: '1px solid var(--border)' }}><CamIcon size={16} color="var(--accent)"/><b style={{ fontSize: 14 }}>CAM-{padded}</b><span style={{ color: 'var(--text2)', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cam.name}</span><div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 7 }}>{alertCount > 0 && <span style={{ background: 'var(--high)', color: '#fff', borderRadius: 4, fontSize: 10, fontWeight: 700, padding: '2px 6px' }}>{alertCount} alerts</span>}<button onClick={() => setMetadataOpen(true)} title="Camera metadata" aria-label="Camera metadata" style={metaButton}><InfoIcon size={13}/></button><button onClick={() => onLocate(cam)} title="Locate on map" aria-label="Locate on map" style={iconButton}><MapPinIcon/></button><button onClick={onClose} title="Close live feed" aria-label="Close live feed" style={iconButton}><CloseIcon/></button></div></header><div style={{ position: 'relative', width: '100%', aspectRatio: aspect, maxHeight: '78vh', background: '#000' }}><LivePlayer cam={cam} muted={false} fit="contain" onAspectChange={setAspect}/><PlateOverlay analytics={analytics} cam={cam}/></div><footer style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '7px 14px', background: 'var(--surface2)', borderTop: '1px solid var(--border)', color: 'var(--text2)', fontSize: 11 }}><span>{cam.location || 'Location not registered'}</span><span>{protocolStatus(cam)} · {streamMetadata(cam)} · Esc to close</span></footer></section>{metadataOpen && <MetadataModal cam={cam} onClose={() => setMetadataOpen(false)}/>}</div>
 }
 
 const CameraCard = memo(function CameraCard({ cam, alertCount, analytics, onFocus, onLocate, animDelay }) {
-  const [isLive, setIsLive] = useState(false), [aspect, setAspect] = useState(() => streamAspect(cam))
-  const padded = String(cam.stream_id || '?').padStart(2, '0'), health = cam.health_status || cam.status || 'unknown'
+  const [isLive, setIsLive] = useState(false), [aspect, setAspect] = useState(() => streamAspect(cam)), [metadataOpen, setMetadataOpen] = useState(false)
+  const padded = String(cam.stream_id || cam.id || '?').replace(/^cam/i, '').padStart(2, '0'), health = cam.health_status || cam.status || 'unknown'
   useEffect(() => setAspect(streamAspect(cam)), [cam])
-  return <article className="camera-card" onClick={() => onFocus(cam)} style={{ background: 'var(--surface2)', borderRadius: 10, overflow: 'hidden', border: `1px solid ${alertCount ? 'var(--high)' : 'var(--border)'}`, display: 'flex', flexDirection: 'column', cursor: 'pointer', transition: 'border .2s, transform .15s, box-shadow .15s', boxShadow: '0 8px 24px rgba(0,0,0,.22)', animation: `cardIn .22s ease ${animDelay}ms both` }} onMouseEnter={event => { event.currentTarget.style.transform = 'translateY(-2px)' }} onMouseLeave={event => { event.currentTarget.style.transform = 'translateY(0)' }}>
+  return <article className="camera-card" onClick={() => onFocus(cam)} style={{ background: 'var(--surface2)', borderRadius: 8, overflow: 'hidden', border: `1px solid ${alertCount ? 'var(--high)' : 'var(--border)'}`, display: 'flex', flexDirection: 'column', cursor: 'pointer', transition: 'border .2s, transform .15s', animation: `cardIn .22s ease ${animDelay}ms both` }} onMouseEnter={event => { event.currentTarget.style.transform = 'translateY(-2px)' }} onMouseLeave={event => { event.currentTarget.style.transform = 'translateY(0)' }}>
     <div style={{ position: 'relative', aspectRatio: aspect, background: '#000' }}>
       <LivePlayer cam={cam} muted onLiveStatus={setIsLive} onAspectChange={setAspect}/>
-      <div style={{ position: 'absolute', inset: '0 0 auto', padding: '7px 9px', display: 'flex', alignItems: 'center', gap: 7, pointerEvents: 'none', background: 'linear-gradient(rgba(0,0,0,.78),transparent)' }}>
-        <span style={{ color: 'rgba(255,255,255,.92)', fontWeight: 800, fontSize: 10, letterSpacing: .3 }}>CAM-{padded}</span>
-        <i style={{ marginLeft: 'auto', width: 7, height: 7, borderRadius: '50%', background: isLive ? 'var(--green)' : health === 'offline' ? 'var(--red)' : 'var(--muted)' }}/>
-      </div>
-      {alertCount > 0 && <span style={{ position: 'absolute', top: 7, right: 10, background: 'var(--high)', color: '#fff', borderRadius: 5, fontSize: 9, fontWeight: 800, padding: '2px 6px' }}>{alertCount} {alertCount === 1 ? 'alert' : 'alerts'}</span>}
-      {analytics?.plate_text && <PlateBadge analytics={analytics}/>} 
-      <div className="camera-actions" style={{ position: 'absolute', right: 7, bottom: 7, display: 'flex', gap: 5, opacity: 0, transform: 'translateY(3px)', transition: 'opacity .15s, transform .15s' }}>
-        <button onClick={event => { event.stopPropagation(); onFocus(cam) }} title="View live feed" aria-label="View live feed" style={hoverIconButton}><ExpandIcon/></button>
-        <button onClick={event => { event.stopPropagation(); onLocate(cam) }} title="Locate on map" aria-label="Locate on map" style={{ ...hoverIconButton, color: '#9ecbff', borderColor: 'rgba(88,166,255,.8)' }}><MapPinIcon/></button>
-      </div>
-    </div>
-    <footer style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', gap: 10, alignItems: 'center', padding: '10px 11px 11px', background: '#0c0a08', borderTop: '1px solid var(--border)' }}>
-      <div style={{ minWidth: 0, display: 'grid', gap: 4 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
-          <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text)', fontSize: 12, fontWeight: 820 }}>{cam.name || `CAM-${padded}`}</span>
-          {cam.location && <span style={{ flex: '0 0 auto', color: 'var(--muted)', fontSize: 9 }}>•</span>}
-          {cam.location && <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text2)', fontSize: 9.5 }}>{cam.location}</span>}
+      <div style={{ position: 'absolute', inset: '0 0 auto', padding: '6px 8px', display: 'flex', alignItems: 'center', gap: 6, pointerEvents: 'none', background: 'linear-gradient(rgba(0,0,0,.72),transparent)' }}>
+        <span style={{ color: 'rgba(255,255,255,.82)', fontWeight: 800, fontSize: 10 }}>CAM-{padded}</span>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, pointerEvents: 'auto' }}>
+          <button onClick={event => { event.stopPropagation(); setMetadataOpen(true) }} title="Camera metadata" aria-label={`Camera metadata for ${cam.name || `CAM-${padded}`}`} style={metaButton}><InfoIcon size={13}/></button>
+          <span aria-label={isLive ? 'Live' : health} title={isLive ? 'Live' : health} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#fff', fontSize: 9, fontWeight: 800, letterSpacing: .4 }}><i style={{ width: 6, height: 6, borderRadius: '50%', background: isLive ? 'var(--green)' : health === 'offline' ? 'var(--red)' : 'var(--yellow)' }}/>{isLive ? 'LIVE' : health.toUpperCase()}</span>
         </div>
-        <div style={{ color: 'var(--text2)', fontSize: 9.5, lineHeight: 1.35, letterSpacing: .1 }}>{streamMetadata(cam)}</div>
       </div>
-      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 7px', borderRadius: 6, border: `1px solid ${isLive ? 'rgba(74,222,128,.25)' : health === 'offline' ? 'rgba(248,113,113,.25)' : 'var(--border)'}`, background: isLive ? 'rgba(74,222,128,.07)' : health === 'offline' ? 'rgba(248,113,113,.06)' : 'rgba(255,255,255,.02)', color: isLive ? 'var(--green)' : health === 'offline' ? 'var(--red)' : 'var(--text2)', fontSize: 9, fontWeight: 850, letterSpacing: .5, whiteSpace: 'nowrap' }}>
-        <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'currentColor' }}/>{isLive ? 'LIVE' : health.toUpperCase()}
-      </div>
+      {alertCount > 0 && <span style={{ position: 'absolute', top: 6, left: 62, background: 'var(--high)', color: '#fff', borderRadius: 4, fontSize: 9, fontWeight: 700, padding: '1px 5px' }}>{alertCount}</span>}
+      {analytics?.plate_text && <PlateBadge analytics={analytics}/>}<div className="camera-actions" style={{ position: 'absolute', right: 6, bottom: 5, display: 'flex', gap: 4, opacity: 0, transform: 'translateY(3px)', transition: 'opacity .15s, transform .15s' }}><button onClick={event => { event.stopPropagation(); onFocus(cam) }} title="View live feed" aria-label="View live feed" style={hoverIconButton}><ExpandIcon/></button><button onClick={event => { event.stopPropagation(); onLocate(cam) }} title="Locate on map" aria-label="Locate on map" style={{ ...hoverIconButton, color: '#9ecbff', borderColor: 'rgba(88,166,255,.8)' }}><MapPinIcon/></button></div>
+    </div>
+    <footer style={{ padding: '8px 10px 9px', display: 'grid', gap: 5, color: 'var(--text2)', fontSize: 10, borderTop: '1px solid var(--border)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}><strong style={{ color: 'var(--text)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cam.name || `CAM-${padded}`}</strong><span style={{ marginLeft: 'auto', color: isLive ? 'var(--green)' : health === 'offline' ? 'var(--red)' : 'var(--text2)', fontSize: 9, fontWeight: 800 }}>{isLive ? 'LIVE' : health.toUpperCase()}</span></div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', gap: 8, alignItems: 'center' }}><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cam.location || 'Location not registered'}</span><span style={{ color: 'var(--text2)', fontSize: 9, whiteSpace: 'nowrap' }}>{protocolStatus(cam)}</span></div>
+      <div style={{ color: 'var(--text2)', fontSize: 9, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{streamMetadata(cam)}</div>
     </footer>
+    {metadataOpen && <MetadataModal cam={cam} onClose={() => setMetadataOpen(false)}/>} 
   </article>
 })
 
@@ -180,5 +211,5 @@ export default function CameraGrid({ cameras, alertsByCam, analyticsByCam = {}, 
   const [cols, setCols] = useState(() => { const saved = Number(localStorage.getItem('sentinel.camera-grid.columns.v1')); return [2, 3, 4, 5].includes(saved) ? saved : 3 }), [focused, setFocused] = useState(null)
   const handleColChange = n => { setCols(n); localStorage.setItem('sentinel.camera-grid.columns.v1', String(n)) }
   useEffect(() => { if (!focusCameraId) return; const camera = cameras.find(item => item.id === focusCameraId); if (camera) setFocused(camera) }, [focusCameraId, focusNonce, cameras])
-  return <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg)', overflow: 'hidden' }}><header style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}><CamIcon size={13} color="var(--text2)"/><b style={{ fontSize: 12 }}>{cameras.length} Cameras</b>{pipelineStats && <span style={{ color: 'var(--text2)', fontSize: 10 }}>Frames {Number(pipelineStats.raw_frames || 0).toLocaleString()} · Detections {Number(pipelineStats.detections || 0).toLocaleString()}</span>}<div style={{ marginLeft: 'auto', display: 'flex', gap: 3 }}>{[2, 3, 4, 5].map(n => <button key={n} onClick={() => handleColChange(n)} title={`${n} columns`} aria-label={`${n} camera columns`} style={{ width: 28, height: 28, borderRadius: 5, border: `1px solid ${cols === n ? 'var(--accent)' : 'var(--border)'}`, background: cols === n ? 'var(--accent)22' : 'transparent', color: cols === n ? 'var(--accent)' : 'var(--text2)', cursor: 'pointer' }}><GridIcon n={n}/></button>)}</div></header><main style={{ flex: 1, overflowY: 'auto', padding: 10 }}><div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap: 8, alignContent: 'start' }}>{cameras.map((cam, index) => <CameraCard key={cam.id} cam={cam} alertCount={alertsByCam[cam.id] || 0} analytics={analyticsByCam[cam.id]} onFocus={setFocused} onLocate={onLocate} animDelay={Math.min(index * 30, 300)}/>)}{!cameras.length && <div style={{ gridColumn: '1 / -1', padding: 48, textAlign: 'center', color: 'var(--text2)' }}>Syncing camera registry…</div>}</div></main>{focused && <FullscreenModal cam={focused} alertCount={alertsByCam[focused.id] || 0} analytics={analyticsByCam[focused.id]} onClose={() => setFocused(null)} onLocate={onLocate}/>}<style>{`@keyframes cardIn{from{opacity:0;transform:translateY(10px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}@keyframes mediaSpin{to{transform:rotate(360deg)}}.camera-card:hover .camera-actions{opacity:1!important;transform:translateY(0)!important}`}</style></div>
+  return <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg)', overflow: 'hidden' }}><header style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}><CamIcon size={13} color="var(--text2)"/><b style={{ fontSize: 12 }}>{cameras.length} Cameras</b>{pipelineStats && <span style={{ color: 'var(--text2)', fontSize: 10 }}>Frames {Number(pipelineStats.raw_frames || 0).toLocaleString()} · Detections {Number(pipelineStats.detections || 0).toLocaleString()}</span>}<div style={{ marginLeft: 'auto', display: 'flex', gap: 3 }}>{[2, 3, 4, 5].map(n => <button key={n} onClick={() => handleColChange(n)} title={`${n} columns`} aria-label={`${n} camera columns`} style={{ width: 28, height: 28, borderRadius: 5, border: `1px solid ${cols === n ? 'var(--accent)' : 'var(--border)'}`, background: cols === n ? 'var(--accent)22' : 'transparent', color: cols === n ? 'var(--accent)' : 'var(--text2)', cursor: 'pointer' }}><GridIcon n={n}/></button>)}</div></header><main style={{ flex: 1, overflowY: 'auto', padding: 10 }}><div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap: 8, alignContent: 'start' }}>{cameras.map((cam, index) => <CameraCard key={cam.id} cam={cam} alertCount={alertsByCam[cam.id] || 0} analytics={analyticsByCam[cam.id]} onFocus={setFocused} onLocate={onLocate} animDelay={Math.min(index * 30, 300)}/>)}{!cameras.length && <div style={{ gridColumn: '1 / -1', padding: 48, textAlign: 'center', color: 'var(--text2)' }}>Syncing camera registry…</div>}</div></main>{focused && <FullscreenModal cam={focused} alertCount={alertsByCam[focused.id] || 0} analytics={analyticsByCam[focused.id]} onClose={() => setFocused(null)} onLocate={onLocate}/>}<style>{`@keyframes cardIn{from{opacity:0;transform:translateY(10px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}@keyframes mediaSpin{to{transform:rotate(360deg)}}`}</style></div>
 }
