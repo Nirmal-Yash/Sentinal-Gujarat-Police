@@ -86,6 +86,7 @@ jobs:
         run: |
           node scripts/route_state_regression.mjs
           python scripts/p1_metadata_regression.py
+          node scripts/p0_browser_regression.mjs
       - name: Run fresh database bootstrap and migration idempotency verification
         shell: bash
         run: |
