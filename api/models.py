@@ -1,6 +1,7 @@
-import uuid, os
+import os, time, uuid
 from datetime import datetime, date
 from typing import Any, Optional
+import jwt
 from sqlalchemy import Column, String, Float, Boolean, DateTime, Date, Text, Integer, BigInteger
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from pgvector.sqlalchemy import Vector
@@ -68,10 +69,19 @@ class CameraOut(BaseModel):
             number=int(stream_id); cam_id=f"cam{number:02d}"; rtsp_host=os.getenv("RTSP_HOST_IP","103.250.160.189")
             if isinstance(value,dict): value=dict(value)
             else: value={name:getattr(value,name) for name in cls.model_fields if hasattr(value,name)}
-            # Current production HLS always goes through the authenticated
-            # same-origin CCTV proxy. Do not expose stale provider URLs even
-            # if an older registry record still contains one.
-            value["hls_url"]=f"/api/cctv/{cam_id}/index.m3u8"
+            # The browser cannot rely on the dashboard fetch wrapper's Bearer
+            # header for hls.js XHRs. Issue a short-lived signed playback token
+            # instead; this token grants access only to this camera's CCTV proxy.
+            secret = (os.getenv("SECRET_KEY", "") or "").strip()
+            playback_token = ""
+            if secret:
+                playback_token = jwt.encode({
+                    "sub": "cctv-hls",
+                    "camera": cam_id,
+                    "exp": int(time.time()) + 300,
+                }, secret, algorithm="HS256")
+            token_query = f"?access_token={playback_token}" if playback_token else ""
+            value["hls_url"] = f"/api/cctv/{cam_id}/index.m3u8{token_query}"
             if not value.get("rtsp_url"): value["rtsp_url"]=f"rtsp://{rtsp_host}:8554/stream/{cam_id}"
             value["stream_url"]=value["rtsp_url"]
             if not value.get("whep_url"): value["whep_url"]=f"http://{rtsp_host}:8889/stream/{cam_id}/whep"
