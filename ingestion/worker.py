@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ingestion Worker — live RTSP ingestion with adaptive operational telemetry."""
+"""Ingestion Worker — live RTSP ingestion with P0 operational telemetry."""
 import os, sys, time, base64, logging, uuid, threading
 from datetime import datetime, timezone
 from multiprocessing import Process
@@ -21,8 +21,12 @@ JPEG_Q = int(os.getenv("JPEG_QUALITY", "70"))
 MAX_CAMS = max(1, int(os.getenv("MAX_CONCURRENT_CAMERAS", "50")))
 CATALOGUE_SYNC_INTERVAL = max(30, int(os.getenv("CATALOGUE_SYNC_INTERVAL", "300")))
 RECONNECT_MAX_DELAY = max(5, int(os.getenv("RECONNECT_MAX_DELAY", "30")))
-STREAM_KEY = "raw_frames"; STREAM_MAX = 3000
+STREAM_KEY = "raw_frames"
+STREAM_MAX = 3000
+RESET_STREAM = "cam_resets"
+RESET_MAX = 500
 ENCODE_PARAMS = [cv2.IMWRITE_JPEG_QUALITY, JPEG_Q]
+SCENE_DISCONTINUITY_MS = max(1000, int(os.getenv("SCENE_DISCONTINUITY_MS", "5000")))
 
 
 def get_cameras():
@@ -45,8 +49,24 @@ def set_status(cam_id, status):
         log.warning("Status update failed: %s", exc)
 
 
-def update_runtime_observation(cam_id, width, height, source_fps, decode_fps, published_fps, codec, status="active"):
-    """Persist distinct observed rates and an honest historical health observation."""
+def increment_reconnect(cam_id):
+    try:
+        with psycopg2.connect(DB_URL) as conn, conn.cursor() as cur:
+            cur.execute("UPDATE cameras SET reconnect_count=COALESCE(reconnect_count,0)+1,updated_at=NOW() WHERE id=%s", (str(cam_id),))
+    except Exception as exc:
+        log.warning("Reconnect counter update failed: %s", exc)
+
+
+def increment_decode_failure(cam_id):
+    try:
+        with psycopg2.connect(DB_URL) as conn, conn.cursor() as cur:
+            cur.execute("UPDATE cameras SET decode_failure_count=COALESCE(decode_failure_count,0)+1,updated_at=NOW() WHERE id=%s", (str(cam_id),))
+    except Exception as exc:
+        log.warning("Decode-failure counter update failed: %s", exc)
+
+
+def update_runtime_observation(cam_id, width, height, source_fps, decode_fps, published_fps, codec, last_pts_ms, status="active"):
+    """Persist observed dimensions/rates and explicit frame-health evidence."""
     health = {"active": "healthy", "reconnecting": "reconnecting", "offline": "offline"}.get(status, "unknown")
     connectivity = {"active": "connected", "reconnecting": "reconnecting", "offline": "disconnected"}.get(status, "unknown")
     try:
@@ -67,14 +87,23 @@ def update_runtime_observation(cam_id, width, height, source_fps, decode_fps, pu
 
 class CameraWorker:
     def __init__(self, cam, r):
-        self.cam_id = str(cam["id"]); self.sid = cam["stream_id"]; self.name = cam["name"]; self.url = cam["rtsp_url"]
-        self.codec = cam.get("codec") or "unknown"; self.adapter = adapter_for(cam); self.r = r; self.interval = 1.0 / FRAME_FPS
+        self.cam_id = str(cam["id"])
+        self.sid = cam["stream_id"]
+        self.name = cam["name"]
+        self.url = cam["rtsp_url"]
+        self.codec = cam.get("codec") or "unknown"
+        self.adapter = adapter_for(cam)
+        self.r = r
+        self.interval = 1.0 / FRAME_FPS
 
-    def _open(self): return self.adapter.open()
+    def _open(self):
+        log.info("Opening RTSP/TCP source for %s: %s", self.name, self.url)
+        return self.adapter.open()
 
     def _reconnect(self):
         delay = 2
         attempts = 0
+        increment_reconnect(self.cam_id)
         while attempts < 6:
             attempts += 1
             log.info("%s: reconnecting in %ss (attempt %s/6)", self.name, delay, attempts)
@@ -83,18 +112,35 @@ class CameraWorker:
             if cap.isOpened():
                 log.info("%s: reconnected", self.name)
                 return cap
-            cap.release(); delay = min(delay * 2, RECONNECT_MAX_DELAY)
+            cap.release()
+            delay = min(delay * 2, RECONNECT_MAX_DELAY)
+        log.warning("%s: reconnect cycle exhausted; entering offline wait", self.name)
         return None
 
     def _encode(self, frame):
         ok, buf = cv2.imencode(".jpg", frame, ENCODE_PARAMS)
-        if not ok: raise RuntimeError("JPEG encoding failed")
+        if not ok:
+            raise RuntimeError("JPEG encoding failed")
         return base64.b64encode(buf).decode()
 
     def _publish(self, frame_b64, pts_ms, w, h):
         now = datetime.now(timezone.utc).isoformat().encode()
-        fields = {b"schema_version": b"1.0", b"event_id": str(uuid.uuid4()).encode(), b"event_type": b"frame", b"cam_id": self.cam_id.encode(), b"stream_id": str(self.sid).encode(), b"frame": frame_b64.encode(), b"source_ts": b"", b"ingested_at": now, b"pts_ms": str(int(pts_ms)).encode(), b"width": str(w).encode(), b"height": str(h).encode(), b"codec": self.codec.encode()}
-        self.r.xadd(STREAM_KEY, fields, maxlen=STREAM_MAX, approximate=True); self.r.set(f"snapshot:{self.cam_id}", frame_b64.encode(), ex=10)
+        fields = {
+            b"schema_version": b"1.0",
+            b"event_id": str(uuid.uuid4()).encode(),
+            b"event_type": b"frame",
+            b"cam_id": self.cam_id.encode(),
+            b"stream_id": str(self.sid).encode(),
+            b"frame": frame_b64.encode(),
+            b"source_ts": now,
+            b"ingested_at": now,
+            b"pts_ms": str(int(pts_ms)).encode(),
+            b"width": str(w).encode(),
+            b"height": str(h).encode(),
+            b"codec": self.codec.encode(),
+        }
+        self.r.xadd(STREAM_KEY, fields, maxlen=STREAM_MAX, approximate=True)
+        self.r.set(f"snapshot:{self.cam_id}", frame_b64.encode(), ex=10)
 
     def _stream_fps(self, cap):
         reported = cap.get(cv2.CAP_PROP_FPS) if cap.isOpened() else 0.0
@@ -108,82 +154,269 @@ class CameraWorker:
             set_status(self.cam_id, "offline")
         else:
             set_status(self.cam_id, "active")
-        last_t = 0.0; fail_streak = 0; prev_pts = None; observed_started = time.monotonic(); observed_frames = 0; published_frames = 0; last_health_write = 0.0
+            log.info("%s: connected; source_fps=%s", self.name, source_fps or "unknown")
+
+        last_publish = 0.0
+        fail_streak = 0
+        prev_pts = None
+        observed_started = time.monotonic()
+        observed_frames = 0
+        published_frames = 0
+        last_health_write = 0.0
+
         try:
             while True:
                 if cap is None or not cap.isOpened():
-                    set_status(self.cam_id, "offline")
+                    set_status(self.cam_id, "reconnecting")
                     cap = self._reconnect()
                     if cap is None:
+                        set_status(self.cam_id, "offline")
                         time.sleep(10)
                         continue
-                    source_fps = self._stream_fps(cap); set_status(self.cam_id, "active")
-                    fail_streak = 0; prev_pts = None
-                    observed_started = time.monotonic(); observed_frames = 0; published_frames = 0; last_health_write = 0.0
+
+                    source_fps = self._stream_fps(cap)
+                    set_status(self.cam_id, "active")
+                    fail_streak = 0
+                    prev_pts = None
+                    observed_started = time.monotonic()
+                    observed_frames = 0
+                    published_frames = 0
+                    last_health_write = 0.0
+
                 ret, frame = cap.read()
                 if not ret:
                     fail_streak += 1
+                    increment_decode_failure(self.cam_id) if fail_streak == 1 else None
                     if fail_streak >= 15:
-                        cap.release(); cap = None; set_status(self.cam_id, "reconnecting")
-                    time.sleep(0.05); continue
-                fail_streak = 0; observed_frames += 1; pts_ms = cap.get(cv2.CAP_PROP_POS_MSEC); now = time.monotonic()
-                if now - last_t < self.interval: continue
-                last_t = now
-                if prev_pts is not None and pts_ms < prev_pts - 1000:
-                    log.info("%s: PTS discontinuity %.0f→%.0f; signalling reset", self.name, prev_pts, pts_ms)
-                    self.r.xadd("cam_resets", {b"cam_id": self.cam_id.encode(), b"stream_id": str(self.sid).encode()}, maxlen=500, approximate=True)
-                prev_pts = pts_ms; h, w = frame.shape[:2]
-                try: self._publish(self._encode(frame), pts_ms, w, h); published_frames += 1
-                except Exception as exc: log.error("%s: publish error: %s", self.name, exc)
+                        log.warning("%s: 15 consecutive frame-read failures; reconnecting", self.name)
+                        cap.release()
+                        cap = None
+                        set_status(self.cam_id, "reconnecting")
+                    time.sleep(0.05)
+                    continue
+
+                fail_streak = 0
+                observed_frames += 1
+                pts_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
+                if not pts_ms or pts_ms < 0:
+                    pts_ms = 0.0
+
+                now = time.monotonic()
+                if last_publish and now - last_publish < self.interval:
+                    continue
+
+                last_publish = now
+
+                if prev_pts is not None:
+                    delta = pts_ms - prev_pts
+                    if delta < 0 or delta > SCENE_DISCONTINUITY_MS:
+                        log.info(
+                            "%s: PTS discontinuity %.0f→%.0f (delta=%.0fms); resetting downstream state",
+                            self.name,
+                            prev_pts,
+                            pts_ms,
+                            delta,
+                        )
+                        self.r.xadd(
+                            RESET_STREAM,
+                            {
+                                b"cam_id": self.cam_id.encode(),
+                                b"stream_id": str(self.sid).encode(),
+                                b"reason": b"pts_discontinuity",
+                                b"previous_pts_ms": str(int(prev_pts)).encode(),
+                                b"current_pts_ms": str(int(pts_ms)).encode(),
+                            },
+                            maxlen=RESET_MAX,
+                            approximate=True,
+                        )
+                prev_pts = pts_ms
+
+                h, w = frame.shape[:2]
+                try:
+                    self._publish(self._encode(frame), pts_ms, w, h)
+                    published_frames += 1
+                except Exception as exc:
+                    log.error("%s: publish error: %s", self.name, exc)
+
                 if now - last_health_write >= 30:
                     elapsed = max(now - observed_started, 0.001)
-                    update_runtime_observation(self.cam_id, w, h, source_fps, round(observed_frames / elapsed, 2), round(published_frames / elapsed, 2), self.codec)
-                    observed_started = now; observed_frames = 0; published_frames = 0; last_health_write = now
+                    decode_rate = observed_frames / elapsed
+                    publish_rate = published_frames / elapsed
+                    update_runtime_observation(
+                        self.cam_id,
+                        w,
+                        h,
+                        source_fps,
+                        round(decode_rate, 2),
+                        round(publish_rate, 2),
+                        self.codec,
+                        int(pts_ms),
+                    )
+                    log.info(
+                        "%s: telemetry frames=%s published=%s decode_fps=%.2f publish_fps=%.2f pts=%sms",
+                        self.name,
+                        observed_frames,
+                        published_frames,
+                        decode_rate,
+                        publish_rate,
+                        int(pts_ms),
+                    )
+                    observed_started = now
+                    observed_frames = 0
+                    published_frames = 0
+                    last_health_write = now
+
         finally:
-            if cap is not None: cap.release()
+            if cap is not None:
+                cap.release()
             set_status(self.cam_id, "offline")
 
 
 def run_worker(cam):
-    CameraWorker(cam, redis.from_url(REDIS_URL, decode_responses=False)).run()
+    CameraWorker(
+        cam,
+        redis.from_url(
+            REDIS_URL,
+            decode_responses=False,
+        ),
+    ).run()
 
 
 def start_camera_worker(cam):
-    process = Process(target=run_worker, args=(cam,), daemon=True); process.start(); log.info("Started ingestion worker for %s (%s)", cam["name"], str(cam["id"])[:8]); return process
+    process = Process(
+        target=run_worker,
+        args=(cam,),
+        daemon=True,
+    )
+    process.start()
+    log.info(
+        "Started ingestion worker for %s (%s)",
+        cam["name"],
+        str(cam["id"])[:8],
+    )
+    return process
 
 
 def main():
     log.info("Ingestion service starting …")
+
     from test_runner import supervise as supervise_test_sessions
-    threading.Thread(target=supervise_test_sessions, name="test-session-supervisor", daemon=True).start()
+    threading.Thread(
+        target=supervise_test_sessions,
+        name="test-session-supervisor",
+        daemon=True,
+    ).start()
+
     from catalogue_sync import sync as catalogue_sync
+
     for attempt in range(20):
-        try: psycopg2.connect(DB_URL).close(); break
-        except Exception as exc: log.info("Waiting for DB (%s/20): %s", attempt + 1, exc); time.sleep(3)
+        try:
+            psycopg2.connect(DB_URL).close()
+            break
+        except Exception as exc:
+            log.info(
+                "Waiting for DB (%s/20): %s",
+                attempt + 1,
+                exc,
+            )
+            time.sleep(3)
+
     n = catalogue_sync()
-    if n == 0: time.sleep(10); n = catalogue_sync()
+
+    if n == 0:
+        log.critical("Current CCTV catalogue unavailable; no legacy live.corp8.cloud fallback is permitted")
+        time.sleep(10)
+        n = catalogue_sync()
+
     cams = get_cameras()
-    if not cams: log.critical("No active cameras in DB after catalogue sync. Exiting."); sys.exit(1)
-    log.info("Starting %s camera workers …", len(cams)); procs = {}
-    for cam in cams: procs[str(cam["id"])] = (cam, start_camera_worker(cam)); time.sleep(0.3)
+
+    if not cams:
+        log.critical(
+            "No active cameras in DB after current CCTV catalogue sync. Exiting."
+        )
+        sys.exit(1)
+
+    log.info(
+        "Starting %s camera workers …",
+        len(cams),
+    )
+
+    procs = {}
+
+    for cam in cams:
+        procs[str(cam["id"])] = (
+            cam,
+            start_camera_worker(cam),
+        )
+        time.sleep(0.3)
+
     last_catalogue_sync = time.monotonic()
+
     while True:
         time.sleep(30)
-        if time.monotonic() - last_catalogue_sync >= CATALOGUE_SYNC_INTERVAL:
-            try: catalogue_sync()
-            except Exception as exc: log.warning("Catalogue sync during reconcile failed: %s", exc)
-            last_catalogue_sync = time.monotonic()
-        try: wanted = {str(cam["id"]): cam for cam in get_cameras()}
-        except Exception as exc: log.warning("Registry reconcile skipped: %s", exc); continue
-        for cam_id, (cam, process) in list(procs.items()):
-            replacement = wanted.get(cam_id)
-            if replacement is None:
-                process.terminate(); process.join(timeout=5); del procs[cam_id]; continue
-            if replacement["rtsp_url"] != cam["rtsp_url"]:
-                process.terminate(); process.join(timeout=5); procs[cam_id] = (replacement, start_camera_worker(replacement)); continue
-            if not process.is_alive():
-                log.warning("Worker %s died (exit %s). Restarting …", cam["name"], process.exitcode); procs[cam_id] = (replacement, start_camera_worker(replacement))
-            wanted.pop(cam_id, None)
-        for cam_id, cam in wanted.items(): procs[cam_id] = (cam, start_camera_worker(cam))
 
-if __name__ == "__main__": main()
+        if time.monotonic() - last_catalogue_sync >= CATALOGUE_SYNC_INTERVAL:
+            try:
+                catalogue_sync()
+            except Exception as exc:
+                log.warning(
+                    "Catalogue sync during reconcile failed: %s",
+                    exc,
+                )
+            last_catalogue_sync = time.monotonic()
+
+        try:
+            wanted = {
+                str(cam["id"]): cam
+                for cam in get_cameras()
+            }
+        except Exception as exc:
+            log.warning(
+                "Registry reconcile skipped: %s",
+                exc,
+            )
+            continue
+
+        for cam_id, (
+            cam,
+            process,
+        ) in list(procs.items()):
+            replacement = wanted.get(cam_id)
+
+            if replacement is None:
+                process.terminate()
+                process.join(timeout=5)
+                del procs[cam_id]
+                continue
+
+            if replacement["rtsp_url"] != cam["rtsp_url"]:
+                process.terminate()
+                process.join(timeout=5)
+                procs[cam_id] = (
+                    replacement,
+                    start_camera_worker(replacement),
+                )
+                continue
+
+            if not process.is_alive():
+                log.warning(
+                    "Worker %s died (exit %s). Restarting …",
+                    cam["name"],
+                    process.exitcode,
+                )
+                procs[cam_id] = (
+                    replacement,
+                    start_camera_worker(replacement),
+                )
+
+            wanted.pop(cam_id, None)
+
+        for cam_id, cam in wanted.items():
+            procs[cam_id] = (
+                cam,
+                start_camera_worker(cam),
+            )
+
+
+if __name__ == "__main__":
+    main()
