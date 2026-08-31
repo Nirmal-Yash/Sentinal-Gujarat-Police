@@ -7,12 +7,6 @@ from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-for rel in ("ai_engine", "intelligence", "api"):
-    sys.path.insert(0, str(ROOT / rel))
-
-from anpr_policy import TrackANPRState, PlateObservation  # type: ignore
-from behavior_policy import AdaptiveBaseline  # type: ignore
-from alert_engine import AlertEngine  # type: ignore
 
 
 def load_exact(path: Path, name: str):
@@ -25,6 +19,19 @@ def load_exact(path: Path, name: str):
     return module
 
 
+# anpr_policy.py imports its sibling as the top-level module name
+# ``plate_normalise``. Preload that exact sibling before importing policy so
+# ambient PYTHONPATH ordering cannot accidentally resolve api/plate_normalise.py.
+ai_plate_runtime = load_exact(ROOT / "ai_engine" / "plate_normalise.py", "plate_normalise")
+sys.path.insert(0, str(ROOT / "ai_engine"))
+sys.path.insert(0, str(ROOT / "intelligence"))
+sys.path.insert(0, str(ROOT / "api"))
+
+from anpr_policy import TrackANPRState, PlateObservation  # type: ignore
+from behavior_policy import AdaptiveBaseline  # type: ignore
+from alert_engine import AlertEngine  # type: ignore
+
+
 def check(condition, message):
     if not condition:
         raise AssertionError(message)
@@ -32,7 +39,7 @@ def check(condition, message):
 
 
 def main() -> int:
-    ai_plate = load_exact(ROOT / "ai_engine" / "plate_normalise.py", "p1_ai_plate")
+    ai_plate = ai_plate_runtime
     intel_plate = load_exact(ROOT / "intelligence" / "plate_normalise.py", "p1_intel_plate")
     api_plate = load_exact(ROOT / "api" / "plate_normalise.py", "p1_api_plate")
     sample = [" gj 01-ab.1234 ", "GJ01AB1234", "gj-01 ab 1234"]
