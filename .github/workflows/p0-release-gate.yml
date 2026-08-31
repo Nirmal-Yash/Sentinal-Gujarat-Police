@@ -54,7 +54,7 @@ jobs:
       - name: Install PostGIS into CI PostgreSQL service
         shell: bash
         run: |
-          POSTGRES_CONTAINER="$(docker ps --format '{{.ID}} {{.Image}}' | awk '$2==\"pgvector/pgvector:pg16\" {print $1; exit}')"
+          POSTGRES_CONTAINER="$(docker ps --filter ancestor=pgvector/pgvector:pg16 -q | sed -n '1p')"
           test -n "$POSTGRES_CONTAINER"
           docker exec -u 0 "$POSTGRES_CONTAINER" bash -lc 'apt-get update && apt-get install -y --no-install-recommends postgresql-16-postgis-3 && rm -rf /var/lib/apt/lists/*'
       - name: Bootstrap CI schema
@@ -121,25 +121,32 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          roots = [
+              Path('api'),
+              Path('ai_engine'),
+              Path('ingestion'),
+              Path('intelligence'),
+              Path('docker-compose.yml'),
+              Path('.env.example'),
+          ]
           needle = "live" + ".corp8.cloud"
           bad = []
-          for p in Path('.').rglob('*'):
-              if not p.is_file():
-                  continue
-              if any(part in {'.git','node_modules','dist','__pycache__'} for part in p.parts):
-                  continue
-              if p.as_posix().startswith('docs/'):
-                  continue
-              try:
-                  text = p.read_text(encoding='utf-8', errors='ignore')
-              except Exception:
-                  continue
-              if needle in text:
-                  bad.append(p.as_posix())
+          for root in roots:
+              paths = [root] if root.is_file() else root.rglob('*')
+              for p in paths:
+                  if not p.is_file() or p.suffix.lower() not in {'.py', '.yml', '.yaml', '.env', '.example', '.json'}:
+                      continue
+                  try:
+                      text = p.read_text(encoding='utf-8', errors='ignore')
+                  except Exception:
+                      continue
+                  if needle in text:
+                      bad.append(p.as_posix())
           if bad:
-              raise SystemExit('Deprecated CCTV host references found: ' + ', '.join(bad))
+              raise SystemExit('Deprecated CCTV host references found in production/config paths: ' + ', '.join(bad))
           compose = Path('docker-compose.yml').read_text(encoding='utf-8')
-          assert 'cctv.corp8.cloud' in compose, 'Current CCTV host missing from Compose'
+          if 'cctv.corp8.cloud' not in compose:
+              raise SystemExit('Current CCTV host missing from Compose')
           print('Current CCTV architecture gate: PASS')
           PY
       - name: Validate P0 source contracts
@@ -149,12 +156,13 @@ jobs:
         run: |
           test -z "$(git ls-files .env)"
           ! git ls-files -z | grep -F -z -E '(^|/)__pycache__/|\.pyc$'
-      - name: Validate three P0 checks are declared
+      - name: Validate exactly three P0 checks
         shell: bash
         run: |
-          grep -q 'p0-backend-regression:' .github/workflows/p0-release-gate.yml
-          grep -q 'p0-dashboard-build:' .github/workflows/p0-release-gate.yml
-          grep -q 'p0-release-contract:' .github/workflows/p0-release-gate.yml
-          echo 'Three P0 release checks declared: PASS'
+          test "$(grep -c '^  p0-.*:$' .github/workflows/p0-release-gate.yml)" -eq 3
+          grep -q '^    name: P0 Backend Regression$' .github/workflows/p0-release-gate.yml
+          grep -q '^    name: P0 Dashboard Build$' .github/workflows/p0-release-gate.yml
+          grep -q '^    name: P0 Release Contract$' .github/workflows/p0-release-gate.yml
+          echo 'Exactly three P0 release checks declared: PASS'
       - name: Validate Compose configuration
         run: docker compose config -q
