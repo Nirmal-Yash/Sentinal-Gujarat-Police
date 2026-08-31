@@ -21,6 +21,7 @@ BOOTSTRAP_ADMIN_ROLE = os.getenv("BOOTSTRAP_ADMIN_ROLE", "SUPERADMIN").upper()
 BOOTSTRAP_LOCK_KEY = "sentinel:bootstrap-admin:v1"
 STARTUP_RETRIES = max(1, int(os.getenv("STARTUP_RETRIES", "30")))
 STARTUP_RETRY_DELAY = max(1.0, float(os.getenv("STARTUP_RETRY_DELAY", "2")))
+INSECURE_SECRET_VALUES = {"", "change-me", "changeme", "sentinel-change-in-production", "replace-me", "replace-with-long-random-secret"}
 
 async def bootstrap_admin(db: AsyncSession) -> None:
     await db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"), {"lock_key": BOOTSTRAP_LOCK_KEY})
@@ -43,7 +44,8 @@ async def initialize_runtime() -> None:
     for attempt in range(1, STARTUP_RETRIES + 1):
         try:
             apply_migrations()
-            if AUTH_REQUIRED and (not SECRET_KEY or SECRET_KEY == "sentinel-change-in-production"): raise RuntimeError("AUTH_REQUIRED=true requires a non-default SECRET_KEY")
+            if AUTH_REQUIRED and (SECRET_KEY or "").strip().lower() in INSECURE_SECRET_VALUES:
+                raise RuntimeError("AUTH_REQUIRED=true requires a strong non-placeholder SECRET_KEY")
             async with Session() as db: await bootstrap_admin(db)
             log.info("API startup dependencies ready on attempt %s/%s.", attempt, STARTUP_RETRIES); return
         except Exception as exc:
