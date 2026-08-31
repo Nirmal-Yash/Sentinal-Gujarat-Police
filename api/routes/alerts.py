@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy import select, update, desc, text
+from sqlalchemy.ext.asyncio import AsyncSession
 from models import Alert, AlertOut
 from auth import require_permission, Principal
 from database import get_db
