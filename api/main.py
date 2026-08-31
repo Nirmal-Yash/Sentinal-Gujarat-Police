@@ -19,6 +19,8 @@ BOOTSTRAP_ADMIN_USERNAME = os.getenv("BOOTSTRAP_ADMIN_USERNAME", "").strip()
 BOOTSTRAP_ADMIN_PASSWORD = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")
 BOOTSTRAP_ADMIN_ROLE = os.getenv("BOOTSTRAP_ADMIN_ROLE", "SUPERADMIN").upper()
 BOOTSTRAP_LOCK_KEY = "sentinel:bootstrap-admin:v1"
+STARTUP_RETRIES = max(1, int(os.getenv("STARTUP_RETRIES", "30")))
+STARTUP_RETRY_DELAY = max(1.0, float(os.getenv("STARTUP_RETRY_DELAY", "2")))
 
 async def bootstrap_admin(db: AsyncSession) -> None:
     await db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"), {"lock_key": BOOTSTRAP_LOCK_KEY})
@@ -40,13 +42,28 @@ async def bootstrap_admin(db: AsyncSession) -> None:
     await db.commit()
     log.info("Bootstrap administrative account ready: %s (%s)", BOOTSTRAP_ADMIN_USERNAME, BOOTSTRAP_ADMIN_ROLE)
 
+async def initialize_runtime() -> None:
+    last_error = None
+    for attempt in range(1, STARTUP_RETRIES + 1):
+        try:
+            apply_migrations()
+            if AUTH_REQUIRED and (not SECRET_KEY or SECRET_KEY == "sentinel-change-in-production"):
+                raise RuntimeError("AUTH_REQUIRED=true requires a non-default SECRET_KEY")
+            async with Session() as db:
+                await bootstrap_admin(db)
+            log.info("API startup dependencies ready on attempt %s/%s.", attempt, STARTUP_RETRIES)
+            return
+        except Exception as exc:
+            last_error = exc
+            if attempt >= STARTUP_RETRIES:
+                raise
+            log.warning("API startup dependency check failed (%s/%s): %s; retrying in %.1fs", attempt, STARTUP_RETRIES, exc, STARTUP_RETRY_DELAY)
+            await asyncio.sleep(STARTUP_RETRY_DELAY)
+    raise last_error or RuntimeError("API startup initialization failed")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    apply_migrations()
-    if AUTH_REQUIRED and (not SECRET_KEY or SECRET_KEY == "sentinel-change-in-production"):
-        raise RuntimeError("AUTH_REQUIRED=true requires a non-default SECRET_KEY")
-    async with Session() as db:
-        await bootstrap_admin(db)
+    await initialize_runtime()
     task = asyncio.create_task(redis_alert_consumer())
     log.info("API ready; schema owned by versioned migrations.")
     yield
