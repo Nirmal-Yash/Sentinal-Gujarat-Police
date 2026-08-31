@@ -20,7 +20,8 @@ OCR_INTERVAL = max(0.2, float(os.getenv("ANPR_OCR_INTERVAL_SECS", "0.8")))
 MIN_W = int(os.getenv("ANPR_MIN_VEHICLE_W", "80"))
 MIN_H = int(os.getenv("ANPR_MIN_VEHICLE_H", "60"))
 OCR_CONF = float(os.getenv("ANPR_OCR_MIN_CONF", "0.35"))
-MIN_OBS = max(2, int(os.getenv("ANPR_CONFIRM_OBSERVATIONS", "2")))
+MIN_OBS = max(2, int(os.getenv("ANPR_VOTE_THRESHOLD", os.getenv("ANPR_CONFIRM_OBSERVATIONS", "2"))))
+VOTE_WINDOW = max(MIN_OBS, int(os.getenv("ANPR_VOTE_WINDOW_FRAMES", "12")))
 MAX_TRACKS = max(1, int(os.getenv("ANPR_MAX_CONCURRENT_TRACKS", "128")))
 MIN_PLATE_W = int(os.getenv("ANPR_MIN_PLATE_WIDTH", "45"))
 MIN_PLATE_H = int(os.getenv("ANPR_MIN_PLATE_HEIGHT", "15"))
@@ -50,8 +51,7 @@ def _crop_candidates(crop):
     ]
     out = []
     for x1, y1, x2, y2 in boxes:
-        x1, y1 = max(0, x1), max(0, y1)
-        x2, y2 = min(w, x2), min(h, y2)
+        x1, y1 = max(0, x1), max(0, y1); x2, y2 = min(w, x2), min(h, y2)
         candidate = crop[y1:y2, x1:x2]
         if candidate.size and candidate.shape[1] >= MIN_PLATE_W and candidate.shape[0] >= MIN_PLATE_H:
             out.append(candidate)
@@ -103,11 +103,8 @@ def run():
     consumer = f"anpr-{uuid.uuid4().hex[:8]}"
     states = {}
     last_cleanup = time.monotonic()
-    # Only consume reset messages generated after this worker starts. Historical
-    # resets cannot invalidate freshly initialized state and replaying them on
-    # every loop would repeatedly clear active OCR state.
     last_reset_id = "$"
-    log.info("ANPR ready: track-driven requests interval=%ss gpu=%s", OCR_INTERVAL, gpu)
+    log.info("ANPR ready: interval=%ss vote=%s/%s gpu=%s normalization=1.1", OCR_INTERVAL, MIN_OBS, VOTE_WINDOW, gpu)
 
     while True:
         now = time.monotonic()
@@ -125,16 +122,15 @@ def run():
             for _, entries in resets or []:
                 for reset_id, data in entries:
                     cam = _bytes(data, "cam_id").decode()
-                    for key in [k for k in states if k.startswith(cam + ":")]:
+                    affected = [k for k in states if k.startswith(cam + ":")]
+                    for key in affected:
                         states.pop(key, None)
-                    for key in [f"{CONFIRMED_KEY_PREFIX}{k}" for k in list(states) if k.startswith(cam + ":")]:
-                        r.delete(key)
+                        r.delete(f"{CONFIRMED_KEY_PREFIX}{key}")
                     last_reset_id = reset_id
             msgs = r.xreadgroup(GROUP, consumer, {IN_STREAM: ">"}, count=4, block=500)
         except redis.exceptions.ResponseError as exc:
             if "NOGROUP" in str(exc):
-                _ensure_group(r)
-                continue
+                _ensure_group(r); continue
             raise
 
         if not msgs:
@@ -143,18 +139,15 @@ def run():
         for _, entries in msgs:
             for msg_id, data in entries:
                 try:
-                    cam = _bytes(data, "cam_id").decode()
-                    track_id = _bytes(data, "track_id").decode()
-                    x1 = int(_bytes(data, "x1") or b"0")
-                    y1 = int(_bytes(data, "y1") or b"0")
-                    x2 = int(_bytes(data, "x2") or b"0")
-                    y2 = int(_bytes(data, "y2") or b"0")
+                    cam = _bytes(data, "cam_id").decode(); track_id = _bytes(data, "track_id").decode()
+                    x1 = int(_bytes(data, "x1") or b"0"); y1 = int(_bytes(data, "y1") or b"0")
+                    x2 = int(_bytes(data, "x2") or b"0"); y2 = int(_bytes(data, "y2") or b"0")
                     track_conf = float(_bytes(data, "conf") or b"0")
                     crop = _decode_crop(data)
                     if crop is None or crop.shape[1] < MIN_W or crop.shape[0] < MIN_H:
                         continue
                     key = f"{cam}:{track_id}"
-                    state = states.setdefault(key, TrackANPRState())
+                    state = states.setdefault(key, TrackANPRState(window_size=VOTE_WINDOW))
                     state.last_seen_at = now
                     if not should_run_ocr(state, now, OCR_INTERVAL):
                         continue
@@ -169,8 +162,8 @@ def run():
                     state.last_ocr_at = now
                     if not best:
                         continue
-                    text, ocr_conf, q = best
-                    normalized = normalize_indian_plate(text)
+                    raw_text, ocr_conf, q = best
+                    normalized = normalize_indian_plate(raw_text)
                     if not normalized or ocr_conf < OCR_CONF or not plate_is_valid(normalized):
                         continue
                     state.add(PlateObservation(normalized, ocr_conf, track_conf, q, True, now))
@@ -178,22 +171,19 @@ def run():
                     plate, consensus = state.consensus(MIN_OBS)
                     if not plate or state.confirmed_plate:
                         continue
-                    state.confirmed_plate = plate
-                    state.confirmed_at = now
-                    state.status = "CONFIRMED"
+                    state.confirmed_plate = plate; state.confirmed_at = now; state.status = "CONFIRMED"
                     combined = max(0.0, min(1.0, 0.5 * ocr_conf + 0.3 * track_conf + 0.2 * q))
                     context = {k: data[k] for k in (b"schema_version", b"event_id", b"cam_id", b"stream_id", b"source_ts", b"ingested_at", b"pts_ms", b"session_id") if k in data}
-                    event = detection_event(
-                        context, "plate", raw_ocr=text, plate_text=plate, ocr_conf=ocr_conf,
-                        detector_conf=track_conf, conf=combined,
-                        vehicle_type=_bytes(data, "vehicle_type").decode() or "vehicle",
-                        track_id=track_id, x1=x1, y1=y1, x2=x2, y2=y2,
-                        plate_validated=1, anpr_consensus=round(consensus, 4),
-                    )
+                    event = detection_event(context, "plate", raw_ocr=raw_text, plate_text=plate, ocr_conf=ocr_conf,
+                                             detector_conf=track_conf, conf=combined,
+                                             vehicle_type=_bytes(data, "vehicle_type").decode() or "vehicle",
+                                             track_id=track_id, x1=x1, y1=y1, x2=x2, y2=y2,
+                                             plate_validated=1, anpr_consensus=round(consensus, 4),
+                                             normalization_version="1.1", vote_observations=len(state.observations))
                     event[b"event_type"] = b"vehicle_sighting"
                     r.xadd(OUT_STREAM, event, maxlen=OUT_MAX, approximate=True)
                     r.setex(f"{CONFIRMED_KEY_PREFIX}{key}", int(max(5, TRACK_EXPIRY)), "1")
-                    log.info("Confirmed plate=%s camera=%s track=%s confidence=%.3f", plate, cam, track_id, combined)
+                    log.info("Confirmed plate=%s camera=%s track=%s confidence=%.3f observations=%s", plate, cam, track_id, combined, len(state.observations))
                 except Exception:
                     log.error("ANPR error", exc_info=True)
                 finally:
