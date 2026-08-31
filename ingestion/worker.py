@@ -186,7 +186,8 @@ class CameraWorker:
                 ret, frame = cap.read()
                 if not ret:
                     fail_streak += 1
-                    increment_decode_failure(self.cam_id) if fail_streak == 1 else None
+                    if fail_streak == 1:
+                        increment_decode_failure(self.cam_id)
                     if fail_streak >= 15:
                         log.warning("%s: 15 consecutive frame-read failures; reconnecting", self.name)
                         cap.release()
@@ -324,7 +325,7 @@ def main():
     n = catalogue_sync()
 
     if n == 0:
-        log.critical("Current CCTV catalogue unavailable; no legacy live.corp8.cloud fallback is permitted")
+        log.critical("Current CCTV catalogue unavailable; no retired-source fallback is permitted")
         time.sleep(10)
         n = catalogue_sync()
 
@@ -358,61 +359,19 @@ def main():
         if time.monotonic() - last_catalogue_sync >= CATALOGUE_SYNC_INTERVAL:
             try:
                 catalogue_sync()
+                last_catalogue_sync = time.monotonic()
             except Exception as exc:
-                log.warning(
-                    "Catalogue sync during reconcile failed: %s",
-                    exc,
-                )
-            last_catalogue_sync = time.monotonic()
+                log.warning("Periodic CCTV catalogue sync failed: %s", exc)
 
-        try:
-            wanted = {
-                str(cam["id"]): cam
-                for cam in get_cameras()
-            }
-        except Exception as exc:
-            log.warning(
-                "Registry reconcile skipped: %s",
-                exc,
-            )
-            continue
+        dead = []
+        for key, (cam, proc) in procs.items():
+            if not proc.is_alive():
+                dead.append(key)
 
-        for cam_id, (
-            cam,
-            process,
-        ) in list(procs.items()):
-            replacement = wanted.get(cam_id)
-
-            if replacement is None:
-                process.terminate()
-                process.join(timeout=5)
-                del procs[cam_id]
-                continue
-
-            if replacement["rtsp_url"] != cam["rtsp_url"]:
-                process.terminate()
-                process.join(timeout=5)
-                procs[cam_id] = (
-                    replacement,
-                    start_camera_worker(replacement),
-                )
-                continue
-
-            if not process.is_alive():
-                log.warning(
-                    "Worker %s died (exit %s). Restarting …",
-                    cam["name"],
-                    process.exitcode,
-                )
-                procs[cam_id] = (
-                    replacement,
-                    start_camera_worker(replacement),
-                )
-
-            wanted.pop(cam_id, None)
-
-        for cam_id, cam in wanted.items():
-            procs[cam_id] = (
+        for key in dead:
+            cam, _ = procs.pop(key)
+            set_status(str(cam["id"]), "reconnecting")
+            procs[key] = (
                 cam,
                 start_camera_worker(cam),
             )
