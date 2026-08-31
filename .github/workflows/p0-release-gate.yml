@@ -13,6 +13,7 @@ permissions:
 env:
   POSTGRES_PASSWORD: sentinel
   CCTV_PASSWORD: ci-placeholder
+  SECRET_KEY: ci-only-sentinel-signing-secret
 
 jobs:
   p0-backend-regression:
