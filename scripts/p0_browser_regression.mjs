@@ -4,7 +4,7 @@ const ROOT=process.cwd(),failures=[]
 function read(p){const file=path.join(ROOT,p);if(!fs.existsSync(file)){failures.push(`${p} is missing`);return ''}return fs.readFileSync(file,'utf8')}
 function text(t,f,m){if(!t.includes(f))failures.push(m);else console.log(`[OK] ${m}`)}
 function pattern(t,p,m){if(!p.test(t))failures.push(m);else console.log(`[OK] ${m}`)}
-const runtime=read('dashboard/src/runtimeGuards.js'),main=read('dashboard/src/main.jsx'),cctv=read('api/routes/cctv.py'),models=read('api/models.py'),compose=read('docker-compose.yml'),pkg=read('dashboard/package.json'),workspace=read('dashboard/src/components/AlertWorkspace.jsx'),status=read('dashboard/src/components/alerts/AlertStatusBadge.jsx'),type=read('dashboard/src/components/alerts/AlertTypeBadge.jsx'),date=read('dashboard/src/components/alerts/AlertDateFilter.jsx'),toast=read('dashboard/src/components/alerts/ToastHost.jsx'),snap=read('api/routes/camera_snapshot.py'),evidence=read('api/routes/evidence_assets.py'),cameraRegistry=read('dashboard/src/components/CameraRegistryModal.jsx'),testDiag=read('dashboard/src/components/TestDiagnosticsModal.jsx'),bell=read('dashboard/src/components/NotificationBell.jsx'),mapNav=read('dashboard/src/mapNavigation.js'),index=read('dashboard/index.html'),navbar=read('dashboard/src/components/Navbar.jsx'),login=read('dashboard/src/components/LoginModal.jsx'),manifest=read('dashboard/public/manifest.json'),envExample=read('.env.example')
+const runtime=read('dashboard/src/runtimeGuards.js'),main=read('dashboard/src/main.jsx'),cctv=read('api/routes/cctv.py'),models=read('api/models.py'),compose=read('docker-compose.yml'),pkg=read('dashboard/package.json'),workspace=read('dashboard/src/components/AlertWorkspace.jsx'),status=read('dashboard/src/components/alerts/AlertStatusBadge.jsx'),type=read('dashboard/src/components/alerts/AlertTypeBadge.jsx'),date=read('dashboard/src/components/alerts/AlertDateFilter.jsx'),toast=read('dashboard/src/components/alerts/ToastHost.jsx'),snap=read('api/routes/camera_snapshot.py'),evidence=read('api/routes/evidence_assets.py'),cameraRegistry=read('dashboard/src/components/CameraRegistryModal.jsx'),testDiag=read('dashboard/src/components/TestDiagnosticsModal.jsx'),bell=read('dashboard/src/components/NotificationBell.jsx'),mapNav=read('dashboard/src/mapNavigation.js'),mapSearch=read('dashboard/src/components/MapSearch.jsx'),index=read('dashboard/index.html'),navbar=read('dashboard/src/components/Navbar.jsx'),login=read('dashboard/src/components/LoginModal.jsx'),manifest=read('dashboard/public/manifest.json'),envExample=read('.env.example'),interactionCss=read('dashboard/src/interactionEffects.css'),interactionStates=read('dashboard/src/components/ui/InteractionStates.jsx')
 text(runtime,'SNAPSHOT_CACHE_TTL_MS = 15000','snapshot fallback cache is 15 seconds')
 text(runtime,'SNAPSHOT_INFLIGHT','concurrent snapshot requests are deduplicated')
 text(runtime,'snapshot-token','snapshot fallback obtains a signed token')
@@ -50,6 +50,17 @@ text(testDiag,'MAX_VIDEO_SIZE_BYTES = 200 * 1024 * 1024','test-video UI enforces
 text(testDiag,'Exceeds limit','test-video UI explains oversized selections')
 text(mapNav,'flyTo(center, targetZoom','camera focus uses smooth flyTo navigation')
 text(mapNav,'flyToBounds(bounds','cluster/route focus uses smooth flyToBounds navigation')
+text(mapSearch,"left:'50%'",'GIS search is positioned top-center')
+text(mapSearch,"transform:'translateX(-50%)'",'GIS search is horizontally centered')
+text(main,"./interactionEffects.css",'system interaction effects stylesheet is loaded')
+text(interactionCss,'sentinel-skeleton','shared skeleton loading effect exists')
+text(interactionCss,'sentinel-form-error','shared form error shake effect exists')
+text(interactionCss,'sentinel-empty-state','shared empty-state presentation exists')
+text(interactionCss,'sentinel-destructive-flash','destructive action feedback exists')
+text(interactionCss,'prefers-reduced-motion','interaction effects honor reduced-motion preference')
+text(interactionStates,'export function Skeleton','shared Skeleton component exists')
+text(interactionStates,'export function EmptyState','shared EmptyState component exists')
+text(interactionStates,'export function SuccessCheck','shared success state component exists')
 text(index,'/sentinel-logo-mark.svg','browser uses Sentinel SVG favicon')
 text(index,'/manifest.json','dashboard exposes a PWA manifest')
 text(index,'/og-image.svg','OpenGraph metadata uses Sentinel artwork')
