@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import App from './App.jsx'
 import ToastHost from './components/alerts/ToastHost.jsx'
 import './styles.css'
+import './interactionEffects.css'
 import { installSentinelRuntimeGuards } from './runtimeGuards.js'
 import { installSmoothLeafletNavigation } from './mapNavigation.js'
 
