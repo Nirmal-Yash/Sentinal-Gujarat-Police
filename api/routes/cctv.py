@@ -9,13 +9,15 @@ from urllib.parse import urljoin, urlparse
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from auth import Principal, require_authenticated
+from auth import Principal, current_principal, principal_from_token, require_authenticated
 from database import get_db
 from services.cctv_gateway import get_cctv_gateway
 
 router = APIRouter(prefix="/cctv", tags=["cctv"])
+security = HTTPBearer(auto_error=False)
 _URI_ATTR = re.compile(r'URI="([^"]+)"')
 _SECRET_PLACEHOLDERS = {"", "change-me", "changeme", "sentinel-change-in-production", "replace-me", "replace-with-long-random-secret"}
 _CAMERA_RE = re.compile(r"cam(\d{2})", re.IGNORECASE)
@@ -52,13 +54,15 @@ def _proxy_url(asset_path: str, token: str) -> str:
     return "/api/cctv/" + asset_path.lstrip("/") + separator + "access_token=" + token
 
 
-def _rewrite_manifest(body: str, manifest_path: str, token: str) -> str:
+def _rewrite_manifest(body: str, manifest_path: str, token: str | None) -> str:
     base_dir = "/" + manifest_path.rsplit("/", 1)[0].strip("/") + "/"
 
     def rewrite_uri(value: str) -> str:
         value = value.strip()
         if not value or value.startswith("#"):
             return value
+        if token is None:
+            return urljoin(base_dir, value).lstrip("/")
         absolute = urlparse(value)
         if absolute.scheme in {"http", "https"}:
             path = absolute.path.lstrip("/")
@@ -102,13 +106,34 @@ async def issue_playback_token(
     return {"token": token, "expires_at": expires_at, "ttl_seconds": 300, "camera": camera_id}
 
 
+async def _authorize_playback(
+    camera_id: str,
+    access_token: str | None,
+    credentials: HTTPAuthorizationCredentials | None,
+    db: AsyncSession,
+) -> str | None:
+    """Prefer a camera-scoped playback token; fall back to the user's JWT session."""
+    if access_token:
+        _verify_playback_token(access_token, camera_id)
+        return access_token
+    if credentials and credentials.scheme.lower() == "bearer":
+        await principal_from_token(credentials.credentials, db)
+        return None
+    raise HTTPException(401, "CCTV playback authentication required")
+
+
 @router.get("/{asset_path:path}")
-def proxy_cctv_asset(asset_path: str, access_token: str = Query(..., min_length=1)):
+async def proxy_cctv_asset(
+    asset_path: str,
+    access_token: str | None = Query(default=None, min_length=1),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+    db: AsyncSession = Depends(get_db),
+):
     match = re.fullmatch(r"(cam\d{2})/(.+)", asset_path, re.IGNORECASE)
     if not match:
         raise HTTPException(400, "Invalid CCTV asset path")
     camera_id = _camera_id(match.group(1))
-    _verify_playback_token(access_token, camera_id)
+    token = await _authorize_playback(camera_id, access_token, credentials, db)
 
     gateway = get_cctv_gateway()
     if not gateway.configured:
@@ -134,9 +159,9 @@ def proxy_cctv_asset(asset_path: str, access_token: str = Query(..., min_length=
         if not body.lstrip().startswith("#EXTM3U"):
             raise HTTPException(502, "CCTV upstream returned non-HLS content for a manifest")
         return Response(
-            _rewrite_manifest(body, asset_path, access_token),
+            _rewrite_manifest(body, asset_path, token),
             media_type="application/vnd.apple.mpegurl",
-            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Access-Control-Allow-Origin": "*"},
+            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Access-Control-Allow-Origin": "*", "Vary": "Authorization"},
         )
 
     def iterator():
@@ -151,5 +176,5 @@ def proxy_cctv_asset(asset_path: str, access_token: str = Query(..., min_length=
     return StreamingResponse(
         iterator(),
         media_type=safe_type,
-        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Access-Control-Allow-Origin": "*"},
+        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Access-Control-Allow-Origin": "*", "Vary": "Authorization"},
     )
