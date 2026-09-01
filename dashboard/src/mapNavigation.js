@@ -36,10 +36,7 @@ export function installSmoothLeafletNavigation() {
     if (!options || !Number.isFinite(Number(options.maxZoom))) {
       return original.fitBounds.call(this, bounds, options)
     }
-    return original.fitBounds.call(this, bounds, {
-      ...options,
-      animate: false,
-    }) && this.flyToBounds(bounds, {
+    return this.flyToBounds(bounds, {
       ...options,
       duration: options.maxZoom >= 15 ? 1.0 : 0.8,
       easeLinearity: options.maxZoom >= 15 ? 0.25 : 0.35,
