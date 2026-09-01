@@ -29,6 +29,8 @@ const cctv = read('api/routes/cctv.py')
 const models = read('api/models.py')
 const compose = read('docker-compose.yml')
 const packageJson = read('dashboard/package.json')
+const alerts = read('dashboard/src/components/AlertsPage.jsx')
+const navbar = read('dashboard/src/components/Navbar.jsx')
 
 requireText(runtime, 'SNAPSHOT_CACHE_TTL_MS = 15000', 'snapshot fallback cache is 15 seconds')
 requireText(runtime, "!/^\\/api\\/cameras\\/[^/]+\\/snapshot$/.test(url.pathname)", 'snapshot guard targets camera snapshot API')
@@ -45,16 +47,21 @@ requireText(cctv, 'CCTV playback authentication required', 'CCTV proxy rejects u
 requireText(cctv, 'X-Content-Type-Options', 'CCTV proxy sets browser hardening headers')
 requireText(models, 'playback_id', 'camera playback uses an authoritative provider identifier')
 requireText(models, 'external_id', 'camera playback prefers external_id when it is cam01-style')
-requirePattern(
-  models,
-  /value\["hls_url"\]\s*=\s*f?["']\/api\/cctv\/\{provider_id\}\/index\.m3u8\{token_query\}/,
-  'camera API emits signed same-origin HLS URLs',
-)
+requirePattern(models, /value\["hls_url"\]\s*=\s*f?["']\/api\/cctv\/\{provider_id\}\/index\.m3u8\{token_query\}/, 'camera API emits signed same-origin HLS URLs')
 requireText(compose, 'CCTV_PASSWORD', 'Compose injects the server-side CCTV password')
 requireText(packageJson, '"hls.js"', 'dashboard retains HLS playback support')
 
 if (compose.includes('live.corp8.cloud')) failures.push('deprecated live.corp8.cloud reference remains in docker-compose.yml')
 else console.log('[OK] deprecated live.corp8.cloud is absent from docker-compose.yml')
+
+requireText(alerts, 'Acknowledge', 'alerts workspace exposes acknowledgement actions')
+requireText(alerts, 'Investigate', 'alerts workspace exposes investigation actions')
+requireText(alerts, 'Resolve', 'alerts workspace exposes resolution actions')
+requireText(alerts, 'Close', 'alerts workspace exposes close actions')
+requireText(alerts, 'AlertEvidence', 'alerts workspace loads evidence through the evidence API')
+requireText(alerts, 'LAST 24H', 'alerts workspace provides date presets')
+requireText(alerts, 'setLoading(false)', 'alerts refresh always clears loading state')
+requireText(navbar, 'sentinel-alert-count-badge', 'sidebar renders a dedicated alert count badge')
 
 if (failures.length) {
   console.error(`\n${failures.length} P0 browser regression gate(s) failed.`)
