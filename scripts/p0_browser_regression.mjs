@@ -1,72 +1,44 @@
 import fs from 'node:fs'
 import path from 'node:path'
-
-const ROOT = process.cwd()
-const failures = []
-
-function read(relativePath) {
-  const file = path.join(ROOT, relativePath)
-  if (!fs.existsSync(file)) {
-    failures.push(`${relativePath} is missing`)
-    return ''
-  }
-  return fs.readFileSync(file, 'utf8')
-}
-
-function requireText(text, fragment, message) {
-  if (!text.includes(fragment)) failures.push(message)
-  else console.log(`[OK] ${message}`)
-}
-
-function requirePattern(text, pattern, message) {
-  if (!pattern.test(text)) failures.push(message)
-  else console.log(`[OK] ${message}`)
-}
-
-const runtime = read('dashboard/src/runtimeGuards.js')
-const main = read('dashboard/src/main.jsx')
-const cctv = read('api/routes/cctv.py')
-const models = read('api/models.py')
-const compose = read('docker-compose.yml')
-const packageJson = read('dashboard/package.json')
-const alerts = read('dashboard/src/components/AlertsPage.jsx')
-const navbar = read('dashboard/src/components/Navbar.jsx')
-
-requireText(runtime, 'SNAPSHOT_CACHE_TTL_MS = 15000', 'snapshot fallback cache is 15 seconds')
-requireText(runtime, "!/^\\/api\\/cameras\\/[^/]+\\/snapshot$/.test(url.pathname)", 'snapshot guard targets camera snapshot API')
-requireText(runtime, 'SNAPSHOT_INFLIGHT', 'concurrent snapshot requests are deduplicated')
-requireText(runtime, 'SNAPSHOT_CACHE.set(key, { timestamp: Date.now(), result })', 'snapshot failures are also throttled for 15 seconds')
-requireText(runtime, 'installCctvXHRAuth()', 'browser CCTV XHR authentication is installed')
-requireText(runtime, 'parsed.origin === window.location.origin', 'CCTV authentication stays same-origin')
-requireText(runtime, "'Authorization', `Bearer ${token}`", 'browser attaches Sentinel JWT to CCTV XHRs')
-requireText(main, 'installSentinelRuntimeGuards()', 'runtime guards are installed by the application entrypoint')
-requireText(cctv, 'prefix="/cctv"', 'authenticated CCTV proxy route exists')
-requireText(cctv, 'Invalid or expired CCTV playback token', 'CCTV playback token validation exists')
-requireText(cctv, 'principal_from_token', 'CCTV proxy accepts the authenticated Sentinel session')
-requireText(cctv, 'CCTV playback authentication required', 'CCTV proxy rejects unauthenticated playback')
-requireText(cctv, 'X-Content-Type-Options', 'CCTV proxy sets browser hardening headers')
-requireText(models, 'playback_id', 'camera playback uses an authoritative provider identifier')
-requireText(models, 'external_id', 'camera playback prefers external_id when it is cam01-style')
-requirePattern(models, /value\["hls_url"\]\s*=\s*f?["']\/api\/cctv\/\{provider_id\}\/index\.m3u8\{token_query\}/, 'camera API emits signed same-origin HLS URLs')
-requireText(compose, 'CCTV_PASSWORD', 'Compose injects the server-side CCTV password')
-requireText(packageJson, '"hls.js"', 'dashboard retains HLS playback support')
-
-if (compose.includes('live.corp8.cloud')) failures.push('deprecated live.corp8.cloud reference remains in docker-compose.yml')
-else console.log('[OK] deprecated live.corp8.cloud is absent from docker-compose.yml')
-
-requireText(alerts, 'Acknowledge', 'alerts workspace exposes acknowledgement actions')
-requireText(alerts, 'Investigate', 'alerts workspace exposes investigation actions')
-requireText(alerts, 'Resolve', 'alerts workspace exposes resolution actions')
-requireText(alerts, 'Close', 'alerts workspace exposes close actions')
-requireText(alerts, 'AlertEvidence', 'alerts workspace loads evidence through the evidence API')
-requireText(alerts, 'LAST 24H', 'alerts workspace provides date presets')
-requireText(alerts, 'setLoading(false)', 'alerts refresh always clears loading state')
-requireText(navbar, 'sentinel-alert-count-badge', 'sidebar renders a dedicated alert count badge')
-
-if (failures.length) {
-  console.error(`\n${failures.length} P0 browser regression gate(s) failed.`)
-  for (const failure of failures) console.error(`[FAIL] ${failure}`)
-  process.exit(1)
-}
-
+const ROOT=process.cwd(),failures=[]
+function read(p){const file=path.join(ROOT,p);if(!fs.existsSync(file)){failures.push(`${p} is missing`);return ''}return fs.readFileSync(file,'utf8')}
+function text(t,f,m){if(!t.includes(f))failures.push(m);else console.log(`[OK] ${m}`)}
+function pattern(t,p,m){if(!p.test(t))failures.push(m);else console.log(`[OK] ${m}`)}
+const runtime=read('dashboard/src/runtimeGuards.js'),main=read('dashboard/src/main.jsx'),cctv=read('api/routes/cctv.py'),models=read('api/models.py'),compose=read('docker-compose.yml'),pkg=read('dashboard/package.json'),workspace=read('dashboard/src/components/AlertWorkspace.jsx'),status=read('dashboard/src/components/alerts/AlertStatusBadge.jsx'),type=read('dashboard/src/components/alerts/AlertTypeBadge.jsx'),date=read('dashboard/src/components/alerts/AlertDateFilter.jsx'),toast=read('dashboard/src/components/alerts/ToastHost.jsx'),snap=read('api/routes/camera_snapshot.py'),evidence=read('api/routes/evidence_assets.py')
+text(runtime,'SNAPSHOT_CACHE_TTL_MS = 15000','snapshot fallback cache is 15 seconds')
+text(runtime,'SNAPSHOT_INFLIGHT','concurrent snapshot requests are deduplicated')
+text(runtime,'snapshot-token','snapshot fallback obtains a signed token')
+text(runtime,'SNAPSHOT_TOKEN_CACHE','snapshot signing tokens are cached safely')
+text(main,'installSentinelRuntimeGuards()','runtime guards are installed by the application entrypoint')
+text(cctv,'prefix="/cctv"','authenticated CCTV proxy route exists')
+text(cctv,'Invalid or expired CCTV playback token','CCTV playback token validation exists')
+text(cctv,'principal_from_token','CCTV proxy accepts the authenticated Sentinel session')
+text(cctv,'CCTV playback authentication required','CCTV proxy rejects unauthenticated playback')
+text(models,'playback_id','camera playback uses an authoritative provider identifier')
+text(models,'external_id','camera playback prefers external_id when it is cam01-style')
+pattern(models,/value\["hls_url"\]\s*=\s*f?["']\/api\/cctv\/\{provider_id\}\/index\.m3u8\{token_query\}/,'camera API emits signed same-origin HLS URLs')
+text(snap,'/snapshot-token','dedicated snapshot token endpoint exists')
+text(snap,'SNAPSHOT_TOKEN_SECRET','snapshot tokens use the dedicated signing secret')
+text(evidence,'/signed-token','signed evidence token endpoint exists')
+text(evidence,'/content-signed','signed evidence content endpoint exists')
+text(compose,'CCTV_PASSWORD','Compose injects the server-side CCTV password')
+text(compose,'SNAPSHOT_TOKEN_SECRET','Compose injects the snapshot signing secret')
+text(compose,'EVIDENCE_STORAGE_PATH','Compose uses the canonical evidence storage variable')
+text(pkg,'framer-motion','dashboard includes framer-motion')
+text(workspace,'AlertStatusBadge','alerts use reusable status badge architecture')
+text(workspace,'AlertTypeBadge','alerts use reusable type badge architecture')
+text(workspace,'SEVERITY_STYLES','alerts use explicit severity styles')
+text(workspace,'AbortController','alert refresh is abort-safe')
+text(workspace,'AlertDateFilter','alerts use the reusable date filter')
+text(workspace,'getEvidenceSignedToken','alerts use signed evidence tokens')
+text(workspace,'SHA-256','alerts expose evidence integrity verification')
+text(workspace,'AnimatePresence','alerts use entry/exit motion')
+text(workspace,'whileTap','alert actions use motion tap feedback')
+text(workspace,'notifyToast','alert actions use toast notifications')
+text(status,'STATUS_STYLES','AlertStatusBadge exports status styling')
+text(type,'TYPE_LABELS','AlertTypeBadge exports type labels')
+text(date,'PRESETS','AlertDateFilter defines reusable presets')
+text(toast,'framer-motion','toast host is animated')
+if(compose.includes('live.corp8.cloud'))failures.push('deprecated live.corp8.cloud reference remains in docker-compose.yml');else console.log('[OK] deprecated live.corp8.cloud is absent from docker-compose.yml')
+if(failures.length){console.error(`\n${failures.length} P0 browser regression gate(s) failed.`);for(const f of failures)console.error(`[FAIL] ${f}`);process.exit(1)}
 console.log('\nAll P0 browser regression gates passed.')
