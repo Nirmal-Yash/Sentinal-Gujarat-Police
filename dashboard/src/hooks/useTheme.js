@@ -2,12 +2,21 @@ import { useEffect, useState } from 'react'
 
 const STORAGE_KEY = 'sentinel_theme'
 const THEME_EVENT = 'sentinel:theme-change'
+const VALID = new Set(['light', 'dark'])
+
 const resolveInitial = () => {
   try {
     const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored === 'light' || stored === 'dark') return stored
+    if (VALID.has(stored)) return stored
   } catch {}
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
+function applyTheme(theme) {
+  document.documentElement.classList.toggle('dark', theme === 'dark')
+  document.documentElement.dataset.theme = theme
+  try { localStorage.setItem(STORAGE_KEY, theme) } catch {}
+  window.dispatchEvent(new CustomEvent(THEME_EVENT, { detail: theme }))
 }
 
 export function useTheme() {
@@ -15,7 +24,9 @@ export function useTheme() {
 
   useEffect(() => {
     const syncTheme = next => {
-      if (next === 'light' || next === 'dark') setTheme(next)
+      if (!VALID.has(next)) return
+      setTheme(next)
+      applyTheme(next)
     }
     const onStorage = event => {
       if (event.key === STORAGE_KEY) syncTheme(event.newValue)
@@ -29,13 +40,19 @@ export function useTheme() {
     }
   }, [])
 
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', theme === 'dark')
-    document.documentElement.dataset.theme = theme
-    try { localStorage.setItem(STORAGE_KEY, theme) } catch {}
-    window.dispatchEvent(new CustomEvent(THEME_EVENT, { detail: theme }))
-  }, [theme])
+  useEffect(() => applyTheme(theme), [theme])
 
-  const toggle = () => setTheme(value => value === 'dark' ? 'light' : 'dark')
+  const toggle = () => {
+    const next = theme === 'dark' ? 'light' : 'dark'
+    const update = () => setTheme(next)
+    if (typeof document.startViewTransition === 'function') {
+      try {
+        document.startViewTransition(update)
+        return
+      } catch {}
+    }
+    update()
+  }
+
   return { theme, toggle }
 }
