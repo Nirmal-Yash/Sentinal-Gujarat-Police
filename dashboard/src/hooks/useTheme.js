@@ -24,9 +24,7 @@ export function useTheme() {
 
   useEffect(() => {
     const syncTheme = next => {
-      if (!VALID.has(next)) return
-      setTheme(next)
-      applyTheme(next)
+      if (VALID.has(next)) setTheme(next)
     }
     const onStorage = event => {
       if (event.key === STORAGE_KEY) syncTheme(event.newValue)
