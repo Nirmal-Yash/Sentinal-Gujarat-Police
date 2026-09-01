@@ -1,5 +1,6 @@
 import os
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
+from datetime import datetime, timezone
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,17 +9,17 @@ from auth import AUTH_REQUIRED, COOKIE_MAX_AGE, COOKIE_NAME, COOKIE_SAMESITE, CO
 from rate_limit import rate_limit
 
 router = APIRouter(prefix='/auth', tags=['auth'])
+
 class Login(BaseModel):
     username: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=1, max_length=256)
+
 class UserCreate(Login):
     role: str = 'VIEWER'
 
-class Login(Login):
-    password: str = Field(min_length=1, max_length=256)
-
 
 def set_session_cookie(response: Response, token: str, expires_at):
-    max_age = max(300, int((expires_at - __import__('datetime').datetime.now(__import__('datetime').timezone.utc)).total_seconds()))
+    max_age = max(300, int((expires_at - datetime.now(timezone.utc)).total_seconds()))
     response.set_cookie(COOKIE_NAME, token, max_age=min(max_age, COOKIE_MAX_AGE), httponly=True, secure=COOKIE_SECURE, samesite=COOKIE_SAMESITE, path='/')
 
 
