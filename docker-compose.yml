@@ -228,6 +228,7 @@ services:
       - AUTH_REQUIRED=${AUTH_REQUIRED:-true}
       - JWT_TOKEN_HOURS=${JWT_TOKEN_HOURS:-8}
       - TEST_ENDPOINT_ENABLED=${TEST_ENDPOINT_ENABLED:-true}
+      - TEST_MAX_UPLOAD_BYTES=${TEST_MAX_UPLOAD_BYTES:-209715200}
       - TEST_VIDEO_DIR=/videos
       - TEST_UPLOAD_DIR=/test_videos
       - TEST_RTSP_BASE=rtsp://mediamtx:8554
