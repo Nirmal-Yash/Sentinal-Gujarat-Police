@@ -14,6 +14,10 @@ env:
   POSTGRES_PASSWORD: sentinel
   CCTV_PASSWORD: ci-placeholder
   SECRET_KEY: ci-only-sentinel-signing-secret
+  SNAPSHOT_TOKEN_SECRET: ci-only-snapshot-signing-secret
+  EVIDENCE_STORAGE_PATH: /tmp/sentinel-evidence
+
+actions: {}
 
 jobs:
   p0-backend-regression:
@@ -42,11 +46,12 @@ jobs:
       DATABASE_URL: postgresql://sentinel:sentinel@localhost:5432/sentinel_ci
       REDIS_URL: redis://localhost:6379
       SECRET_KEY: ci-only-sentinel-signing-secret
+      SNAPSHOT_TOKEN_SECRET: ci-only-snapshot-signing-secret
+      EVIDENCE_STORAGE_PATH: /tmp/sentinel-evidence
       AUTH_REQUIRED: "true"
       ALERT_COOLDOWN: "60"
       CROSS_CAM_WINDOW: "300"
       SIGHTING_DEDUP_BUCKET_SECS: "30"
-      EVIDENCE_ROOT: /tmp/sentinel-evidence
       REGISTRY_SMOKE_CAMERAS: "50"
     steps:
       - uses: actions/checkout@v4
@@ -126,6 +131,8 @@ jobs:
       POSTGRES_PASSWORD: sentinel
       CCTV_PASSWORD: ci-placeholder
       SECRET_KEY: ci-only-sentinel-signing-secret
+      SNAPSHOT_TOKEN_SECRET: ci-only-snapshot-signing-secret
+      EVIDENCE_STORAGE_PATH: /tmp/sentinel-evidence
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -160,39 +167,35 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          required = [
-              Path('ai_engine/plate_normalise.py'),
-              Path('intelligence/plate_normalise.py'),
-              Path('api/plate_normalise.py'),
-              Path('ai_engine/behavior_policy.py'),
-              Path('scripts/p1_regression.py'),
-          ]
+          required = [Path('ai_engine/plate_normalise.py'), Path('intelligence/plate_normalise.py'), Path('api/plate_normalise.py'), Path('ai_engine/behavior_policy.py'), Path('scripts/p1_regression.py')]
           missing = [p.as_posix() for p in required if not p.is_file()]
-          if missing:
-              raise SystemExit('Missing required P1 source files: ' + ', '.join(missing))
+          if missing: raise SystemExit('Missing required P1 source files: ' + ', '.join(missing))
           migrations = sorted(Path('database/migrations').glob('*_p1_intelligence_consistency.sql'))
-          if len(migrations) != 1:
-              raise SystemExit(f'Expected exactly one P1 intelligence migration, found {len(migrations)}: {[p.name for p in migrations]}')
-          if 'vector(512)' not in migrations[0].read_text(encoding='utf-8'):
-              raise SystemExit('P1 intelligence migration does not define test face embeddings')
+          if len(migrations) != 1: raise SystemExit(f'Expected exactly one P1 intelligence migration, found {len(migrations)}: {[p.name for p in migrations]}')
+          if 'vector(512)' not in migrations[0].read_text(encoding='utf-8'): raise SystemExit('P1 intelligence migration does not define test face embeddings')
           watchlist = Path('intelligence/watchlist_engine.py').read_text(encoding='utf-8')
           alert = Path('intelligence/alert_engine.py').read_text(encoding='utf-8')
           anpr = Path('ai_engine/anpr_worker.py').read_text(encoding='utf-8')
           behavior = Path('ai_engine/behavior_worker.py').read_text(encoding='utf-8')
           search = Path('api/routes/search.py').read_text(encoding='utf-8')
-          checks = {
-              'WATCHLIST_RELOAD_SECS': 'WATCHLIST_RELOAD_SECS' in watchlist,
-              'watchlist:updated': 'watchlist:updated' in watchlist,
-              'ALERT_DEDUP_PREFIX': 'ALERT_DEDUP_PREFIX' in alert,
-              'ANPR_VOTE_THRESHOLD': 'ANPR_VOTE_THRESHOLD' in anpr,
-              'AdaptiveBaseline': 'AdaptiveBaseline' in behavior,
-              'CROWD_PERSISTENCE_SECS': 'CROWD_PERSISTENCE_SECS' in behavior,
-              'X-Test-Session-Id': 'X-Test-Session-Id' in search,
-          }
-          failed = [name for name, ok in checks.items() if not ok]
-          if failed:
-              raise SystemExit('Missing P1 source contracts: ' + ', '.join(failed))
+          checks = {'WATCHLIST_RELOAD_SECS':'WATCHLIST_RELOAD_SECS' in watchlist,'watchlist:updated':'watchlist:updated' in watchlist,'ALERT_DEDUP_PREFIX':'ALERT_DEDUP_PREFIX' in alert,'ANPR_VOTE_THRESHOLD':'ANPR_VOTE_THRESHOLD' in anpr,'AdaptiveBaseline':'AdaptiveBaseline' in behavior,'CROWD_PERSISTENCE_SECS':'CROWD_PERSISTENCE_SECS' in behavior,'X-Test-Session-Id':'X-Test-Session-Id' in search}
+          failed=[name for name,ok in checks.items() if not ok]
+          if failed: raise SystemExit('Missing P1 source contracts: ' + ', '.join(failed))
           print('P1 source contract gate: PASS')
+          PY
+      - name: Validate asset security contracts
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          compose=Path('docker-compose.yml').read_text(encoding='utf-8')
+          snapshot=Path('api/routes/camera_snapshot.py').read_text(encoding='utf-8')
+          evidence=Path('api/routes/evidence_assets.py').read_text(encoding='utf-8')
+          runtime=Path('dashboard/src/runtimeGuards.js').read_text(encoding='utf-8')
+          checks={'SNAPSHOT_TOKEN_SECRET':'SNAPSHOT_TOKEN_SECRET' in compose and 'SNAPSHOT_TOKEN_SECRET' in snapshot,'snapshot-token endpoint':'/snapshot-token' in snapshot,'signed evidence endpoint':'/content-signed' in evidence and '/signed-token' in evidence,'EVIDENCE_STORAGE_PATH':'EVIDENCE_STORAGE_PATH' in compose and 'EVIDENCE_STORAGE_PATH' in evidence,'snapshot runtime token acquisition':'snapshot-token' in runtime}
+          failed=[k for k,v in checks.items() if not v]
+          if failed: raise SystemExit('Missing asset security contracts: '+', '.join(failed))
+          print('Asset security contract gate: PASS')
           PY
       - name: Validate repository hygiene
         shell: bash
