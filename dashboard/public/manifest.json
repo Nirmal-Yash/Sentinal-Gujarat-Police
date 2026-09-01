@@ -1,0 +1,11 @@
+{
+  "name": "Sentinel AI — Gujarat Police Operations",
+  "short_name": "Sentinel AI",
+  "start_url": "/feeds",
+  "display": "standalone",
+  "background_color": "#0a0a09",
+  "theme_color": "#0b0b0a",
+  "icons": [
+    {"src":"/sentinel-logo-mark.svg","sizes":"128x128","type":"image/svg+xml","purpose":"any maskable"}
+  ]
+}
