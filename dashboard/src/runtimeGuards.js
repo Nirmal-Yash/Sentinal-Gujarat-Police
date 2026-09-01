@@ -32,7 +32,7 @@ async function ensureSnapshotToken(key, originalFetch) {
   if (!match) return null
   const sessionToken = browserSessionToken()
   if (!sessionToken) return null
-  const request = originalFetch(`/api/cameras/${match[1]}/snapshot-token`, { headers: { Authorization: `Bearer ${sessionToken}` } })
+  const request = originalFetch(`/api/cameras/${match[1]}/snapshot-token`, { headers: { Authorization: `Bearer ${sessionToken}` })
     .then(async response => { if (!response.ok) return null; const payload = await response.json(); if (!payload?.token) return null; SNAPSHOT_TOKEN_CACHE.set(key, { token: payload.token, expiresAt: Date.now() + Math.max(30000, Number(payload.expires_in || 120) * 1000) }); return payload.token })
     .catch(() => null)
     .finally(() => SNAPSHOT_TOKEN_CACHE.delete(pendingKey))
