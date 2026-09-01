@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App.jsx'
+import ToastHost from './components/alerts/ToastHost.jsx'
 import './styles.css'
 import { installSentinelRuntimeGuards } from './runtimeGuards.js'
 
@@ -14,5 +15,6 @@ installSentinelRuntimeGuards()
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <App />
+    <ToastHost />
   </StrictMode>,
 )
