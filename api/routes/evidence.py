@@ -9,7 +9,7 @@ from auth import Principal, require_permission
 from database import get_db
 
 router = APIRouter(prefix="/evidence", tags=["evidence"])
-EVIDENCE_ROOT = Path(os.getenv("EVIDENCE_ROOT", "/evidence")).resolve()
+EVIDENCE_ROOT = Path(os.getenv("EVIDENCE_STORAGE_PATH", "/evidence")).resolve()
 
 class EvidenceCreate(BaseModel):
     event_id: str | None = Field(None, max_length=255)
