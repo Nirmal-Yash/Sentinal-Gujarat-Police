@@ -3,7 +3,7 @@ import os, uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import bcrypt, jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Cookie, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -23,6 +23,11 @@ ROLE_PERMISSIONS = {
     "ADMIN": {"camera:read", "camera:write", "alert:read", "alert:operate", "search:read", "report:read", "evidence:read", "evidence:create", "registry:admin", "audit:read"},
     "SUPERADMIN": {"camera:read", "camera:write", "alert:read", "alert:operate", "search:read", "report:read", "evidence:read", "evidence:create", "registry:admin", "audit:read", "system:admin"},
 }
+
+COOKIE_NAME = os.getenv("AUTH_COOKIE_NAME", "sentinel_session")
+COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "false").lower() == "true"
+COOKIE_SAMESITE = os.getenv("AUTH_COOKIE_SAMESITE", "lax").lower()
+COOKIE_MAX_AGE = max(300, TOKEN_HOURS * 3600)
 
 @dataclass(frozen=True)
 class Principal:
@@ -52,27 +57,18 @@ def issue_token(user_id: str, username: str, role: str) -> tuple[str, str, datet
 async def current_principal(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: AsyncSession = Depends(get_db),
+    session_token: str | None = Cookie(default=None, alias=COOKIE_NAME),
 ) -> Principal:
     if not AUTH_REQUIRED:
         return Principal(None, "local-development", "SUPERADMIN")
-    if not credentials or credentials.scheme.lower() != "bearer":
+    token = None
+    if credentials and credentials.scheme.lower() == "bearer":
+        token = credentials.credentials
+    elif session_token:
+        token = session_token
+    if not token:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Bearer token required")
-    return await principal_from_token(credentials.credentials, db)
-
-
-async def principal_from_token(token: str, db: AsyncSession) -> Principal:
-    """Validate a live JWT session for both HTTP and WebSocket transports."""
-    try:
-        claims = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id, jti, role = claims["sub"], claims["jti"], claims["role"]
-    except (jwt.PyJWTError, KeyError) as exc:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token") from exc
-    row = (await db.execute(text("""SELECT u.username, u.role FROM users u JOIN user_sessions s ON s.user_id=u.id
-        WHERE u.id=CAST(:uid AS uuid) AND s.jti=CAST(:jti AS uuid) AND u.is_active=TRUE
-          AND s.revoked=FALSE AND s.expires_at > NOW()"""), {"uid": user_id, "jti": jti})).mappings().first()
-    if not row or row["role"] != role:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session is no longer valid")
-    return Principal(user_id, row["username"], row["role"], jti)
+    return await principal_from_token(token, db)
 
 
 async def require_authenticated(principal: Principal = Depends(current_principal)) -> Principal:
