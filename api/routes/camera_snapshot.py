@@ -42,46 +42,31 @@ def _provider_id(row) -> str:
 @router.get("/{cam_id}/snapshot-token")
 async def snapshot_token(
     cam_id: uuid.UUID,
-    principal: Principal = Depends(require_authenticated),
+    _: Principal = Depends(require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
     row = await _camera(db, cam_id)
     provider_id = _provider_id(row)
     try:
-        token = issue_asset_token(
-            kind="snapshot",
-            resource=provider_id,
-            env_name=SNAPSHOT_TOKEN_SECRET_ENV,
-            ttl_seconds=int(os.getenv("SNAPSHOT_TOKEN_TTL_SECS", "120")),
-        )
+        ttl = int(os.getenv("SNAPSHOT_TOKEN_TTL_SECS", "120"))
+        token = issue_asset_token(kind="snapshot", resource=provider_id, env_name=SNAPSHOT_TOKEN_SECRET_ENV, ttl_seconds=ttl)
     except RuntimeError as exc:
         raise HTTPException(503, str(exc)) from exc
-    return {"camera_id": str(cam_id), "provider_id": provider_id, "token": token, "expires_in": int(os.getenv("SNAPSHOT_TOKEN_TTL_SECS", "120"))}
+    return {"camera_id": str(cam_id), "provider_id": provider_id, "token": token, "expires_in": ttl}
 
 
 @router.get("/{cam_id}/snapshot")
 async def snapshot(
     cam_id: uuid.UUID,
-    access_token: str | None = Query(None, min_length=1),
-    principal: Principal | None = Depends(require_authenticated),
+    access_token: str = Query(..., min_length=1),
     db: AsyncSession = Depends(get_db),
 ):
-    # Signed token is intended for browser media elements. Normal API callers
-    # may continue using the authenticated Sentinel session.
     row = await _camera(db, cam_id)
     provider_id = _provider_id(row)
-    if access_token:
-        try:
-            verify_asset_token(
-                token=access_token,
-                kind="snapshot",
-                resource=provider_id,
-                env_name=SNAPSHOT_TOKEN_SECRET_ENV,
-            )
-        except (RuntimeError, ValueError) as exc:
-            raise HTTPException(401, "Invalid or expired snapshot token") from exc
-    elif principal is None:
-        raise HTTPException(401, "Authentication required")
+    try:
+        verify_asset_token(token=access_token, kind="snapshot", resource=provider_id, env_name=SNAPSHOT_TOKEN_SECRET_ENV)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(401, "Invalid or expired snapshot token") from exc
 
     client = redis_lib.from_url(REDIS_URL, decode_responses=False)
     try:
