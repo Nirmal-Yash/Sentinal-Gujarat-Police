@@ -4,11 +4,11 @@ import os
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
+from auth import Principal, require_permission
 from database import Session
 from signed_asset_tokens import issue_asset_token, verify_asset_token
 
@@ -29,7 +29,10 @@ async def _get_evidence(evidence_id: uuid.UUID):
 
 
 @router.get("/{evidence_id}/signed-token")
-async def evidence_signed_token(evidence_id: uuid.UUID):
+async def evidence_signed_token(
+    evidence_id: uuid.UUID,
+    _: Principal = Depends(require_permission("evidence:read")),
+):
     row = await _get_evidence(evidence_id)
     try:
         ttl = int(os.getenv("EVIDENCE_TOKEN_TTL_SECS", "300"))
