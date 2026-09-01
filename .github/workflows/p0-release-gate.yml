@@ -17,8 +17,6 @@ env:
   SNAPSHOT_TOKEN_SECRET: ci-only-snapshot-signing-secret
   EVIDENCE_STORAGE_PATH: /tmp/sentinel-evidence
 
-actions: {}
-
 jobs:
   p0-backend-regression:
     name: P0 Backend Regression
@@ -68,8 +66,7 @@ jobs:
           docker exec "$POSTGRES_CONTAINER" psql -U sentinel -d sentinel_ci -c 'SELECT version();'
       - name: Bootstrap CI schema
         shell: bash
-        run: |
-          PGPASSWORD=sentinel psql -h 127.0.0.1 -U sentinel -d sentinel_ci -f database/init.sql
+        run: PGPASSWORD=sentinel psql -h 127.0.0.1 -U sentinel -d sentinel_ci -f database/init.sql
       - name: Apply versioned P1 migrations
         shell: bash
         run: |
