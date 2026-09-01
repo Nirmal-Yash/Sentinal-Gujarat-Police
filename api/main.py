@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import engine, Session, get_db
 from auth import AUTH_REQUIRED, SECRET_KEY, principal_from_token, hash_password
 from websocket_manager import manager, redis_alert_consumer
-from routes import cameras, camera_imports, alerts, watchlist, search, auth, reports, test, vendors, evidence, operations, test_alerts, cctv
+from routes import cameras, camera_snapshot, camera_imports, alerts, watchlist, search, auth, reports, test, vendors, evidence, operations, test_alerts, cctv
 from migrations import apply_migrations
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [API][%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -46,6 +46,9 @@ async def initialize_runtime() -> None:
             apply_migrations()
             if AUTH_REQUIRED and (SECRET_KEY or "").strip().lower() in INSECURE_SECRET_VALUES:
                 raise RuntimeError("AUTH_REQUIRED=true requires a strong non-placeholder SECRET_KEY")
+            snapshot_secret = (os.getenv("SNAPSHOT_TOKEN_SECRET", "") or "").strip()
+            if not snapshot_secret or snapshot_secret.lower() in INSECURE_SECRET_VALUES:
+                raise RuntimeError("SNAPSHOT_TOKEN_SECRET must be supplied and must not be a placeholder")
             async with Session() as db: await bootstrap_admin(db)
             log.info("API startup dependencies ready on attempt %s/%s.", attempt, STARTUP_RETRIES); return
         except Exception as exc:
@@ -64,6 +67,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Sentinel AI — Gujarat Police Innovation Challenge", version="1.0.0", description="AI-powered multi-camera surveillance platform", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.include_router(camera_snapshot.router)
 app.include_router(cameras.router); app.include_router(camera_imports.router); app.include_router(cctv.router); app.include_router(alerts.router); app.include_router(watchlist.router); app.include_router(search.router)
 app.include_router(auth.router); app.include_router(reports.router); app.include_router(test.router); app.include_router(test_alerts.router); app.include_router(vendors.router); app.include_router(evidence.router); app.include_router(operations.router)
 
@@ -85,7 +89,7 @@ async def health(): return {"status": "ok", "service": "sentinel-ai"}
 
 @app.get("/ready")
 async def ready(db: AsyncSession = Depends(get_db)):
-    checks = {"database": False, "redis": False, "authentication": False}
+    checks = {"database": False, "redis": False, "authentication": False, "snapshot_signing": False}
     try: await db.execute(text("SELECT 1")); checks["database"] = True
     except Exception as exc: log.warning("Readiness database check failed: %s", exc)
     try:
@@ -101,6 +105,10 @@ async def ready(db: AsyncSession = Depends(get_db)):
                 except Exception: pass
         checks["redis"] = await asyncio.to_thread(ping_redis)
     except Exception as exc: log.warning("Readiness Redis check failed: %s", exc)
+    try:
+        snapshot_secret = (os.getenv("SNAPSHOT_TOKEN_SECRET", "") or "").strip()
+        checks["snapshot_signing"] = bool(snapshot_secret) and snapshot_secret.lower() not in INSECURE_SECRET_VALUES
+    except Exception: checks["snapshot_signing"] = False
     if not all(checks.values()): raise HTTPException(status_code=503, detail={"status": "not_ready", "checks": checks})
     return {"status": "ready", "checks": checks}
 
