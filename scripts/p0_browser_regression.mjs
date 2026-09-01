@@ -18,6 +18,11 @@ function requireText(text, fragment, message) {
   else console.log(`[OK] ${message}`)
 }
 
+function requirePattern(text, pattern, message) {
+  if (!pattern.test(text)) failures.push(message)
+  else console.log(`[OK] ${message}`)
+}
+
 const runtime = read('dashboard/src/runtimeGuards.js')
 const main = read('dashboard/src/main.jsx')
 const cctv = read('api/routes/cctv.py')
@@ -30,7 +35,7 @@ requireText(runtime, "!/^\\/api\\/cameras\\/[^/]+\\/snapshot$/.test(url.pathname
 requireText(runtime, 'SNAPSHOT_INFLIGHT', 'concurrent snapshot requests are deduplicated')
 requireText(runtime, 'SNAPSHOT_CACHE.set(key, { timestamp: Date.now(), result })', 'snapshot failures are also throttled for 15 seconds')
 requireText(runtime, 'installCctvXHRAuth()', 'browser CCTV XHR authentication is installed')
-requireText(runtime, "parsed.origin === window.location.origin", 'CCTV authentication stays same-origin')
+requireText(runtime, 'parsed.origin === window.location.origin', 'CCTV authentication stays same-origin')
 requireText(runtime, "'Authorization', `Bearer ${token}`", 'browser attaches Sentinel JWT to CCTV XHRs')
 requireText(main, 'installSentinelRuntimeGuards()', 'runtime guards are installed by the application entrypoint')
 requireText(cctv, 'prefix="/cctv"', 'authenticated CCTV proxy route exists')
@@ -40,7 +45,11 @@ requireText(cctv, 'CCTV playback authentication required', 'CCTV proxy rejects u
 requireText(cctv, 'X-Content-Type-Options', 'CCTV proxy sets browser hardening headers')
 requireText(models, 'playback_id', 'camera playback uses an authoritative provider identifier')
 requireText(models, 'external_id', 'camera playback prefers external_id when it is cam01-style')
-requireText(models, 'value["hls_url"] = f"/api/cctv/{provider_id}/index.m3u8{token_query}"', 'camera API emits signed same-origin HLS URLs')
+requirePattern(
+  models,
+  /value\["hls_url"\]\s*=\s*f?["']\/api\/cctv\/\{provider_id\}\/index\.m3u8\{token_query\}/,
+  'camera API emits signed same-origin HLS URLs',
+)
 requireText(compose, 'CCTV_PASSWORD', 'Compose injects the server-side CCTV password')
 requireText(packageJson, '"hls.js"', 'dashboard retains HLS playback support')
 
