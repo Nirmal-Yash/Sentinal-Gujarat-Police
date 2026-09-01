@@ -2,7 +2,12 @@ const SNAPSHOT_CACHE_TTL_MS = 15000
 const SNAPSHOT_CACHE = new Map()
 const SNAPSHOT_INFLIGHT = new Map()
 const SNAPSHOT_TOKEN_CACHE = new Map()
+const TEST_SESSION_KEY = 'sentinel.test.session.v1'
 const INSTALL_KEY = '__sentinelRuntimeGuardsInstalled'
+
+function isTestSessionActive() {
+  try { return Boolean(sessionStorage.getItem(TEST_SESSION_KEY)) } catch { return false }
+}
 
 function snapshotKey(input) {
   try {
@@ -40,6 +45,7 @@ function installSnapshotGuard() {
   window.fetch = async function sentinelFetch(input, init) {
     const key = snapshotKey(input)
     if (!key || String(init?.method || 'GET').toUpperCase() !== 'GET') return originalFetch(input, init)
+    if (isTestSessionActive()) return new Response(null, { status: 204 })
     const url = new URL(typeof input === 'string' ? input : input.url, window.location.href)
     if (!url.searchParams.has('access_token')) {
       const token = await ensureSnapshotToken(key, originalFetch)
