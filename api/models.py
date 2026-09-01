@@ -1,4 +1,4 @@
-import os, time, uuid
+import os, time, uuid, re
 from datetime import datetime, date
 from typing import Any, Optional
 import jwt
@@ -30,6 +30,15 @@ class Camera(Base):
     def effective_height(self): return self.observed_height if self.observed_height is not None else self.height
     @property
     def effective_fps(self): return self.observed_source_fps if self.observed_source_fps is not None else (self.observed_fps if self.observed_fps is not None else self.fps)
+    @property
+    def playback_id(self):
+        """Canonical provider playback id: external_id cam01..cam30, then stream_id fallback."""
+        external = (self.external_id or "").strip()
+        if re.fullmatch(r"cam\d{2}", external, re.IGNORECASE):
+            return external.lower()
+        if self.stream_id is None:
+            return None
+        return f"cam{int(self.stream_id):02d}"
     @property
     def stream_url(self):
         if self.rtsp_url:
@@ -64,27 +73,29 @@ class CameraOut(BaseModel):
     @classmethod
     def complete_playback_endpoints(cls, value):
         stream_id=getattr(value,"stream_id",None)
-        if stream_id is None and isinstance(value,dict): stream_id=value.get("stream_id")
-        if stream_id is not None:
-            number=int(stream_id); cam_id=f"cam{number:02d}"; rtsp_host=os.getenv("RTSP_HOST_IP","103.250.160.189")
+        external_id=getattr(value,"external_id",None)
+        if isinstance(value,dict):
+            stream_id=value.get("stream_id")
+            external_id=value.get("external_id")
+        provider_id=None
+        if external_id and re.fullmatch(r"cam\d{2}", str(external_id).strip(), re.IGNORECASE):
+            provider_id=str(external_id).strip().lower()
+        elif stream_id is not None:
+            provider_id=f"cam{int(stream_id):02d}"
+        if provider_id:
+            number=int(provider_id[3:])
+            rtsp_host=os.getenv("RTSP_HOST_IP","103.250.160.189")
             if isinstance(value,dict): value=dict(value)
             else: value={name:getattr(value,name) for name in cls.model_fields if hasattr(value,name)}
-            # The browser cannot rely on the dashboard fetch wrapper's Bearer
-            # header for hls.js XHRs. Issue a short-lived signed playback token
-            # instead; this token grants access only to this camera's CCTV proxy.
-            secret = (os.getenv("SECRET_KEY", "") or "").strip()
-            playback_token = ""
+            secret=(os.getenv("SECRET_KEY","") or "").strip()
+            playback_token=""
             if secret:
-                playback_token = jwt.encode({
-                    "sub": "cctv-hls",
-                    "camera": cam_id,
-                    "exp": int(time.time()) + 300,
-                }, secret, algorithm="HS256")
-            token_query = f"?access_token={playback_token}" if playback_token else ""
-            value["hls_url"] = f"/api/cctv/{cam_id}/index.m3u8{token_query}"
-            if not value.get("rtsp_url"): value["rtsp_url"]=f"rtsp://{rtsp_host}:8554/stream/{cam_id}"
+                playback_token=jwt.encode({"sub":"cctv-hls","camera":provider_id,"exp":int(time.time())+300},secret,algorithm="HS256")
+            token_query=f"?access_token={playback_token}" if playback_token else ""
+            value["hls_url"]=f"/api/cctv/{provider_id}/index.m3u8{token_query}"
+            if not value.get("rtsp_url"): value["rtsp_url"]=f"rtsp://{rtsp_host}:8554/stream/{provider_id}"
             value["stream_url"]=value["rtsp_url"]
-            if not value.get("whep_url"): value["whep_url"]=f"http://{rtsp_host}:8889/stream/{cam_id}/whep"
+            if not value.get("whep_url"): value["whep_url"]=f"http://{rtsp_host}:8889/stream/{provider_id}/whep"
         return value
 
 class CameraCreate(BaseModel):
@@ -92,7 +103,7 @@ class CameraCreate(BaseModel):
 
 class AlertOut(BaseModel):
     model_config=ConfigDict(from_attributes=True)
-    id:uuid.UUID; cam_id:Optional[uuid.UUID]; alert_type:str; priority:str; confidence:float; entity_type:str; details:Any; acknowledged:bool; acknowledged_at:Optional[datetime]; acknowledged_by:Optional[str]; status:str; created_at:datetime; updated_at:datetime; resolved_at:Optional[datetime]; resolved_by:Optional[str]; closed_at:Optional[datetime]; closed_by:Optional[str]
+    id:uuid.UUID; cam_id:Optional[uuid.UUID]; alert_type:str; priority:str; confidence:float; entity_type:str; details:Any; acknowledged:bool; status:str; created_at:datetime; updated_at:datetime; acknowledged_at:Optional[datetime]; acknowledged_by:Optional[str]; resolved_at:Optional[datetime]; resolved_by:Optional[str]; closed_at:Optional[datetime]; closed_by:Optional[str]
 
 class WatchlistOut(BaseModel):
     model_config=ConfigDict(from_attributes=True)
