@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from evidence_capture import capture_snapshot
+from secure_storage import read_protected
 
 
 class FakeRedis:
@@ -28,7 +29,7 @@ class EvidenceCaptureTests(unittest.TestCase):
                 path, key, digest = captured
                 self.assertEqual(digest, expected_hash)
                 self.assertEqual(key, "alerts/2025/08/28/alert-1.jpg")
-                self.assertEqual(Path(path).read_bytes(), image)
+                self.assertEqual(read_protected(Path(path)), image)
 
     def test_missing_snapshot_returns_none(self):
         with patch("evidence_capture.EVIDENCE_ROOT", Path(tempfile.gettempdir())):
