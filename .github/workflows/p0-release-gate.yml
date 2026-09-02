@@ -1,0 +1,204 @@
+name: P0 release gate
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  POSTGRES_PASSWORD: sentinel
+  CCTV_PASSWORD: ci-placeholder
+  SECRET_KEY: ci-only-sentinel-signing-secret
+  JWT_REFRESH_SECRET_KEY: ci-only-refresh-signing-secret
+  SNAPSHOT_TOKEN_SECRET: ci-only-snapshot-signing-secret
+  FIELD_ENCRYPTION_KEY: ZmFrZS1jaS1maWVsZC1lbmNyeXB0aW9uLWtleS0zMmJ5dGVz
+  EVIDENCE_STORAGE_PATH: /tmp/sentinel-evidence
+  ALLOWED_ORIGINS: http://localhost:3000
+
+jobs:
+  p0-backend-regression:
+    name: P0 Backend Regression
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: sentinel_ci
+          POSTGRES_USER: sentinel
+          POSTGRES_PASSWORD: sentinel
+        ports: [5432:5432]
+        options: >-
+          --health-cmd="pg_isready -U sentinel -d sentinel_ci"
+          --health-interval=5s --health-timeout=3s --health-retries=20
+      redis:
+        image: redis:7-alpine
+        ports: [6379:6379]
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s --health-timeout=3s --health-retries=20
+    env:
+      DATABASE_URL: postgresql://sentinel:sentinel@localhost:5432/sentinel_ci
+      REDIS_URL: redis://localhost:6379
+      AUTH_REQUIRED: "true"
+      SECRET_KEY: ci-only-sentinel-signing-secret
+      JWT_REFRESH_SECRET_KEY: ci-only-refresh-signing-secret
+      SNAPSHOT_TOKEN_SECRET: ci-only-snapshot-signing-secret
+      FIELD_ENCRYPTION_KEY: ZmFrZS1jaS1maWVsZC1lbmNyeXB0aW9uLWtleS0zMmJ5dGVz
+      EVIDENCE_STORAGE_PATH: /tmp/sentinel-evidence
+      ALLOWED_ORIGINS: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - name: Install Python dependencies
+        run: python -m pip install --disable-pip-version-check -r api/requirements.txt
+      - name: Bootstrap CI schema and migrations
+        shell: bash
+        run: |
+          PGPASSWORD=sentinel psql -h 127.0.0.1 -U sentinel -d sentinel_ci -f database/init.sql
+          for migration in $(find database/migrations -maxdepth 1 -type f -name '*.sql' | sort -V); do
+            PGPASSWORD=sentinel psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U sentinel -d sentinel_ci -f "$migration"
+          done
+      - name: Compile Python services
+        shell: bash
+        run: |
+          python -m py_compile ingestion/*.py
+          python -m py_compile ai_engine/*.py ai_engine/tests/*.py
+          python -m py_compile intelligence/*.py intelligence/test_*.py
+          python -m py_compile api/*.py api/routes/*.py
+          python -m py_compile scripts/p1_regression.py
+      - name: Run ANPR regression
+        working-directory: ai_engine
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Run intelligence regressions
+        working-directory: intelligence
+        run: python -m unittest test_evidence_capture.py test_sighting_store.py -v
+      - name: Run P1 intelligence consistency regression
+        run: python scripts/p1_regression.py
+      - name: Run P0 runtime E2E
+        shell: bash
+        run: |
+          PGPASSWORD=sentinel psql -h 127.0.0.1 -U sentinel -d sentinel_ci -c 'DROP DATABASE IF EXISTS sentinel_p0_ci WITH (FORCE);'
+          PGPASSWORD=sentinel psql -h 127.0.0.1 -U sentinel -d sentinel_ci -c 'CREATE DATABASE sentinel_p0_ci;'
+          DATABASE_URL=postgresql://sentinel:sentinel@localhost:5432/sentinel_p0_ci REDIS_URL=redis://localhost:6379 SECRET_KEY=ci-only-sentinel-signing-secret SNAPSHOT_TOKEN_SECRET=ci-only-snapshot-signing-secret JWT_REFRESH_SECRET_KEY=ci-only-refresh-signing-secret FIELD_ENCRYPTION_KEY=ZmFrZS1jaS1maWVsZC1lbmNyeXB0aW9uLWtleS0zMmJ5dGVz python scripts/p0_runtime_e2e.py
+      - name: Run ANPR benchmark smoke
+        run: python scripts/anpr_benchmark.py scripts/fixtures/anpr_benchmark_smoke.csv --max-error-rate 0.50
+      - name: Run registry load smoke
+        run: python scripts/registry_load_smoke.py
+      - name: Validate refactor invariants
+        run: python scripts/validate_refactor.py
+      - name: Validate security contracts
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          checks = {
+            'security module': Path('api/security_hardening.py').is_file(),
+            'security migration': Path('database/migrations/022_security_hardening.sql').is_file(),
+            'separate refresh secret': 'JWT_REFRESH_SECRET_KEY' in Path('api/auth.py').read_text(),
+            '15 minute access token': 'ACCESS_TOKEN_EXPIRE_MINUTES' in Path('api/auth.py').read_text(),
+            'refresh rotation': 'revoked_tokens' in Path('api/routes/auth.py').read_text(),
+            'session limit': 'MAX_SESSIONS_PER_USER' in Path('api/auth.py').read_text(),
+            'lockout': 'LOCKOUT_USER_THRESHOLD' in Path('api/auth.py').read_text(),
+            'SSRF guard': 'validate_external_url' in Path('api/security_hardening.py').read_text(),
+            'size limits': 'RequestSizeLimitMiddleware' in Path('api/security_hardening.py').read_text(),
+            'security headers': 'Content-Security-Policy' in Path('api/security_hardening.py').read_text(),
+            'field encryption': 'FieldEncryption' in Path('api/security_hardening.py').read_text(),
+            'db pre-ping': 'pool_pre_ping=True' in Path('api/database.py').read_text(),
+          }
+          failed=[k for k,v in checks.items() if not v]
+          if failed: raise SystemExit('Missing security contracts: '+', '.join(failed))
+          print('Security contract gate: PASS')
+          PY
+      - name: Validate Compose
+        run: docker compose config -q
+
+  p0-dashboard-build:
+    name: P0 Dashboard Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: "24"}
+      - name: Install dependencies
+        working-directory: dashboard
+        run: npm install --no-audit --no-fund
+      - name: Run browser regression
+        run: node scripts/p0_browser_regression.mjs
+      - name: Build dashboard
+        working-directory: dashboard
+        run: npm run build
+
+  p0-release-contract:
+    name: P0 Release Contract
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_PASSWORD: sentinel
+      CCTV_PASSWORD: ci-placeholder
+      SECRET_KEY: ci-only-sentinel-signing-secret
+      JWT_REFRESH_SECRET_KEY: ci-only-refresh-signing-secret
+      SNAPSHOT_TOKEN_SECRET: ci-only-snapshot-signing-secret
+      FIELD_ENCRYPTION_KEY: ZmFrZS1jaS1maWVsZC1lbmNyeXB0aW9uLWtleS0zMmJ5dGVz
+      EVIDENCE_STORAGE_PATH: /tmp/sentinel-evidence
+      ALLOWED_ORIGINS: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -r api/requirements.txt
+      - name: Validate current CCTV architecture
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          roots=[Path('api'),Path('ai_engine'),Path('ingestion'),Path('intelligence'),Path('docker-compose.yml'),Path('.env.example')]
+          needle='live'+'.corp8.cloud'; bad=[]
+          for root in roots:
+            paths=[root] if root.is_file() else root.rglob('*')
+            for p in paths:
+              if p.is_file() and p.suffix.lower() in {'.py','.yml','.yaml','.env','.example','.json'} and needle in p.read_text(encoding='utf-8',errors='ignore'):
+                bad.append(p.as_posix())
+          if bad: raise SystemExit('Deprecated CCTV host references found: '+', '.join(bad))
+          compose=Path('docker-compose.yml').read_text(encoding='utf-8')
+          if 'cctv.corp8.cloud' not in compose: raise SystemExit('Current CCTV host missing from Compose')
+          print('Current CCTV architecture gate: PASS')
+          PY
+      - name: Validate P0 source contracts
+        run: python scripts/final_integration_gate.py
+      - name: Validate asset security contracts
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          checks={
+            'snapshot secret':'SNAPSHOT_TOKEN_SECRET' in Path('docker-compose.yml').read_text(),
+            'snapshot endpoint':'/snapshot-token' in Path('api/routes/camera_snapshot.py').read_text(),
+            'signed evidence':'/content-signed' in Path('api/routes/evidence_assets.py').read_text() and '/signed-token' in Path('api/routes/evidence_assets.py').read_text(),
+            'evidence path':'EVIDENCE_STORAGE_PATH' in Path('docker-compose.yml').read_text(),
+            'runtime snapshot token':'snapshot-token' in Path('dashboard/src/runtimeGuards.js').read_text(),
+          }
+          failed=[k for k,v in checks.items() if not v]
+          if failed: raise SystemExit('Missing asset contracts: '+', '.join(failed))
+          print('Asset security contract gate: PASS')
+          PY
+      - name: Validate repository hygiene
+        shell: bash
+        run: |
+          test -z "$(git ls-files .env)"
+          ! git ls-files -z | grep -F -z -E '(^|/)__pycache__/|\.pyc$'
+      - name: Validate exactly three P0 checks
+        shell: bash
+        run: |
+          test "$(grep -c '^  p0-.*:$' .github/workflows/p0-release-gate.yml)" -eq 3
+          grep -q '^    name: P0 Backend Regression$' .github/workflows/p0-release-gate.yml
+          grep -q '^    name: P0 Dashboard Build$' .github/workflows/p0-release-gate.yml
+          grep -q '^    name: P0 Release Contract$' .github/workflows/p0-release-gate.yml
+          echo 'Exactly three P0 release checks declared: PASS'
+      - name: Validate Compose configuration
+        run: docker compose config -q
