@@ -3,7 +3,11 @@ from __future__ import annotations
 import base64, hashlib, os
 from pathlib import Path
 from typing import Optional, Tuple
-from secure_storage import write_protected
+
+try:
+    from .secure_storage import write_protected
+except ImportError:
+    from secure_storage import write_protected
 
 EVIDENCE_ROOT = Path(os.getenv("EVIDENCE_STORAGE_PATH", os.getenv("EVIDENCE_ROOT", "/evidence")))
 MAX_SNAPSHOT_BYTES = int(os.getenv("MAX_EVIDENCE_BYTES", str(4 * 1024 * 1024)))
