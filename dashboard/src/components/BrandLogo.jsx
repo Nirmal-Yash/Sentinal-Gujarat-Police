@@ -1,5 +1,5 @@
 export default function BrandLogo({ compact = false, className = '', alt = 'Sentinel AI — Gujarat Police Operations', ...props }) {
-  const src = compact ? '/sentinel-logo-mark.svg' : '/sentinel-logo.svg'
+  const src = '/gujarat-police-logo-png_seeklogo-611297.png'
   return (
     <img
       src={src}
