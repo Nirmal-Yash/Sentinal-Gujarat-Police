@@ -53,6 +53,9 @@ async def current_principal(credentials: HTTPAuthorizationCredentials | None = D
     token = credentials.credentials if credentials and credentials.scheme.lower() == "bearer" else session_token
     if not token: raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Bearer token required")
     return await principal_from_token(token, db)
+async def require_authenticated(principal: Principal = Depends(current_principal)) -> Principal:
+    """Compatibility dependency for routers that require an authenticated principal."""
+    return principal
 async def principal_from_token(token: str, db: AsyncSession) -> Principal:
     try:
         claims = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
