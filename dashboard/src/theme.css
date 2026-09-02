@@ -316,3 +316,55 @@ html[data-theme="light"] .camera-video-stage {
     transition: none !important;
   }
 }
+
+/* Shared contrast contract for legacy inline skins and third-party map controls. */
+.sentinel-map-search-results,
+.sentinel-map-search-result,
+.sentinel-map-search-empty {
+  background: var(--theme-surface) !important;
+  border-color: var(--theme-border) !important;
+  color: var(--theme-text) !important;
+}
+.sentinel-map-search-result:hover,
+.sentinel-map-search-result:focus-visible { background: var(--accent-soft) !important; color: var(--theme-text) !important; }
+.sentinel-map-search-muted,
+.sentinel-map-search-icon { color: var(--theme-muted) !important; }
+.sentinel-map-search .ui-input { background: var(--theme-surface) !important; color: var(--theme-text) !important; border-color: var(--theme-border) !important; }
+.sentinel-map-container { background: var(--theme-surface-3) !important; }
+.sentinel-map-notice,
+.sentinel-map-count { background: var(--theme-surface) !important; background: color-mix(in srgb, var(--theme-surface) 94%, transparent) !important; color: var(--theme-text) !important; border-color: var(--theme-border) !important; }
+.leaflet-control button,
+.sentinel-map-control { background: var(--theme-surface) !important; color: var(--theme-text) !important; border-color: var(--theme-border) !important; }
+.leaflet-control button:hover,
+.sentinel-map-control:hover { background: var(--accent-soft) !important; color: var(--theme-accent-strong) !important; }
+.leaflet-control { color: var(--theme-text) !important; }
+.leaflet-control[style] { background: var(--theme-surface) !important; border-color: var(--theme-border) !important; }
+.leaflet-control-layers,
+.leaflet-control-scale-line,
+.sentinel-map-legend { background: var(--theme-surface) !important; background: color-mix(in srgb, var(--theme-surface) 94%, transparent) !important; color: var(--theme-text) !important; border-color: var(--theme-border) !important; }
+.leaflet-control-layers label,
+.leaflet-control-layers-list { color: var(--theme-text) !important; }
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip { background: var(--theme-surface) !important; color: var(--theme-text) !important; }
+.leaflet-popup-content { color: var(--theme-text) !important; }
+.leaflet-popup-content span[style*="#555"],
+.leaflet-popup-content span[style*="#666"],
+.leaflet-popup-content span[style*="#777"] { color: var(--theme-text-2) !important; }
+
+/* Alerts and evidence drawers must follow the active theme instead of the legacy black skin. */
+.alert-drawer,
+.alert-evidence-card { background: var(--theme-surface) !important; color: var(--theme-text) !important; }
+.alert-drawer-header { background: var(--theme-surface-2) !important; color: var(--theme-text) !important; }
+.alert-evidence-card { background: var(--theme-surface-2) !important; }
+.alert-error,
+.alerts-error { color: var(--theme-text) !important; }
+.plate-highlight { background: var(--theme-surface-3) !important; color: var(--theme-text) !important; border: 1px solid var(--theme-border-strong); }
+.alert-close,
+.alert-actions button { color: var(--theme-text) !important; }
+
+/* Accent actions use a readable foreground in both themes. */
+.ui-button-default,
+.sentinel-map-search label,
+button[style*="var(--accent)"] { color: #140b04 !important; }
+html[data-theme="light"] .ui-button-default,
+html[data-theme="light"] .ui-button-default:hover { color: #140b04 !important; }
