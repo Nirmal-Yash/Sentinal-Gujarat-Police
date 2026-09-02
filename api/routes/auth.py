@@ -1,4 +1,6 @@
 import os
+import secrets
+import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, Cookie
 from pydantic import BaseModel, Field
@@ -10,6 +12,7 @@ from rate_limit import rate_limit
 from security_hardening import enforce_password_policy
 
 router = APIRouter(prefix='/auth', tags=['auth'])
+log = logging.getLogger(__name__)
 
 class Login(BaseModel):
     username: str = Field(min_length=1, max_length=128)
@@ -25,6 +28,10 @@ def set_auth_cookies(response: Response, access_token: str, access_expires, refr
     if refresh_token and refresh_expires:
         refresh_max = max(300, int((refresh_expires - datetime.now(timezone.utc)).total_seconds()))
         response.set_cookie(REFRESH_COOKIE_NAME, refresh_token, max_age=min(refresh_max, REFRESH_TOKEN_HOURS * 3600), httponly=True, secure=COOKIE_SECURE, samesite='strict', path='/api/auth/refresh')
+    # Double-submit CSRF cookie is intentionally readable by the dashboard so it
+    # can protect cookie-authenticated state-changing requests. Login itself is
+    # exempt because no authenticated session exists yet.
+    response.set_cookie('sentinel_csrf', secrets.token_urlsafe(32), max_age=min(COOKIE_MAX_AGE, REFRESH_TOKEN_HOURS * 3600), httponly=False, secure=COOKIE_SECURE, samesite=COOKIE_SAMESITE, path='/')
 
 
 @router.get('/config')
@@ -35,20 +42,40 @@ async def config(db: AsyncSession = Depends(get_db)):
 
 @router.post('/login', dependencies=[Depends(rate_limit('auth-login', 5, 60))])
 async def login(body: Login, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
-    if await is_locked(body.username.strip(), request, db):
-        await record_attempt(body.username, request, False, db); await db.commit()
+    username = body.username.strip()
+    if await is_locked(username, request, db):
+        await record_attempt(username, request, False, db)
+        await db.commit()
         raise HTTPException(423, 'Account temporarily locked due to repeated failed attempts')
-    row = (await db.execute(text("SELECT id, username, password_hash, role FROM users WHERE username=:username AND is_active=TRUE"), {'username': body.username.strip()})).mappings().first()
+
+    row = (await db.execute(text("SELECT id, username, password_hash, role FROM users WHERE username=:username AND is_active=TRUE"), {'username': username})).mappings().first()
     if not row or not verify_password(body.password, row['password_hash']):
-        await record_attempt(body.username, request, False, db); await db.commit()
+        await record_attempt(username, request, False, db)
+        await db.commit()
         raise HTTPException(401, 'Invalid username or password')
-    await record_attempt(body.username, request, True, db)
-    await enforce_session_limit(str(row['id']), db)
-    session = (await db.execute(text("INSERT INTO user_sessions(user_id,jti,expires_at) VALUES(CAST(:uid AS uuid),CAST(:jti AS uuid),:expires) RETURNING id"), {'uid': str(row['id']), 'jti': str(__import__('uuid').uuid4()), 'expires': datetime.now(timezone.utc)})).mappings().one()
-    access, access_jti, access_expires = issue_access_token(str(row['id']), row['username'], row['role'], str(session['id']))
-    await db.execute(text("UPDATE user_sessions SET jti=CAST(:jti AS uuid),expires_at=:expires WHERE id=CAST(:sid AS uuid)"), {'sid': str(session['id']), 'jti': access_jti, 'expires': access_expires})
-    refresh, refresh_jti, refresh_expires = issue_refresh_token(str(row['id']), str(session['id']))
-    await db.commit()
+
+    try:
+        await record_attempt(username, request, True, db)
+        await enforce_session_limit(str(row['id']), db)
+
+        # Create the logical session first, then replace its temporary JTI/expiry
+        # with the access-token values in the same transaction. This keeps the
+        # session table and JWT claims atomic.
+        session = (await db.execute(text("INSERT INTO user_sessions(user_id,jti,expires_at) VALUES(CAST(:uid AS uuid),CAST(:jti AS uuid),:expires) RETURNING id"), {'uid': str(row['id']), 'jti': str(__import__('uuid').uuid4()), 'expires': datetime.now(timezone.utc)})).mappings().one()
+        access, access_jti, access_expires = issue_access_token(str(row['id']), row['username'], row['role'], str(session['id']))
+        await db.execute(text("UPDATE user_sessions SET jti=CAST(:jti AS uuid),expires_at=:expires WHERE id=CAST(:sid AS uuid)"), {'sid': str(session['id']), 'jti': access_jti, 'expires': access_expires})
+        refresh, refresh_jti, refresh_expires = issue_refresh_token(str(row['id']), str(session['id']))
+        await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as exc:
+        await db.rollback()
+        # Do not expose database/JWT internals to the browser. A 503 makes the
+        # failure explicit while keeping the auth boundary fail-closed.
+        log.exception('Authentication transaction failed for username=%s', username)
+        raise HTTPException(503, 'Authentication service temporarily unavailable') from exc
+
     set_auth_cookies(response, access, access_expires, refresh, refresh_expires)
     return {'access_token': access, 'token_type': 'bearer', 'expires_at': access_expires, 'user': {'id': str(row['id']), 'username': row['username'], 'role': row['role']}, 'refresh_expires_at': refresh_expires}
 
@@ -85,7 +112,7 @@ async def refresh(response: Response, refresh_token: str | None = Cookie(default
 async def logout(response: Response, principal: Principal = Depends(current_principal), db: AsyncSession = Depends(get_db)):
     if principal.jti:
         await db.execute(text('UPDATE user_sessions SET revoked=TRUE WHERE jti=CAST(:jti AS uuid)'), {'jti': principal.jti}); await db.commit()
-    response.delete_cookie(COOKIE_NAME, path='/'); response.delete_cookie(REFRESH_COOKIE_NAME, path='/api/auth/refresh')
+    response.delete_cookie(COOKIE_NAME, path='/'); response.delete_cookie(REFRESH_COOKIE_NAME, path='/api/auth/refresh'); response.delete_cookie('sentinel_csrf', path='/')
     return {'status': 'logged_out'}
 
 @router.get('/me')
