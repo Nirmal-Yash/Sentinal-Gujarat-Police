@@ -15,6 +15,19 @@
   <link rel="apple-touch-icon" href="/gujarat-police-logo-png_seeklogo-611297.png"/>
   <link rel="manifest" href="/manifest.json"/>
   <title>Sentinel AI — Gujarat Police</title>
+  <script>
+    (() => {
+      try {
+        const stored = localStorage.getItem('sentinel_theme')
+        const theme = stored === 'light' || stored === 'dark'
+          ? stored
+          : (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+        document.documentElement.dataset.theme = theme
+        document.documentElement.classList.toggle('dark', theme === 'dark')
+        document.documentElement.style.colorScheme = theme
+      } catch {}
+    })()
+  </script>
   <style>
     *, *::before,*::after{box-sizing:border-box;margin:0;padding:0}
     :root{--bg:#0a0a09;--surface:#10100f;--surface2:#161513;--surface3:#1c1a17;--border:#2b2925;--border-strong:#3a352d;--text:#f3f0e8;--text2:#9d988e;--accent:#f59e0b;--accent-soft:rgba(245,158,11,.12);--accent-border:rgba(245,158,11,.38);--high:#ef4444;--medium:#eab308;--low:#22c55e;--green:#22c55e;--red:#ef4444;--yellow:#eab308;--orange:#f97316;--shadow:0 18px 55px rgba(0,0,0,.38);--radius:10px}
