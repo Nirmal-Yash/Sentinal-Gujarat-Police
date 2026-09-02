@@ -7,13 +7,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import engine, Session, get_db
-from auth import AUTH_REQUIRED, SECRET_KEY, principal_from_token, hash_password
+from auth import AUTH_REQUIRED, SECRET_KEY, REFRESH_SECRET, principal_from_token, hash_password
 from websocket_manager import manager, redis_alert_consumer
 from routes import cameras, camera_snapshot, camera_imports, alerts, watchlist, search, auth, reports, test, vendors, evidence, evidence_assets, operations, test_alerts, cctv
 from migrations import apply_migrations
+from security_hardening import SecurityHeadersMiddleware, RequestSizeLimitMiddleware, verify_cookie_csrf
+from fastapi import Request
+from fastapi.responses import Response
+import uuid
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [API][%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
-CORS_ORIGINS = [item.strip() for item in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",") if item.strip()]
+CORS_ORIGINS = [item.strip() for item in os.getenv("ALLOWED_ORIGINS", os.getenv("CORS_ORIGINS", "http://localhost:3000")).split(",") if item.strip()]
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 BOOTSTRAP_ADMIN_USERNAME = os.getenv("BOOTSTRAP_ADMIN_USERNAME", "").strip()
 BOOTSTRAP_ADMIN_PASSWORD = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")
@@ -21,7 +26,7 @@ BOOTSTRAP_ADMIN_ROLE = os.getenv("BOOTSTRAP_ADMIN_ROLE", "SUPERADMIN").upper()
 BOOTSTRAP_LOCK_KEY = "sentinel:bootstrap-admin:v1"
 STARTUP_RETRIES = max(1, int(os.getenv("STARTUP_RETRIES", "30")))
 STARTUP_RETRY_DELAY = max(1.0, float(os.getenv("STARTUP_RETRY_DELAY", "2")))
-INSECURE_SECRET_VALUES = {"", "change-me", "changeme", "sentinel-change-in-production", "replace-me", "replace-with-long-random-secret"}
+INSECURE_SECRET_VALUES = {"", "change-me", "changeme", "sentinel-change-in-production", "replace-me", "replace-with-long-random-secret", "ci-only-sentinel-signing-secret", "ci-only-snapshot-signing-secret"}
 
 async def bootstrap_admin(db: AsyncSession) -> None:
     await db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"), {"lock_key": BOOTSTRAP_LOCK_KEY})
@@ -46,6 +51,9 @@ async def initialize_runtime() -> None:
             apply_migrations()
             if AUTH_REQUIRED and (SECRET_KEY or "").strip().lower() in INSECURE_SECRET_VALUES:
                 raise RuntimeError("AUTH_REQUIRED=true requires a strong non-placeholder SECRET_KEY")
+            refresh_secret = (REFRESH_SECRET or "").strip()
+            if AUTH_REQUIRED and (not refresh_secret or refresh_secret.lower() in INSECURE_SECRET_VALUES or refresh_secret == SECRET_KEY):
+                raise RuntimeError("AUTH_REQUIRED=true requires JWT_REFRESH_SECRET_KEY distinct from SECRET_KEY")
             snapshot_secret = (os.getenv("SNAPSHOT_TOKEN_SECRET", "") or "").strip()
             if not snapshot_secret or snapshot_secret.lower() in INSECURE_SECRET_VALUES:
                 raise RuntimeError("SNAPSHOT_TOKEN_SECRET must be supplied and must not be a placeholder")
@@ -66,7 +74,20 @@ async def lifespan(app: FastAPI):
     await engine.dispose()
 
 app = FastAPI(title="Sentinel AI — Gujarat Police Innovation Challenge", version="1.0.0", description="AI-powered multi-camera surveillance platform", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(RequestSizeLimitMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_credentials=True, allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], allow_headers=["Authorization", "Content-Type", "X-Test-Session-Id", "X-CSRF-Token"], expose_headers=["X-Request-Id"], max_age=600)
+
+@app.middleware("http")
+async def csrf_boundary(request: Request, call_next):
+    # Bearer-authenticated API clients are not exposed to browser cookie CSRF.
+    # Cookie-only browser mutations must supply the double-submit token.
+    csrf_cookie = request.cookies.get("sentinel_csrf")
+    verify_cookie_csrf(request, csrf_cookie)
+    response = await call_next(request)
+    response.headers.setdefault("X-Request-Id", str(uuid.uuid4()))
+    return response
+
 app.include_router(camera_snapshot.router)
 app.include_router(cameras.router); app.include_router(camera_imports.router); app.include_router(cctv.router); app.include_router(alerts.router); app.include_router(watchlist.router); app.include_router(search.router)
 app.include_router(auth.router); app.include_router(reports.router); app.include_router(test.router); app.include_router(test_alerts.router); app.include_router(vendors.router); app.include_router(evidence_assets.router); app.include_router(evidence.router); app.include_router(operations.router)
