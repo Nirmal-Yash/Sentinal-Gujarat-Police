@@ -4,7 +4,7 @@ const ROOT=process.cwd(),failures=[]
 function read(p){const file=path.join(ROOT,p);if(!fs.existsSync(file)){failures.push(`${p} is missing`);return ''}return fs.readFileSync(file,'utf8')}
 function text(t,f,m){if(!t.includes(f))failures.push(m);else console.log(`[OK] ${m}`)}
 function pattern(t,p,m){if(!p.test(t))failures.push(m);else console.log(`[OK] ${m}`)}
-const runtime=read('dashboard/src/runtimeGuards.js'),main=read('dashboard/src/main.jsx'),theme=read('dashboard/src/theme.css'),themeHook=read('dashboard/src/hooks/useTheme.js'),cctv=read('api/routes/cctv.py'),models=read('api/models.py'),compose=read('docker-compose.yml'),pkg=read('dashboard/package.json'),workspace=read('dashboard/src/components/AlertWorkspace.jsx'),status=read('dashboard/src/components/alerts/AlertStatusBadge.jsx'),type=read('dashboard/src/components/alerts/AlertTypeBadge.jsx'),date=read('dashboard/src/components/alerts/AlertDateFilter.jsx'),toast=read('dashboard/src/components/alerts/ToastHost.jsx'),snap=read('api/routes/camera_snapshot.py'),evidence=read('api/routes/evidence_assets.py'),cameraRegistry=read('dashboard/src/components/CameraRegistryModal.jsx'),testDiag=read('dashboard/src/components/TestDiagnosticsModal.jsx'),bell=read('dashboard/src/components/NotificationBell.jsx'),mapNav=read('dashboard/src/mapNavigation.js'),mapSearch=read('dashboard/src/components/MapSearch.jsx'),index=read('dashboard/index.html'),navbar=read('dashboard/src/components/Navbar.jsx'),login=read('dashboard/src/components/LoginModal.jsx'),manifest=read('dashboard/public/manifest.json'),envExample=read('.env.example'),interactionCss=read('dashboard/src/interactionEffects.css'),interactionStates=read('dashboard/src/components/ui/InteractionStates.jsx')
+const runtime=read('dashboard/src/runtimeGuards.js'),main=read('dashboard/src/main.jsx'),theme=read('dashboard/src/theme.css'),themeHook=read('dashboard/src/hooks/useTheme.js'),cctv=read('api/routes/cctv.py'),models=read('api/models.py'),compose=read('docker-compose.yml'),pkg=read('dashboard/package.json'),workspace=read('dashboard/src/components/AlertWorkspace.jsx'),status=read('dashboard/src/components/alerts/AlertStatusBadge.jsx'),type=read('dashboard/src/components/alerts/AlertTypeBadge.jsx'),date=read('dashboard/src/components/alerts/AlertDateFilter.jsx'),toast=read('dashboard/src/components/alerts/ToastHost.jsx'),snap=read('api/routes/camera_snapshot.py'),evidence=read('api/routes/evidence_assets.py'),cameraRegistry=read('dashboard/src/components/CameraRegistryModal.jsx'),testDiag=read('dashboard/src/components/TestDiagnosticsModal.jsx'),bell=read('dashboard/src/components/NotificationBell.jsx'),mapNav=read('dashboard/src/mapNavigation.js'),mapSearch=read('dashboard/src/components/MapSearch.jsx'),index=read('dashboard/index.html'),navbar=read('dashboard/src/components/Navbar.jsx'),login=read('dashboard/src/components/LoginModal.jsx'),brandLogo=read('dashboard/src/components/BrandLogo.jsx'),manifest=read('dashboard/public/manifest.json'),envExample=read('.env.example'),interactionCss=read('dashboard/src/interactionEffects.css'),interactionStates=read('dashboard/src/components/ui/InteractionStates.jsx')
 text(runtime,'SNAPSHOT_CACHE_TTL_MS = 15000','snapshot fallback cache is 15 seconds')
 text(runtime,'SNAPSHOT_INFLIGHT','concurrent snapshot requests are deduplicated')
 text(runtime,'snapshot-token','snapshot fallback obtains a signed token')
@@ -12,6 +12,8 @@ text(runtime,'SNAPSHOT_TOKEN_CACHE','snapshot signing tokens are cached safely')
 text(main,'installSentinelRuntimeGuards()','runtime guards are installed by the application entrypoint')
 text(main,"./theme.css",'canonical theme stylesheet is loaded')
 text(main,'applyTheme(resolveInitialTheme(), { announce: false })','theme is applied before React paints')
+text(index,"localStorage.getItem('sentinel_theme')",'first-paint theme bootstrap reads persisted theme')
+text(index,"document.documentElement.dataset.theme = theme",'first-paint theme bootstrap sets canonical DOM theme')
 text(theme,'html[data-theme="dark"]','theme stylesheet defines explicit dark mode')
 text(theme,'html[data-theme="light"]','theme stylesheet defines explicit light mode')
 text(theme,'--theme-surface','theme uses canonical surface tokens')
@@ -20,6 +22,7 @@ text(themeHook,'localStorage.getItem(STORAGE_KEY)','theme preference is persiste
 text(themeHook,'document.documentElement.dataset.theme = next','theme state is applied to the root DOM attribute')
 text(themeHook,'document.startViewTransition','theme transition is supported')
 text(themeHook,'prefers-reduced-motion','theme transition respects reduced-motion preference')
+text(brandLogo,'const src = \'/gujarat-police-logo-png_seeklogo-611297.png\'','central brand component uses only the new logo')
 text(cctv,'prefix="/cctv"','authenticated CCTV proxy route exists')
 text(cctv,'Invalid or expired CCTV playback token','CCTV playback token validation exists')
 text(cctv,'principal_from_token','CCTV proxy accepts the authenticated Sentinel session')
@@ -81,7 +84,7 @@ text(manifest,NEW_LOGO,'PWA manifest points to the new logo asset')
 for(const legacy of ['/sentinel-logo-mark.svg','/sentinel-logo.svg']){
   const asset=path.join(ROOT,'dashboard/public',legacy.slice(1))
   if(fs.existsSync(asset)) failures.push(`legacy logo asset remains: ${legacy}`)
-  if(index.includes(legacy)||navbar.includes(legacy)||login.includes(legacy)||manifest.includes(legacy)) failures.push(`legacy logo reference remains: ${legacy}`)
+  if(index.includes(legacy)||navbar.includes(legacy)||login.includes(legacy)||manifest.includes(legacy)||brandLogo.includes(legacy)) failures.push(`legacy logo reference remains: ${legacy}`)
 }
 if(!fs.existsSync(path.join(ROOT,'dashboard/public',NEW_LOGO.slice(1))))failures.push('new Gujarat Police logo asset is missing')
 else console.log('[OK] new Gujarat Police logo asset exists')
