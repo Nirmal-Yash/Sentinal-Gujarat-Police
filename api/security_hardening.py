@@ -160,11 +160,30 @@ def verify_cookie_csrf(request: Request, csrf_cookie: str | None) -> None:
         raise HTTPException(status_code=403, detail="CSRF token required")
 
 
+def fernet_from_secret(key: str | None) -> Fernet | None:
+    """Build a Fernet instance from current or legacy deployment key material."""
+    key = (key or "").strip()
+    if not key:
+        return None
+    if key.lower() in INSECURE_VALUES:
+        raise ValueError("FIELD_ENCRYPTION_KEY must not be a placeholder")
+    try:
+        return Fernet(key.encode())
+    except (ValueError, TypeError) as exc:
+        if len(key) < 32:
+            raise ValueError("FIELD_ENCRYPTION_KEY must be a Fernet key or a 32+ character secret") from exc
+        return Fernet(base64.urlsafe_b64encode(hashlib.sha256(key.encode()).digest()))
+
+
 class FieldEncryption:
     """Application-level encryption for sensitive non-indexed fields/artifacts."""
     def __init__(self) -> None:
+        self._fernet = None
         key = os.getenv("FIELD_ENCRYPTION_KEY", "").strip()
-        self._fernet = Fernet(key.encode()) if key else None
+        if key:
+            # Older local deployments used a longer URL-safe secret. Keep
+            # those installations readable without changing configured values.
+            self._fernet = fernet_from_secret(key)
 
     @property
     def enabled(self) -> bool:

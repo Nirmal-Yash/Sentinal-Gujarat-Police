@@ -7,13 +7,14 @@ from sqlalchemy import text
 from auth import Principal, require_permission
 from database import Session
 from signed_asset_tokens import issue_asset_token, verify_asset_token
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import InvalidToken
+from security_hardening import fernet_from_secret
 
 router = APIRouter(prefix="/evidence", tags=["evidence-assets"])
 EVIDENCE_ROOT = Path(os.getenv("EVIDENCE_STORAGE_PATH", "/evidence")).resolve()
 EVIDENCE_TOKEN_ENV = "SNAPSHOT_TOKEN_SECRET"
 FIELD_KEY = os.getenv("FIELD_ENCRYPTION_KEY", "").strip()
-_FERNET = Fernet(FIELD_KEY.encode()) if FIELD_KEY else None
+_FERNET = fernet_from_secret(FIELD_KEY)
 
 async def _get_evidence(evidence_id: uuid.UUID):
     async with Session() as db:

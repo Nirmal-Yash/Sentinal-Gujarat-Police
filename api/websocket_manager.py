@@ -3,6 +3,7 @@ import asyncio, json, logging, os, uuid
 from typing import Set
 from fastapi import WebSocket
 import redis.asyncio as aioredis
+from redis.exceptions import BusyLoadingError
 
 log      = logging.getLogger("ws_manager")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
@@ -80,6 +81,11 @@ async def redis_alert_consumer():
 
         except asyncio.CancelledError:
             break
+        except BusyLoadingError:
+            # Redis may still be restoring its RDB immediately after a
+            # restart. Keep the consumer alive without producing a false
+            # application error; the next poll will resume normally.
+            await asyncio.sleep(1)
         except Exception as e:
             log.error(f"Consumer error: {e}")
             await asyncio.sleep(2)
