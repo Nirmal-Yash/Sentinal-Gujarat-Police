@@ -22,6 +22,8 @@ from intelligence.alert_engine import AlertEngine
 DB_URL = os.environ["DATABASE_URL"]
 REDIS_URL = os.environ["REDIS_URL"]
 CAMERA_ID = str(uuid.uuid4())
+AUTH_USERNAME = "p0-admin"
+AUTH_PASSWORD = "P0-Login-Regression!2026"
 
 
 def db():
@@ -87,6 +89,49 @@ def setup_schema():
         conn.commit()
 
 
+def auth_smoke():
+    # Reuse the same P0 runtime database/middleware path used by the deployed
+    # API. This catches regressions where security hardening makes login fail.
+    os.environ["AUTH_REQUIRED"] = "true"
+    os.environ.setdefault("ENVIRONMENT", "development")
+    os.environ.setdefault("SECRET_KEY", "ci-only-sentinel-signing-secret")
+    os.environ.setdefault("JWT_REFRESH_SECRET_KEY", "ci-only-refresh-signing-secret")
+    os.environ.setdefault("SNAPSHOT_TOKEN_SECRET", "ci-only-snapshot-signing-secret")
+    os.environ.setdefault("FIELD_ENCRYPTION_KEY", "Y2ktZmllbGQtZW5jcnlwdGlvbi1rZXktMzItYnl0ZSE=")
+    sys.path.insert(0, os.path.join(ROOT, "api"))
+    from fastapi.testclient import TestClient
+    from main import app
+    from auth import hash_password
+
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO users(username,password_hash,role,is_active)
+               VALUES (%s,%s,'SUPERADMIN',TRUE)
+               ON CONFLICT (username) DO UPDATE SET password_hash=EXCLUDED.password_hash, role='SUPERADMIN', is_active=TRUE""",
+            (AUTH_USERNAME, hash_password(AUTH_PASSWORD)),
+        )
+        conn.commit()
+
+    with TestClient(app) as client:
+        response = client.post("/auth/login", json={"username": AUTH_USERNAME, "password": AUTH_PASSWORD})
+        assert response.status_code == 200, f"Login regression: HTTP {response.status_code}: {response.text}"
+        payload = response.json()
+        assert payload.get("access_token"), "Login regression: access token missing"
+        assert payload.get("user", {}).get("role") == "SUPERADMIN", payload
+        assert client.cookies.get("sentinel_session"), "Login regression: session cookie missing"
+        assert client.cookies.get("sentinel_refresh"), "Login regression: refresh cookie missing"
+        assert client.cookies.get("sentinel_csrf"), "Login regression: CSRF bootstrap cookie missing"
+
+        me = client.get("/auth/me", headers={"Authorization": f"Bearer {payload['access_token']}"})
+        assert me.status_code == 200, f"Authenticated request regression: HTTP {me.status_code}: {me.text}"
+
+        refresh = client.post("/auth/refresh")
+        assert refresh.status_code == 200, f"Refresh regression: HTTP {refresh.status_code}: {refresh.text}"
+        assert refresh.json().get("access_token"), "Refresh regression: new access token missing"
+
+    print("auth_login_refresh_regression: PASS")
+
+
 def counts():
     with db() as conn, conn.cursor() as cur:
         cur.execute("SELECT COUNT(*) FROM detections"); detections = cur.fetchone()[0]
@@ -98,6 +143,7 @@ def counts():
 
 def main():
     setup_schema()
+    auth_smoke()
     r = redis.from_url(REDIS_URL)
     r.flushdb()
     engine = AlertEngine()
