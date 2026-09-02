@@ -72,7 +72,18 @@ async def enforce_session_limit(user_id: str, db: AsyncSession) -> None:
     for row in rows[:len(rows)-MAX_SESSIONS_PER_USER+1]: await db.execute(text("UPDATE user_sessions SET revoked=TRUE WHERE id=CAST(:id AS uuid)"), {"id": str(row["id"])})
 def _ip_hash(request: Request | None) -> str: return hashlib.sha256((request.client.host if request and request.client else "unknown").encode()).hexdigest()
 async def is_locked(username: str, request: Request, db: AsyncSession) -> bool:
-    window=f"{LOCKOUT_WINDOW_MINUTES} minutes"; user_failures=await db.scalar(text("SELECT COUNT(*) FROM auth_attempts WHERE username=:username AND succeeded=FALSE AND created_at > NOW() - CAST(:window AS interval)"),{"username":username,"window":window}); ip_failures=await db.scalar(text("SELECT COUNT(*) FROM auth_attempts WHERE ip_hash=:ip AND succeeded=FALSE AND created_at > NOW() - CAST(:window AS interval)"),{"ip":_ip_hash(request),"window":window}); return int(user_failures or 0)>=LOCKOUT_USER_THRESHOLD or int(ip_failures or 0)>=LOCKOUT_IP_THRESHOLD
+    params = {"username": username, "ip": _ip_hash(request), "window": LOCKOUT_WINDOW_MINUTES}
+    stmt = text("""
+        SELECT
+          (SELECT COUNT(*) FROM auth_attempts
+           WHERE username=:username AND succeeded=FALSE
+             AND created_at > NOW() - (CAST(:window AS integer) * INTERVAL '1 minute')) AS user_failures,
+          (SELECT COUNT(*) FROM auth_attempts
+           WHERE ip_hash=:ip AND succeeded=FALSE
+             AND created_at > NOW() - (CAST(:window AS integer) * INTERVAL '1 minute')) AS ip_failures
+    """)
+    row = (await db.execute(stmt, params)).mappings().one()
+    return int(row["user_failures"] or 0) >= LOCKOUT_USER_THRESHOLD or int(row["ip_failures"] or 0) >= LOCKOUT_IP_THRESHOLD
 async def record_attempt(username: str, request: Request, succeeded: bool, db: AsyncSession) -> None: await db.execute(text("INSERT INTO auth_attempts(username,ip_hash,succeeded) VALUES(:username,:ip,:succeeded)"),{"username":username[:128],"ip":_ip_hash(request),"succeeded":succeeded}); await db.execute(text("DELETE FROM auth_attempts WHERE created_at < NOW() - INTERVAL '30 days'"))
 def has_permission(principal: Principal, permission: str) -> bool: return permission in ROLE_PERMISSIONS.get(principal.role, set())
 def require_permission(permission: str):

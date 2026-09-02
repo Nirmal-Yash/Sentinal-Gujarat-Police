@@ -99,10 +99,10 @@ def validate_search_query(value: str, max_length: int = 100) -> str:
 
 
 SIZE_LIMITS = {
-    "/api/search/person/": 10 * 1024 * 1024,
-    "/api/test/feeds/upload": 200 * 1024 * 1024,
-    "/api/camera-imports/": 5 * 1024 * 1024,
-    "/api/watchlist/": 10 * 1024 * 1024,
+    "/search/person/": 10 * 1024 * 1024,
+    "/test/feeds/upload": 200 * 1024 * 1024,
+    "/camera-imports/": 5 * 1024 * 1024,
+    "/watchlist/": 10 * 1024 * 1024,
 }
 DEFAULT_REQUEST_LIMIT = 1 * 1024 * 1024
 
@@ -115,7 +115,8 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
                 size = int(raw)
             except ValueError:
                 raise HTTPException(400, "Invalid Content-Length")
-            limit = next((v for k, v in SIZE_LIMITS.items() if request.url.path.startswith(k)), DEFAULT_REQUEST_LIMIT)
+            path = request.url.path.removeprefix("/api")
+            limit = next((v for k, v in SIZE_LIMITS.items() if path.startswith(k)), DEFAULT_REQUEST_LIMIT)
             if size > limit:
                 raise HTTPException(413, f"Request too large. Maximum: {limit // 1024 // 1024} MB")
         return await call_next(request)

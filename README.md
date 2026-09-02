@@ -66,6 +66,20 @@ Do not run `docker compose down` or `docker compose build` expecting either comm
 Dashboard: http://localhost:3000
 API docs: http://localhost:8000/docs
 
+### Optional Groq operations assistant
+
+Set the key in the same VS Code PowerShell terminal used to run Compose; it is
+passed only to the API container and is never exposed to the browser:
+
+```powershell
+$env:GROQ_API_KEY = "<rotated-key>"
+$env:GROQ_MODEL = "llama-3.1-8b-instant"
+docker compose up -d --build api
+```
+
+After login, use `POST /assistant/chat` (or `api.groqChat(...)` in the dashboard
+client). `GET /assistant/status` reports configuration without returning the key.
+
 ## Architecture
 
 ```text

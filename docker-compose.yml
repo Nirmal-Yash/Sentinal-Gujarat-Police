@@ -41,7 +41,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
       - DATABASE_URL=postgresql://sentinel:${POSTGRES_PASSWORD}@postgres:5432/sentinel
       - CCTV_BASE_URL=${CCTV_BASE_URL:-https://cctv.corp8.cloud}
       - CCTV_LOGIN_PATH=${CCTV_LOGIN_PATH:-/auth/login}
@@ -67,7 +67,7 @@ services:
       redis:
         condition: service_healthy
     environment:
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
       - YOLO_MODEL=${YOLO_MODEL:-yolov8n.pt}
       - DETECTION_CONF=${DETECTION_CONF:-0.4}
       - FRAME_SKIP=${FRAME_SKIP:-3}
@@ -76,9 +76,9 @@ services:
       - ANPR_OCR_GPU=${ANPR_OCR_GPU:-false}
       - ANPR_OCR_INTERVAL_SECS=${ANPR_OCR_INTERVAL_SECS:-0.8}
       - ANPR_OCR_MIN_CONF=${ANPR_OCR_MIN_CONF:-0.35}
-      - ANPR_VOTE_THRESHOLD=${ANPR_VOTE_THRESHOLD:-5}
-      - ANPR_VOTE_WINDOW_FRAMES=${ANPR_VOTE_WINDOW_FRAMES:-12}
-      - ANPR_CONFIRM_OBSERVATIONS=${ANPR_CONFIRM_OBSERVATIONS:-5}
+      - ANPR_VOTE_THRESHOLD=${ANPR_VOTE_THRESHOLD:-4}
+      - ANPR_VOTE_WINDOW_FRAMES=${ANPR_VOTE_WINDOW_FRAMES:-25}
+      - ANPR_CONFIRM_OBSERVATIONS=${ANPR_CONFIRM_OBSERVATIONS:-4}
       - ANPR_TRACK_EXPIRY_SECS=${ANPR_TRACK_EXPIRY_SECS:-30}
       - ANPR_MIN_VEHICLE_W=${ANPR_MIN_VEHICLE_W:-80}
       - ANPR_MIN_VEHICLE_H=${ANPR_MIN_VEHICLE_H:-60}
@@ -113,7 +113,7 @@ services:
         condition: service_healthy
     command: ["python", "-u", "person_investigation_worker.py"]
     environment:
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
       - PERSON_INVESTIGATION_RESULT_TTL=${PERSON_INVESTIGATION_RESULT_TTL:-120}
       - PERSON_FACE_DET_SIZE=${PERSON_FACE_DET_SIZE:-800}
       - PERSON_FACE_DET_THRESHOLD=${PERSON_FACE_DET_THRESHOLD:-0.35}
@@ -132,7 +132,7 @@ services:
       redis:
         condition: service_healthy
     environment:
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
       - TEST_MODE=true
       - YOLO_MODEL=${YOLO_MODEL:-yolov8n.pt}
       - DETECTION_CONF=${DETECTION_CONF:-0.4}
@@ -171,7 +171,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
       - DATABASE_URL=postgresql://sentinel:${POSTGRES_PASSWORD}@postgres:5432/sentinel
       - FACE_SIM_THRESHOLD=${FACE_SIM_THRESHOLD:-0.65}
       - FACE_INVESTIGATION_THRESHOLD=${FACE_INVESTIGATION_THRESHOLD:-0.65}
@@ -195,7 +195,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
       - DATABASE_URL=postgresql://sentinel:${POSTGRES_PASSWORD}@postgres:5432/sentinel
       - TEST_MODE=true
       - WATCHLIST_RELOAD_SECS=${WATCHLIST_RELOAD_SECS:-60}
@@ -219,10 +219,15 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
       - DATABASE_URL=postgresql://sentinel:${POSTGRES_PASSWORD}@postgres:5432/sentinel
       - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be supplied}
+      - JWT_REFRESH_SECRET_KEY=${JWT_REFRESH_SECRET_KEY:-}
       - SNAPSHOT_TOKEN_SECRET=${SNAPSHOT_TOKEN_SECRET:?SNAPSHOT_TOKEN_SECRET must be supplied}
+      - FIELD_ENCRYPTION_KEY=${FIELD_ENCRYPTION_KEY:-}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000}
       - SNAPSHOT_TOKEN_TTL_SECS=${SNAPSHOT_TOKEN_TTL_SECS:-120}
       - EVIDENCE_TOKEN_TTL_SECS=${EVIDENCE_TOKEN_TTL_SECS:-300}
       - EVIDENCE_STORAGE_PATH=${EVIDENCE_STORAGE_PATH:-/evidence}
@@ -230,13 +235,22 @@ services:
       - CCTV_PASSWORD=${CCTV_PASSWORD:?CCTV_PASSWORD must be supplied}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
       - AUTH_REQUIRED=${AUTH_REQUIRED:-true}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
+      - REFRESH_TOKEN_EXPIRE_HOURS=${REFRESH_TOKEN_EXPIRE_HOURS:-8}
       - JWT_TOKEN_HOURS=${JWT_TOKEN_HOURS:-8}
+      - AUTH_COOKIE_SECURE=${AUTH_COOKIE_SECURE:-false}
+      - AUTH_COOKIE_SAMESITE=${AUTH_COOKIE_SAMESITE:-lax}
+      - FORCE_SECURITY_HEADERS=${FORCE_SECURITY_HEADERS:-false}
+      - DB_SSL=${DB_SSL:-0}
       - TEST_ENDPOINT_ENABLED=${TEST_ENDPOINT_ENABLED:-true}
       - TEST_MAX_UPLOAD_BYTES=${TEST_MAX_UPLOAD_BYTES:-209715200}
       - TEST_VIDEO_DIR=/videos
       - TEST_UPLOAD_DIR=/test_videos
       - TEST_RTSP_BASE=rtsp://mediamtx:8554
       - TEST_HLS_BASE=/test-hls
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - GROQ_MODEL=${GROQ_MODEL:-llama-3.1-8b-instant}
+      - GROQ_API_URL=${GROQ_API_URL:-https://api.groq.com/openai/v1/chat/completions}
       - BOOTSTRAP_ADMIN_USERNAME=${BOOTSTRAP_ADMIN_USERNAME:-}
       - BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_ADMIN_PASSWORD:-}
       - BOOTSTRAP_ADMIN_ROLE=${BOOTSTRAP_ADMIN_ROLE:-SUPERADMIN}

@@ -41,7 +41,7 @@ def _redis_health():
 @router.get("/cameras/{camera_id}/health")
 async def camera_health_history(camera_id: uuid.UUID, minutes: int = Query(60, ge=5, le=10080), _: Principal = Depends(require_permission("camera:read")), db: AsyncSession = Depends(get_db)):
     result = await db.execute(text("""SELECT observed_at, health_status, source_fps, decode_fps, published_fps, reconnect_count, decode_failure_count
-        FROM camera_health_observations WHERE camera_id=CAST(:camera_id AS uuid) AND observed_at >= NOW() - (:minutes * INTERVAL '1 minute') ORDER BY observed_at ASC"""), {"camera_id": str(camera_id), "minutes": minutes})
+        FROM camera_health_observations WHERE camera_id=CAST(:camera_id AS uuid) AND observed_at >= NOW() - (CAST(:minutes AS integer) * INTERVAL '1 minute') ORDER BY observed_at ASC"""), {"camera_id": str(camera_id), "minutes": minutes})
     return {"camera_id": str(camera_id), "minutes": minutes, "observations": [dict(row) for row in result.mappings()]}
 
 

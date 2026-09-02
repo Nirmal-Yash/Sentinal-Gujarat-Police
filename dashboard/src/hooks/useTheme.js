@@ -16,7 +16,7 @@ export function resolveInitialTheme() {
 export function applyTheme(theme, { persist = true, announce = true } = {}) {
   const next = VALID.has(theme) ? theme : 'dark'
   const root = document.documentElement
-  root.dataset.theme = next
+  document.documentElement.dataset.theme = next
   root.classList.toggle('dark', next === 'dark')
   root.style.colorScheme = next
 

@@ -295,7 +295,7 @@ async def recent_camera_analytics(
                global_track_id, track_id
         FROM detections
         WHERE cam_id IS NOT NULL
-          AND timestamp >= NOW() - (:seconds * INTERVAL '1 second')
+          AND timestamp >= NOW() - (CAST(:seconds AS integer) * INTERVAL '1 second')
           AND plate_text IS NOT NULL AND plate_text <> ''
         ORDER BY cam_id, timestamp DESC
     """), {"seconds": seconds})

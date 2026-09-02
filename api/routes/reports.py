@@ -112,18 +112,18 @@ async def runtime_reconciliation(
                  COUNT(*) FILTER (WHERE track_id IS NOT NULL) AS tracked,
                  COUNT(*) FILTER (WHERE plate_text IS NOT NULL AND plate_text <> '') AS with_plate
           FROM detections d
-          WHERE d.timestamp >= NOW() - (:seconds * INTERVAL '1 second'){camera_filter}
+          WHERE d.timestamp >= NOW() - (CAST(:seconds AS integer) * INTERVAL '1 second'){camera_filter}
         ), sight AS (
           SELECT COUNT(*) AS business_sightings,
                  COUNT(DISTINCT normalized_plate) AS distinct_plates
           FROM vehicle_sightings s
-          WHERE s.source_timestamp >= NOW() - (:seconds * INTERVAL '1 second')
+          WHERE s.source_timestamp >= NOW() - (CAST(:seconds AS integer) * INTERVAL '1 second')
             {(' AND s.camera_id=CAST(:cam_id AS uuid)' if cam_id else '')}
         ), al AS (
           SELECT COUNT(*) AS alerts,
                  COUNT(*) FILTER (WHERE status='NEW') AS new_alerts
           FROM alerts a
-          WHERE a.created_at >= NOW() - (:seconds * INTERVAL '1 second')
+          WHERE a.created_at >= NOW() - (CAST(:seconds AS integer) * INTERVAL '1 second')
             {(' AND a.cam_id=CAST(:cam_id AS uuid)' if cam_id else '')}
         )
         SELECT * FROM det CROSS JOIN sight CROSS JOIN al
