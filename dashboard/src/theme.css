@@ -1,15 +1,318 @@
-:root{--shadow-1:0 10px 30px rgba(0,0,0,.35);--shadow-2:0 18px 50px rgba(0,0,0,.55);--radius-card:10px}html{background:#000}body{background:radial-gradient(circle at 14% 0%,rgba(249,115,22,.055),transparent 28%),radial-gradient(circle at 88% 100%,rgba(249,115,22,.025),transparent 24%),#000}button,a,input,select,textarea{transition:background .16s ease,border-color .16s ease,color .16s ease,transform .16s ease,box-shadow .16s ease,opacity .16s ease}button:hover:not(:disabled),a:hover{filter:brightness(1.06)}button:active:not(:disabled),a:active{transform:translateY(1px)}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}button:disabled{cursor:not-allowed!important;opacity:.5}nav{backdrop-filter:blur(16px);box-shadow:0 1px 0 rgba(255,255,255,.02),0 10px 28px rgba(0,0,0,.25)}article{transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease,background .18s ease}article:hover{transform:translateY(-1px);border-color:var(--accent-border)!important;box-shadow:0 8px 24px rgba(0,0,0,.28)}input,select,textarea{box-shadow:inset 0 1px 0 rgba(255,255,255,.015)}input:hover,select:hover,textarea:hover{border-color:rgba(120,95,72,.65)!important}input:focus,select:focus,textarea:focus{border-color:var(--accent)!important;box-shadow:0 0 0 3px rgba(249,115,22,.1)}.leaflet-control-zoom a,.leaflet-control-layers,.leaflet-bar a{transition:background .16s ease,color .16s ease,transform .16s ease}.leaflet-control-zoom a:hover,.leaflet-bar a:hover{transform:translateY(-1px)}@keyframes sentinel-fade-up{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}@keyframes sentinel-fade-in{from{opacity:0}to{opacity:1}}#root>div{animation:sentinel-fade-in .22s ease both}#root section{animation:sentinel-fade-up .22s ease both}#root article{animation:sentinel-fade-up .22s ease both}[role='dialog']{animation:sentinel-fade-up .22s ease both}.sentinel-live-pulse{animation:sentinel-pulse 1.8s ease-in-out infinite}.sentinel-page-title{letter-spacing:.2px}@keyframes sentinel-pulse{0%,100%{opacity:.7}50%{opacity:1}}[style*="min-width: 92px"],[style*="min-width: 138px"]{min-width:0!important;padding:0!important;border:0!important;background:transparent!important;box-shadow:none!important}[style*="min-width: 92px"]>div>span:not(:first-child),[style*="min-width: 138px"]>div>span:not(:first-child),[style*="min-width: 92px"]>div>div,[style*="min-width: 138px"]>div>div{display:none!important}[style*="min-width: 92px"]>div>span:first-child,[style*="min-width: 138px"]>div>span:first-child{display:block!important;width:18px!important;height:18px!important;border-width:2px!important}@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
-[data-theme="light"]{color-scheme:light}
-[data-theme="light"] html,[data-theme="light"] body{background:var(--bg);color:var(--text)}
-[data-theme="light"] .sentinel-shell{background:linear-gradient(180deg,#f8f5ef,#f2eee7)}
-[data-theme="light"] .sentinel-topbar{background:#fff;border-bottom-color:var(--border);box-shadow:0 8px 24px rgba(80,61,38,.08)}
-[data-theme="light"] .ui-sidebar{background:#fff;border-right-color:var(--border)}
-[data-theme="light"] .ui-sidebar-menu-button{color:#6b6258}
-[data-theme="light"] .ui-sidebar-menu-button:hover{background:#f7f2e9;border-color:#e6dccd;color:#2c261f}
-[data-theme="light"] .sentinel-user-trigger{background:#fff}
-[data-theme="light"] .ui-input{background:#fff;color:var(--text)}
-[data-theme="light"] .ui-button-outline{background:#fff;color:var(--text)}
-[data-theme="light"] .ui-dropdown-content{background:#fff;color:var(--text)}
-[data-theme="light"] .sentinel-search-input{background:#fff!important;color:var(--text)!important}
-[data-theme="light"] .leaflet-container{background:#e8e3da}
-[data-theme="light"] .sentinel-status{background:rgba(21,128,61,.06);color:#15803d}
+/* Canonical Sentinel AI theme layer. The DOM attribute on <html> is the single source of truth. */
+:root,
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #000000;
+  --surface: #080706;
+  --surface2: #100e0b;
+  --surface3: #18130e;
+  --border: #2b2218;
+  --border-strong: #4a3522;
+  --text: #fff7ed;
+  --text2: #b9aa98;
+  --muted: #776957;
+  --accent: #f97316;
+  --accent-strong: #fb923c;
+  --accent-soft: rgba(249,115,22,.12);
+  --accent-border: rgba(249,115,22,.52);
+  --green: #4ade80;
+  --red: #f87171;
+  --high: #f87171;
+  --medium: #fb923c;
+  --low: #4ade80;
+  --shadow: 0 24px 70px rgba(0,0,0,.72);
+  --theme-bg: #000000;
+  --theme-surface: #080706;
+  --theme-surface-2: #100e0b;
+  --theme-surface-3: #18130e;
+  --theme-border: #2b2218;
+  --theme-border-strong: #4a3522;
+  --theme-text: #fff7ed;
+  --theme-text-2: #b9aa98;
+  --theme-muted: #776957;
+  --theme-accent: #f97316;
+  --theme-accent-strong: #fb923c;
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --surface2: #f8fafc;
+  --surface3: #eef2f6;
+  --border: #d8dee6;
+  --border-strong: #c3cbd5;
+  --text: #17202a;
+  --text2: #4d5965;
+  --muted: #6b7682;
+  --accent: #ea6c0a;
+  --accent-strong: #c95500;
+  --accent-soft: rgba(234,108,10,.10);
+  --accent-border: rgba(234,108,10,.34);
+  --green: #15803d;
+  --red: #dc2626;
+  --high: #dc2626;
+  --medium: #d97706;
+  --low: #15803d;
+  --shadow: 0 20px 55px rgba(31,41,55,.14);
+  --theme-bg: #f4f6f8;
+  --theme-surface: #ffffff;
+  --theme-surface-2: #f8fafc;
+  --theme-surface-3: #eef2f6;
+  --theme-border: #d8dee6;
+  --theme-border-strong: #c3cbd5;
+  --theme-text: #17202a;
+  --theme-text-2: #4d5965;
+  --theme-muted: #6b7682;
+  --theme-accent: #ea6c0a;
+  --theme-accent-strong: #c95500;
+}
+
+html,
+body,
+#root {
+  background: var(--bg);
+  color: var(--text);
+}
+
+html {
+  transition: background-color .22s ease, color .22s ease;
+}
+
+body,
+button,
+a,
+input,
+select,
+textarea,
+.ui-input,
+.ui-button,
+.ui-icon-button,
+.ui-sidebar,
+.ui-sidebar-header,
+.ui-sidebar-footer,
+.ui-sidebar-menu-button,
+.sentinel-topbar,
+.sentinel-user-trigger,
+.sentinel-search-input,
+.ui-dropdown-content,
+.ui-sheet-content,
+.ui-sheet-header,
+.ui-sheet-close,
+[role="dialog"] {
+  transition: background-color .22s ease, color .22s ease, border-color .22s ease, box-shadow .22s ease;
+}
+
+/* Light theme must override the legacy dark skin, including inline styles. */
+html[data-theme="light"] .sentinel-shell,
+html[data-theme="light"] .sentinel-main {
+  background: var(--bg) !important;
+  color: var(--text) !important;
+}
+
+html[data-theme="light"] .sentinel-shell {
+  background: linear-gradient(180deg, #f8fafc 0%, #eef2f6 100%) !important;
+}
+
+html[data-theme="light"] .sentinel-topbar {
+  background: var(--surface) !important;
+  border-bottom-color: var(--border) !important;
+  box-shadow: 0 8px 24px rgba(31,41,55,.08) !important;
+}
+
+html[data-theme="light"] .ui-sidebar,
+html[data-theme="light"] .ui-sidebar-header,
+html[data-theme="light"] .ui-sidebar-footer {
+  background: var(--surface) !important;
+  border-color: var(--border) !important;
+}
+
+html[data-theme="light"] .ui-sidebar-brand,
+html[data-theme="light"] .sentinel-topbar-title,
+html[data-theme="light"] .sentinel-user-name {
+  color: var(--text) !important;
+}
+
+html[data-theme="light"] .ui-sidebar-brand-mark {
+  background: var(--surface-3) !important;
+  border-color: var(--border) !important;
+  box-shadow: none !important;
+}
+
+html[data-theme="light"] .ui-sidebar-brand-sub,
+html[data-theme="light"] .ui-sidebar-group-label,
+html[data-theme="light"] .sentinel-user-role,
+html[data-theme="light"] .sentinel-clock,
+html[data-theme="light"] .sentinel-search-icon {
+  color: var(--muted) !important;
+}
+
+html[data-theme="light"] .ui-sidebar-menu-button {
+  background: transparent !important;
+  color: var(--text2) !important;
+}
+
+html[data-theme="light"] .ui-sidebar-menu-button:hover {
+  background: var(--surface-3) !important;
+  border-color: var(--border) !important;
+  color: var(--text) !important;
+}
+
+html[data-theme="light"] .ui-sidebar-menu-button.is-active {
+  background: linear-gradient(90deg, var(--accent), #f08a26) !important;
+  border-color: var(--accent) !important;
+  color: #ffffff !important;
+  box-shadow: 0 8px 22px rgba(234,108,10,.18) !important;
+}
+
+html[data-theme="light"] .ui-sidebar-menu-button.is-active svg {
+  color: #ffffff !important;
+}
+
+html[data-theme="light"] .ui-icon-button,
+html[data-theme="light"] .ui-button,
+html[data-theme="light"] .ui-input,
+html[data-theme="light"] .sentinel-search-input,
+html[data-theme="light"] .ui-sheet-close {
+  background: var(--surface) !important;
+  border-color: var(--border) !important;
+  color: var(--text) !important;
+}
+
+html[data-theme="light"] .ui-icon-button:hover,
+html[data-theme="light"] .ui-button:hover,
+html[data-theme="light"] .ui-sheet-close:hover {
+  background: var(--surface-3) !important;
+  border-color: var(--accent-border) !important;
+  color: var(--accent-strong) !important;
+}
+
+html[data-theme="light"] .ui-input::placeholder,
+html[data-theme="light"] .sentinel-search-input::placeholder {
+  color: #87919c !important;
+}
+
+html[data-theme="light"] .ui-input:focus,
+html[data-theme="light"] .sentinel-search-input:focus {
+  background: var(--surface) !important;
+  border-color: var(--accent-border) !important;
+  box-shadow: 0 0 0 3px rgba(234,108,10,.09) !important;
+}
+
+html[data-theme="light"] .ui-dropdown-content,
+html[data-theme="light"] .ui-sheet-content,
+html[data-theme="light"] .ui-sheet-header,
+html[data-theme="light"] [role="dialog"] {
+  background: var(--surface) !important;
+  border-color: var(--border-strong) !important;
+  color: var(--text) !important;
+  box-shadow: var(--shadow) !important;
+}
+
+html[data-theme="light"] .ui-sheet-header,
+html[data-theme="light"] .ui-sheet-close {
+  background: var(--surface-2) !important;
+}
+
+html[data-theme="light"] .ui-dropdown-item {
+  color: var(--text) !important;
+}
+
+html[data-theme="light"] .ui-dropdown-item:hover:not(:disabled) {
+  background: var(--accent-soft) !important;
+  color: var(--accent-strong) !important;
+}
+
+html[data-theme="light"] .sentinel-user-trigger {
+  background: var(--surface) !important;
+  border-color: var(--border) !important;
+  color: var(--text) !important;
+}
+
+html[data-theme="light"] .sentinel-user-trigger:hover {
+  background: var(--surface-3) !important;
+  border-color: var(--accent-border) !important;
+}
+
+html[data-theme="light"] .sentinel-avatar {
+  background: #fff3e8 !important;
+  color: var(--accent-strong) !important;
+  border-color: var(--accent-border) !important;
+}
+
+html[data-theme="light"] .sentinel-status {
+  background: rgba(21,128,61,.07) !important;
+  border-color: rgba(21,128,61,.22) !important;
+  color: var(--green) !important;
+}
+
+html[data-theme="light"] .ui-button-outline {
+  background: var(--surface-2) !important;
+  color: var(--text) !important;
+}
+
+html[data-theme="light"] .sentinel-loading-screen {
+  background: var(--bg) !important;
+  color: var(--text) !important;
+}
+
+html[data-theme="light"] .sentinel-empty-state {
+  color: var(--text2) !important;
+}
+
+html[data-theme="light"] .sentinel-empty-state strong {
+  color: var(--text) !important;
+}
+
+html[data-theme="light"] .sentinel-empty-icon {
+  background: var(--surface-2) !important;
+  border-color: var(--border-strong) !important;
+  color: var(--muted) !important;
+}
+
+html[data-theme="light"] .leaflet-container {
+  background: #e8edf2 !important;
+}
+
+/* Keep media/video pixels black in either theme. */
+html[data-theme="light"] video,
+html[data-theme="light"] .video-player,
+html[data-theme="light"] .camera-video-stage {
+  background: #000 !important;
+}
+
+/* Explicit animation support without changing behavior on reduced-motion systems. */
+@supports (view-transition-name: root) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: .22s;
+    animation-timing-function: ease-in-out;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html,
+  body,
+  button,
+  a,
+  input,
+  select,
+  textarea,
+  .ui-input,
+  .ui-button,
+  .ui-icon-button,
+  .ui-sidebar,
+  .ui-sidebar-header,
+  .ui-sidebar-footer,
+  .ui-sidebar-menu-button,
+  .sentinel-topbar,
+  .sentinel-user-trigger,
+  .sentinel-search-input,
+  .ui-dropdown-content,
+  .ui-sheet-content,
+  .ui-sheet-header,
+  .ui-sheet-close,
+  [role="dialog"] {
+    transition: none !important;
+  }
+}
