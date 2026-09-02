@@ -12,7 +12,9 @@ from database import get_db
 from security_hardening import enforce_password_policy
 AUTH_REQUIRED = os.getenv("AUTH_REQUIRED", "false").lower() == "true"
 SECRET_KEY = os.getenv("SECRET_KEY", "")
-REFRESH_SECRET = os.getenv("JWT_REFRESH_SECRET_KEY", "")
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
+_configured_refresh = os.getenv("JWT_REFRESH_SECRET_KEY", "").strip()
+REFRESH_SECRET = _configured_refresh or (f"{SECRET_KEY}-local-refresh" if ENVIRONMENT != "production" and SECRET_KEY else "")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_MINUTES = max(5, int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15")))
 REFRESH_TOKEN_HOURS = max(1, int(os.getenv("REFRESH_TOKEN_EXPIRE_HOURS", "8")))
@@ -53,7 +55,7 @@ async def current_principal(credentials: HTTPAuthorizationCredentials | None = D
     return await principal_from_token(token, db)
 async def principal_from_token(token: str, db: AsyncSession) -> Principal:
     try:
-        claims = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM]);
+        claims = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         if claims.get("type", "access") != "access": raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong token type")
         user_id, jti, role = claims["sub"], claims["jti"], claims["role"]
     except HTTPException: raise
@@ -62,18 +64,13 @@ async def principal_from_token(token: str, db: AsyncSession) -> Principal:
     if not row or row["role"] != role: raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session is no longer valid")
     return Principal(user_id, row["username"], row["role"], jti)
 async def enforce_session_limit(user_id: str, db: AsyncSession) -> None:
-    rows = (await db.execute(text("SELECT id,jti,expires_at FROM user_sessions WHERE user_id=CAST(:uid AS uuid) AND revoked=FALSE AND expires_at > NOW() ORDER BY created_at ASC"), {"uid": user_id})).mappings().all()
+    rows = (await db.execute(text("SELECT id FROM user_sessions WHERE user_id=CAST(:uid AS uuid) AND revoked=FALSE AND expires_at > NOW() ORDER BY created_at ASC"), {"uid": user_id})).mappings().all()
     if len(rows) < MAX_SESSIONS_PER_USER: return
     for row in rows[:len(rows)-MAX_SESSIONS_PER_USER+1]: await db.execute(text("UPDATE user_sessions SET revoked=TRUE WHERE id=CAST(:id AS uuid)"), {"id": str(row["id"])})
-def _ip_hash(request: Request | None) -> str:
-    return hashlib.sha256((request.client.host if request and request.client else "unknown").encode()).hexdigest()
+def _ip_hash(request: Request | None) -> str: return hashlib.sha256((request.client.host if request and request.client else "unknown").encode()).hexdigest()
 async def is_locked(username: str, request: Request, db: AsyncSession) -> bool:
-    window = f"{LOCKOUT_WINDOW_MINUTES} minutes"
-    user_failures = await db.scalar(text("SELECT COUNT(*) FROM auth_attempts WHERE username=:username AND succeeded=FALSE AND created_at > NOW() - CAST(:window AS interval)"), {"username": username, "window": window})
-    ip_failures = await db.scalar(text("SELECT COUNT(*) FROM auth_attempts WHERE ip_hash=:ip AND succeeded=FALSE AND created_at > NOW() - CAST(:window AS interval)"), {"ip": _ip_hash(request), "window": window})
-    return int(user_failures or 0) >= LOCKOUT_USER_THRESHOLD or int(ip_failures or 0) >= LOCKOUT_IP_THRESHOLD
-async def record_attempt(username: str, request: Request, succeeded: bool, db: AsyncSession) -> None:
-    await db.execute(text("INSERT INTO auth_attempts(username,ip_hash,succeeded) VALUES(:username,:ip,:succeeded)"), {"username": username[:128], "ip": _ip_hash(request), "succeeded": succeeded}); await db.execute(text("DELETE FROM auth_attempts WHERE created_at < NOW() - INTERVAL '30 days'"))
+    window=f"{LOCKOUT_WINDOW_MINUTES} minutes"; user_failures=await db.scalar(text("SELECT COUNT(*) FROM auth_attempts WHERE username=:username AND succeeded=FALSE AND created_at > NOW() - CAST(:window AS interval)"),{"username":username,"window":window}); ip_failures=await db.scalar(text("SELECT COUNT(*) FROM auth_attempts WHERE ip_hash=:ip AND succeeded=FALSE AND created_at > NOW() - CAST(:window AS interval)"),{"ip":_ip_hash(request),"window":window}); return int(user_failures or 0)>=LOCKOUT_USER_THRESHOLD or int(ip_failures or 0)>=LOCKOUT_IP_THRESHOLD
+async def record_attempt(username: str, request: Request, succeeded: bool, db: AsyncSession) -> None: await db.execute(text("INSERT INTO auth_attempts(username,ip_hash,succeeded) VALUES(:username,:ip,:succeeded)"),{"username":username[:128],"ip":_ip_hash(request),"succeeded":succeeded}); await db.execute(text("DELETE FROM auth_attempts WHERE created_at < NOW() - INTERVAL '30 days'"))
 def has_permission(principal: Principal, permission: str) -> bool: return permission in ROLE_PERMISSIONS.get(principal.role, set())
 def require_permission(permission: str):
     async def dependency(principal: Principal = Depends(current_principal)) -> Principal:
