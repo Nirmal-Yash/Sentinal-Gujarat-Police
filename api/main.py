@@ -11,7 +11,8 @@ from auth import AUTH_REQUIRED, SECRET_KEY, REFRESH_SECRET, principal_from_token
 from websocket_manager import manager, redis_alert_consumer
 from routes import cameras, camera_snapshot, camera_imports, alerts, watchlist, search, auth, reports, test, vendors, evidence, evidence_assets, operations, test_alerts, cctv
 from migrations import apply_migrations
-from security_hardening import SecurityHeadersMiddleware, RequestSizeLimitMiddleware, SecurityAuditMiddleware, verify_cookie_csrf
+from security_hardening import SecurityHeadersMiddleware, RequestSizeLimitMiddleware, verify_cookie_csrf
+from security_audit import SecurityAuditMiddleware
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [API][%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 CORS_ORIGINS=[x.strip() for x in os.getenv("ALLOWED_ORIGINS",os.getenv("CORS_ORIGINS","http://localhost:3000")).split(",") if x.strip()]
