@@ -61,13 +61,20 @@ text(interactionCss,'prefers-reduced-motion','interaction effects honor reduced-
 text(interactionStates,'export function Skeleton','shared Skeleton component exists')
 text(interactionStates,'export function EmptyState','shared EmptyState component exists')
 text(interactionStates,'export function SuccessCheck','shared success state component exists')
-text(index,'/sentinel-logo-mark.svg','browser uses Sentinel SVG favicon')
+const NEW_LOGO='/gujarat-police-logo-png_seeklogo-611297.png'
+text(index,NEW_LOGO,'browser uses the new Gujarat Police logo asset')
 text(index,'/manifest.json','dashboard exposes a PWA manifest')
 text(index,'/og-image.svg','OpenGraph metadata uses Sentinel artwork')
-text(navbar,'/sentinel-logo-mark.svg','sidebar uses the Sentinel logo mark')
-text(login,'/sentinel-logo.svg','login uses the Sentinel full logo')
-text(manifest,'sentinel-logo-mark.svg','PWA manifest points to Sentinel branding')
-text(envExample,'TEST_MAX_UPLOAD_BYTES=209715200','environment example documents the 200MB test limit')
+text(navbar,NEW_LOGO,'sidebar uses the new Gujarat Police logo asset')
+text(login,'BrandLogo','login uses the centralized brand component')
+text(manifest,NEW_LOGO,'PWA manifest points to the new logo asset')
+for(const legacy of ['/sentinel-logo-mark.svg','/sentinel-logo.svg']){
+  const asset=path.join(ROOT,'dashboard/public',legacy.slice(1))
+  if(fs.existsSync(asset)) failures.push(`legacy logo asset remains: ${legacy}`)
+  if(index.includes(legacy)||navbar.includes(legacy)||login.includes(legacy)||manifest.includes(legacy)) failures.push(`legacy logo reference remains: ${legacy}`)
+}
+if(!fs.existsSync(path.join(ROOT,'dashboard/public',NEW_LOGO.slice(1))))failures.push('new Gujarat Police logo asset is missing')
+else console.log('[OK] new Gujarat Police logo asset exists')
 if(compose.includes('live.corp8.cloud'))failures.push('deprecated live.corp8.cloud reference remains in docker-compose.yml');else console.log('[OK] deprecated live.corp8.cloud is absent from docker-compose.yml')
 if(failures.length){console.error(`\n${failures.length} P0 browser regression gate(s) failed.`);for(const f of failures)console.error(`[FAIL] ${f}`);process.exit(1)}
 console.log('\nAll P0 browser regression gates passed.')
