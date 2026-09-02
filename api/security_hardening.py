@@ -149,6 +149,8 @@ def csrf_token_from_cookie(cookie_value: str | None) -> str | None:
 def verify_cookie_csrf(request: Request, csrf_cookie: str | None) -> None:
     if request.method.upper() in {"GET", "HEAD", "OPTIONS"}:
         return
+    if not request.cookies.get("sentinel_session"):
+        return
     if request.headers.get("Authorization", "").startswith("Bearer "):
         return
     header = request.headers.get("X-CSRF-Token")
@@ -185,13 +187,12 @@ class FieldEncryption:
     def decrypt_text(self, value: str) -> str:
         return self.decrypt_bytes(base64.b64decode(value)).decode()
 
-
 field_encryption = FieldEncryption()
 
 
 def redact(value: object) -> str:
     text = str(value)
-    secret_values = [os.getenv("CCTV_PASSWORD", ""), os.getenv("SECRET_KEY", ""), os.getenv("SNAPSHOT_TOKEN_SECRET", "")]
+    secret_values = [os.getenv("CCTV_PASSWORD", ""), os.getenv("SECRET_KEY", ""), os.getenv("SNAPSHOT_TOKEN_SECRET", ""), os.getenv("JWT_REFRESH_SECRET_KEY", "")]
     for secret in secret_values:
         if secret and secret not in INSECURE_VALUES:
             text = text.replace(secret, "[REDACTED]")
