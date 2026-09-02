@@ -28,23 +28,6 @@ jobs:
   p0-backend-regression:
     name: P0 Backend Regression
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgis/postgis:16-3.5
-        env:
-          POSTGRES_DB: sentinel_ci
-          POSTGRES_USER: sentinel
-          POSTGRES_PASSWORD: sentinel
-        ports: [5432:5432]
-        options: >-
-          --health-cmd="pg_isready -U sentinel -d sentinel_ci"
-          --health-interval=5s --health-timeout=3s --health-retries=20
-      redis:
-        image: redis:7-alpine
-        ports: [6379:6379]
-        options: >-
-          --health-cmd="redis-cli ping"
-          --health-interval=5s --health-timeout=3s --health-retries=20
     env:
       DATABASE_URL: postgresql://sentinel:sentinel@localhost:5432/sentinel_ci
       REDIS_URL: redis://localhost:6379
@@ -58,15 +41,57 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: {python-version: "3.11"}
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: api/requirements.txt
       - name: Install Python dependencies
         run: python -m pip install --disable-pip-version-check -r api/requirements.txt
-      - name: Install PostgreSQL CI extensions
+      - name: Start repository-matched CI dependencies
         shell: bash
         run: |
-          PG_CONTAINER="$(docker ps -q --filter 'publish=5432')"
-          test -n "$PG_CONTAINER"
-          docker exec "$PG_CONTAINER" bash -lc 'apt-get update -qq && apt-get install -y -qq postgresql-16-pgvector >/dev/null'
+          set -euo pipefail
+          docker build --tag sentinel-ci-postgres ./database
+          docker run --detach --name sentinel-ci-postgres \
+            --env POSTGRES_DB=sentinel_ci --env POSTGRES_USER=sentinel \
+            --env POSTGRES_PASSWORD=sentinel --publish 5432:5432 sentinel-ci-postgres
+          docker run --detach --name sentinel-ci-redis --publish 6379:6379 redis:7-alpine
+          for attempt in {1..60}; do
+            if docker exec sentinel-ci-postgres pg_isready -U sentinel -d sentinel_ci >/dev/null 2>&1; then break; fi
+            if [ "$attempt" -eq 60 ]; then docker logs sentinel-ci-postgres; exit 1; fi
+            sleep 2
+          done
+          for attempt in {1..30}; do
+            if docker exec sentinel-ci-redis redis-cli ping >/dev/null 2>&1; then break; fi
+            if [ "$attempt" -eq 30 ]; then docker logs sentinel-ci-redis; exit 1; fi
+            sleep 1
+          done
+      - name: Build and smoke-test the API container
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --tag sentinel-ci-api --file api/Dockerfile .
+          docker run --detach --name sentinel-ci-api --network host \
+            --env DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5432/sentinel_ci \
+            --env REDIS_URL=redis://127.0.0.1:6379 \
+            --env AUTH_REQUIRED=true \
+            --env SECRET_KEY=ci-only-sentinel-signing-secret \
+            --env JWT_REFRESH_SECRET_KEY=ci-only-refresh-signing-secret \
+            --env SNAPSHOT_TOKEN_SECRET=ci-only-snapshot-signing-secret \
+            --env FIELD_ENCRYPTION_KEY=Y2ktZmllbGQtZW5jcnlwdGlvbi1rZXktMzItYnl0ZSE= \
+            --env CCTV_PASSWORD=ci-placeholder \
+            --env BOOTSTRAP_ADMIN_USERNAME=ci-admin \
+            --env BOOTSTRAP_ADMIN_PASSWORD='CI-Backend-Password!2026' \
+            --env BOOTSTRAP_ADMIN_ROLE=SUPERADMIN \
+            --env EVIDENCE_STORAGE_PATH=/tmp/sentinel-evidence \
+            sentinel-ci-api
+          for attempt in {1..45}; do
+            if curl --fail --silent http://127.0.0.1:8000/health >/dev/null; then break; fi
+            if [ "$attempt" -eq 45 ]; then docker logs sentinel-ci-api; exit 1; fi
+            sleep 2
+          done
+          curl --fail --silent http://127.0.0.1:8000/health >/dev/null
+          curl --fail --silent http://127.0.0.1:8000/ready >/dev/null
       - name: Bootstrap CI schema and migrations
         shell: bash
         run: |
@@ -141,6 +166,10 @@ jobs:
           PY
       - name: Validate Compose
         run: docker compose config -q
+      - name: Stop CI dependencies
+        if: always()
+        shell: bash
+        run: docker rm --force sentinel-ci-api sentinel-ci-postgres sentinel-ci-redis >/dev/null 2>&1 || true
 
   p0-dashboard-build:
     name: P0 Dashboard Build
