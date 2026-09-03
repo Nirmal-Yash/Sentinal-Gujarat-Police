@@ -13,6 +13,7 @@ html[data-theme="dark"] {
   --muted: #776957;
   --accent: #f97316;
   --accent-strong: #fb923c;
+  --on-accent: #140b04;
   --accent-soft: rgba(249,115,22,.12);
   --accent-border: rgba(249,115,22,.52);
   --green: #4ade80;
@@ -47,6 +48,7 @@ html[data-theme="light"] {
   --muted: #6b7682;
   --accent: #ea6c0a;
   --accent-strong: #c95500;
+  --on-accent: #ffffff;
   --accent-soft: rgba(234,108,10,.10);
   --accent-border: rgba(234,108,10,.34);
   --green: #15803d;
