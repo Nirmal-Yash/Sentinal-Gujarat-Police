@@ -1,12 +1,26 @@
 from __future__ import annotations
 
-import os
+import os, base64, hashlib
 from pathlib import Path
 from cryptography.fernet import Fernet
 
 KEY = os.getenv("FIELD_ENCRYPTION_KEY", "").strip()
 ENABLED = bool(KEY)
-_FERNET = Fernet(KEY.encode()) if KEY else None
+
+
+def _fernet_from_secret(value):
+    if not value:
+        return None
+    try:
+        return Fernet(value.encode())
+    except (ValueError, TypeError):
+        if len(value) < 32:
+            raise
+        derived = base64.urlsafe_b64encode(hashlib.sha256(value.encode()).digest())
+        return Fernet(derived)
+
+
+_FERNET = _fernet_from_secret(KEY)
 
 
 def encrypted_path(path: Path) -> Path:
@@ -15,6 +29,7 @@ def encrypted_path(path: Path) -> Path:
 
 def write_protected(path: Path, data: bytes) -> Path:
     """Encrypt evidence when a production field-encryption key is configured."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     if not _FERNET:
         path.write_bytes(data)
         return path

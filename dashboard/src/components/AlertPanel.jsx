@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api/client'
 
 const PRIO={HIGH:{color:'var(--high)',bg:'rgba(248,81,73,.10)',label:'HIGH'},MEDIUM:{color:'var(--medium)',bg:'rgba(210,153,34,.10)',label:'MED'},LOW:{color:'var(--low)',bg:'rgba(63,185,80,.10)',label:'LOW'}}
-const TYPE_LABEL={watchlist_match:'Watchlist Match',cross_camera_sighting:'Cross-Camera',anomaly_running_crowd:'Running / Crowd',anomaly_crowd_formation:'Crowd Detected',anomaly_abandoned_object:'Abandoned Object',test_plate_detected:'Test Plate Detected'}
+const TYPE_LABEL={WATCHLIST_HIT:'Watchlist Hit',PLATE_SIGHTING:'Plate Sighting',CROWD_ANOMALY:'Crowd Anomaly',RUNNING_CROWD:'Running Crowd',PERSON_MATCH:'Person Match',watchlist_match:'Watchlist Match',cross_camera_sighting:'Cross-Camera',anomaly_running_crowd:'Running / Crowd',anomaly_crowd_formation:'Crowd Detected',anomaly_abandoned_object:'Abandoned Object',test_plate_detected:'Test Plate Detected'}
 const STATUS_LABEL={NEW:'New',ACKNOWLEDGED:'Acknowledged',INVESTIGATING:'Investigating',RESOLVED:'Resolved',CLOSED:'Closed'}
 const NEXT_ACTIONS={NEW:['ACKNOWLEDGED'],ACKNOWLEDGED:['INVESTIGATING','RESOLVED'],INVESTIGATING:['RESOLVED'],RESOLVED:['CLOSED'],CLOSED:[]}
 const BellIcon=({muted=false})=><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>{muted&&<path d="m4 4 16 16"/>}</svg>

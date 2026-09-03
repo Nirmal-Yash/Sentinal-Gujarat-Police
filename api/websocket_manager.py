@@ -61,6 +61,7 @@ async def redis_alert_consumer():
             for _, entries in msgs:
                 for msg_id, data in entries:
                     try:
+                        details = json.loads(data.get("details", "{}"))
                         payload = {
                             "type":        "alert",
                             "alert_id":    data.get("alert_id", ""),
@@ -68,9 +69,14 @@ async def redis_alert_consumer():
                             "cam_id":      data.get("cam_id", ""),
                             "alert_type":  data.get("alert_type", ""),
                             "priority":    data.get("priority", "MEDIUM"),
+                            "severity":    data.get("priority", "MEDIUM"),
                             "confidence":  float(data.get("confidence", 0)),
                             "entity_type": data.get("entity_type", ""),
-                            "details":     json.loads(data.get("details", "{}")),
+                            "details":     details,
+                            "human_summary": details.get("human_summary"),
+                            "detection_detail": details.get("detection_detail", {}),
+                            "evidence": details.get("evidence", {"available": False, "description": "Evidence frame unavailable."}),
+                            "detected_at": data.get("event_timestamp") or data.get("timestamp", ""),
                             "timestamp":   data.get("timestamp", ""),
                         }
                         if manager.active:

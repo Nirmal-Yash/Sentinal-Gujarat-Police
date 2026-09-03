@@ -58,9 +58,13 @@ async def snapshot_token(
 @router.get("/{cam_id}/snapshot")
 async def snapshot(
     cam_id: uuid.UUID,
-    access_token: str = Query(..., min_length=1),
+    access_token: str | None = Query(None, min_length=1),
+    signed_token: str | None = Query(None, alias="st", min_length=1),
     db: AsyncSession = Depends(get_db),
 ):
+    access_token = access_token or signed_token
+    if not access_token:
+        raise HTTPException(401, "Snapshot token is required")
     row = await _camera(db, cam_id)
     provider_id = _provider_id(row)
     try:

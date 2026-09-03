@@ -9,3 +9,5 @@ __pycache__/
 *.pyd
 dashboard/dist/
 .env
+/scripts/
+/bridge/

@@ -103,7 +103,8 @@ class CameraCreate(BaseModel):
 
 class AlertOut(BaseModel):
     model_config=ConfigDict(from_attributes=True)
-    id:uuid.UUID; cam_id:Optional[uuid.UUID]; alert_type:str; priority:str; confidence:float; entity_type:str; details:Any; acknowledged:bool; status:str; created_at:datetime; updated_at:datetime; acknowledged_at:Optional[datetime]; acknowledged_by:Optional[str]; resolved_at:Optional[datetime]; resolved_by:Optional[str]; closed_at:Optional[datetime]; closed_by:Optional[str]
+    id:uuid.UUID; cam_id:Optional[uuid.UUID]; alert_type:str; priority:str; entity_type:str; details:Any; acknowledged:bool; status:str; created_at:datetime; updated_at:datetime; acknowledged_at:Optional[datetime]; acknowledged_by:Optional[str]; resolved_at:Optional[datetime]; resolved_by:Optional[str]; closed_at:Optional[datetime]; closed_by:Optional[str]; confidence:Optional[float]=None
+    cam_name:Optional[str]=None; camera_label:Optional[str]=None; severity:Optional[str]=None; human_summary:Optional[str]=None; camera:Any=None; detected_at:Optional[datetime]=None; detection_detail:Any=None; evidence:Any=None
 
 class WatchlistOut(BaseModel):
     model_config=ConfigDict(from_attributes=True)

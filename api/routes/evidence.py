@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,9 +7,11 @@ import re, uuid, json, os
 from pathlib import Path
 from auth import Principal, require_permission
 from database import get_db
+from security_hardening import fernet_from_secret
 
 router = APIRouter(prefix="/evidence", tags=["evidence"])
 EVIDENCE_ROOT = Path(os.getenv("EVIDENCE_STORAGE_PATH", "/evidence")).resolve()
+_FERNET = fernet_from_secret(os.getenv("FIELD_ENCRYPTION_KEY", "").strip())
 
 class EvidenceCreate(BaseModel):
     event_id: str | None = Field(None, max_length=255)
@@ -77,6 +79,11 @@ async def get_evidence_content(evidence_id: uuid.UUID, _: Principal = Depends(re
         target.relative_to(EVIDENCE_ROOT)
     except ValueError as exc:
         raise HTTPException(400, "Invalid evidence storage reference") from exc
-    if not target.is_file():
-        raise HTTPException(404, "Evidence content is unavailable")
-    return FileResponse(target, media_type=row["media_type"], headers={"X-Evidence-SHA256": row["sha256"] or ""})
+    if target.is_file():
+        return FileResponse(target, media_type=row["media_type"], headers={"X-Evidence-SHA256": row["sha256"] or ""})
+    encrypted = target.with_suffix(target.suffix + ".enc")
+    if _FERNET and encrypted.is_file():
+        try: payload = _FERNET.decrypt(encrypted.read_bytes())
+        except Exception as exc: raise HTTPException(500, "Evidence decryption failed") from exc
+        return Response(payload, media_type=row["media_type"], headers={"X-Evidence-SHA256": row["sha256"] or "", "X-Content-Type-Options": "nosniff"})
+    raise HTTPException(404, "Evidence content is unavailable")

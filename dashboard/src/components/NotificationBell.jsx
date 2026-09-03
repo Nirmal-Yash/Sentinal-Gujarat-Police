@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 const BellIcon=()=> <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
 const tone=a=>a.priority==='HIGH'?'#dc2626':a.priority==='MEDIUM'?'#f59e0b':'#60a5fa'
-const isCritical=a=>String(a?.alert_type||'').toLowerCase()==='watchlist_match' && String(a?.priority||'').toUpperCase()==='HIGH'
+const isCritical=a=>['WATCHLIST_HIT','RUNNING_CROWD'].includes(String(a?.alert_type||'').toUpperCase()) || (String(a?.alert_type||'').toLowerCase()==='watchlist_match' && String(a?.priority||'').toUpperCase()==='HIGH')
 
 function AlertBadge({ count, hasCritical }) {
   if (!count) return null

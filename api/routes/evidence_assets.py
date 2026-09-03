@@ -31,7 +31,10 @@ async def evidence_signed_token(evidence_id: uuid.UUID, _: Principal = Depends(r
     return {"evidence_id":str(evidence_id),"token":token,"expires_in":ttl,"sha256":row["sha256"]}
 
 @router.get("/{evidence_id}/content-signed")
-async def evidence_content_signed(evidence_id: uuid.UUID, access_token: str = Query(..., min_length=1)):
+async def evidence_content_signed(evidence_id: uuid.UUID, access_token: str | None = Query(None, min_length=1), signed_token: str | None = Query(None, alias="st", min_length=1)):
+    access_token = access_token or signed_token
+    if not access_token:
+        raise HTTPException(401, "Evidence token is required")
     try: verify_asset_token(token=access_token,kind="evidence",resource=str(evidence_id),env_name=EVIDENCE_TOKEN_ENV)
     except (RuntimeError,ValueError) as exc: raise HTTPException(401,"Invalid or expired evidence token") from exc
     row=await _get_evidence(evidence_id); target=(EVIDENCE_ROOT/row["storage_key"]).resolve()
@@ -45,3 +48,22 @@ async def evidence_content_signed(evidence_id: uuid.UUID, access_token: str = Qu
             return Response(payload,media_type=row["media_type"],headers={"Cache-Control":"private, max-age=300","X-Evidence-SHA256":row["sha256"] or "","X-Content-Type-Options":"nosniff"})
         raise HTTPException(404,"Evidence content is unavailable")
     return Response(target.read_bytes(),media_type=row["media_type"],headers={"Cache-Control":"private, max-age=300","X-Evidence-SHA256":row["sha256"] or "","X-Content-Type-Options":"nosniff"})
+
+@router.get("/{evidence_id}/thumbnail")
+async def evidence_thumbnail(evidence_id: uuid.UUID, _: Principal = Depends(require_permission("evidence:read"))):
+    async with Session() as db:
+        row=(await db.execute(text("SELECT storage_key,metadata FROM evidence WHERE id=CAST(:id AS uuid)"),{"id":str(evidence_id)})).mappings().first()
+    if not row: raise HTTPException(404,"Evidence not found")
+    thumbnail_key=(row["metadata"] or {}).get("thumbnail_key")
+    if not thumbnail_key: raise HTTPException(404,"Evidence thumbnail is unavailable")
+    target=(EVIDENCE_ROOT/thumbnail_key).resolve()
+    try: target.relative_to(EVIDENCE_ROOT)
+    except ValueError as exc: raise HTTPException(400,"Invalid evidence thumbnail reference") from exc
+    if target.is_file():
+        return Response(target.read_bytes(),media_type="image/jpeg",headers={"Cache-Control":"private, max-age=300","X-Content-Type-Options":"nosniff"})
+    encrypted=target.with_suffix(target.suffix+".enc")
+    if _FERNET and encrypted.is_file():
+        try: payload=_FERNET.decrypt(encrypted.read_bytes())
+        except InvalidToken as exc: raise HTTPException(500,"Evidence thumbnail decryption failed") from exc
+        return Response(payload,media_type="image/jpeg",headers={"Cache-Control":"private, max-age=300","X-Content-Type-Options":"nosniff"})
+    raise HTTPException(404,"Evidence thumbnail is unavailable")

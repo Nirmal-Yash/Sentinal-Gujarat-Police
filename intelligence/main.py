@@ -15,6 +15,13 @@ def _is_true(value):
     return str(value or "").strip().lower() in {"1", "true", "yes"}
 
 
+def _event_bbox(data):
+    try:
+        return [int(data[key]) for key in (b"x1", b"y1", b"x2", b"y2")]
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def wait_for_services():
     import redis, psycopg2
     for _ in range(40):
@@ -106,6 +113,8 @@ def main():
                                     "match_type": dtype,
                                     "plate_text": plate if plate_confirmed else None,
                                     "description": hit.get("description", ""),
+                                    "bbox": _event_bbox(data),
+                                    "detection_type": "plate",
                                 },
                             })
 

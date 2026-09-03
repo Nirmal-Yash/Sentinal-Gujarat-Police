@@ -361,6 +361,7 @@ html[data-theme="light"] .camera-video-stage {
 .plate-highlight { background: var(--theme-surface-3) !important; color: var(--theme-text) !important; border: 1px solid var(--theme-border-strong); }
 .alert-close,
 .alert-actions button { color: var(--theme-text) !important; }
+.alert-evidence-meta span:last-child { display: none !important; }
 
 /* Accent actions use a readable foreground in both themes. */
 .ui-button-default,

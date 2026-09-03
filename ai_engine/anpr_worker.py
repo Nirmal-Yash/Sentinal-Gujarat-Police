@@ -12,6 +12,7 @@ PREFIX = "test:" if TEST_MODE else ""
 GROUP = "test_anpr_workers" if TEST_MODE else "anpr_workers"
 IN_STREAM = f"{PREFIX}anpr_requests"
 OUT_STREAM = f"{PREFIX}detections"
+CONFIRMED_STREAM = f"{PREFIX}anpr_confirmed" if TEST_MODE else os.getenv("ANPR_CONFIRMED_STREAM", "sentinel:prod:anpr_confirmed")
 RESET_STREAM = f"{PREFIX}cam_resets"
 CONFIRMED_KEY_PREFIX = f"{PREFIX}anpr_confirmed:"
 OUT_MAX = 5000
@@ -182,6 +183,9 @@ def run():
                                              normalization_version="1.1", vote_observations=len(state.observations))
                     event[b"event_type"] = b"vehicle_sighting"
                     r.xadd(OUT_STREAM, event, maxlen=OUT_MAX, approximate=True)
+                    # Keep a dedicated confirmed-ANPR stream for intelligence
+                    # consumers while retaining the canonical detections stream.
+                    r.xadd(CONFIRMED_STREAM, event, maxlen=OUT_MAX, approximate=True)
                     r.setex(f"{CONFIRMED_KEY_PREFIX}{key}", int(max(5, TRACK_EXPIRY)), "1")
                     log.info("Confirmed plate=%s camera=%s track=%s confidence=%.3f observations=%s", plate, cam, track_id, combined, len(state.observations))
                 except Exception:

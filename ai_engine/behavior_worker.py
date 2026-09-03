@@ -21,11 +21,11 @@ FLOW_CROWD_THRESH = float(os.getenv("FLOW_CROWD_THRESH", "3.0"))
 LOITER_FRAMES = max(20, int(os.getenv("LOITER_FRAMES", "50")))
 LOITER_MOT_THRESH = float(os.getenv("LOITER_MOT_THRESH", "0.5"))
 BASELINE_ALPHA = max(0.005, min(0.30, float(os.getenv("CROWD_BASELINE_ALPHA", "0.04"))))
-BASELINE_SIGMA = max(1.0, float(os.getenv("CROWD_DEVIATION_SIGMA", "3.0")))
+BASELINE_SIGMA = max(1.0, float(os.getenv("CROWD_DEVIATION_SIGMA", "2.5")))
 MIN_FLOW = max(0.5, float(os.getenv("CROWD_MIN_FLOW", "3.5")))
 WARMUP_SECS = max(5.0, float(os.getenv("CROWD_BASELINE_WARMUP_SECS", "30")))
 PERSISTENCE_SECS = max(1.0, float(os.getenv("CROWD_PERSISTENCE_SECS", "5")))
-COOLDOWN_SECS = max(5.0, float(os.getenv("CROWD_COOLDOWN_SECS", "60")))
+COOLDOWN_SECS = max(5.0, float(os.getenv("CROWD_COOLDOWN_SECS", "300")))
 RUNNING_DELTA = max(1.0, float(os.getenv("RUNNING_FLOW_DELTA", "6.0")))
 
 

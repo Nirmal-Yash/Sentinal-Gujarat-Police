@@ -90,6 +90,7 @@ def persist(data: dict):
                           VALUES(%s::uuid,%s::uuid,'watchlist_match',%s,%s,%s::jsonb) RETURNING id""",
                           (session_id,detection_id,wl_priority or 'HIGH',timestamp,json.dumps({"plate_text":plate,"camera_label":camera_label,"watchlist_id":str(wl_id),"watchlist_name":wl_name,"description":wl_description or "","track_id":track_id,"test":True})))
                         alert = cur.fetchone()[0]
+                        cur.execute("UPDATE test_alerts SET details=details || CAST(%s AS jsonb) WHERE id=%s", (json.dumps({"human_summary": f"Vehicle {plate or 'with an unreadable plate'} sighted at {camera_label}.", "detection_detail": {"type": "plate_sighting", "plate_text": plate}, "evidence": {"available": False, "description": "Test-mode evidence capture is unavailable for this event."}}), alert))
         conn.commit()
     finally:
         conn.close()
