@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from auth import COOKIE_NAME, Principal, current_principal, principal_from_token, require_authenticated
+from auth import COOKIE_NAME, Principal, principal_from_token, require_authenticated
 from database import get_db
 from services.cctv_gateway import get_cctv_gateway
 
@@ -54,6 +54,10 @@ def _proxy_url(asset_path: str, token: str) -> str:
     return "/api/cctv/" + asset_path.lstrip("/") + separator + "access_token=" + token
 
 
+def _cookie_proxy_url(asset_path: str) -> str:
+    return "/api/cctv/" + asset_path.lstrip("/")
+
+
 def _rewrite_manifest(body: str, manifest_path: str, token: str | None) -> str:
     base_dir = "/" + manifest_path.rsplit("/", 1)[0].strip("/") + "/"
 
@@ -61,15 +65,14 @@ def _rewrite_manifest(body: str, manifest_path: str, token: str | None) -> str:
         value = value.strip()
         if not value or value.startswith("#"):
             return value
-        if token is None:
-            return urljoin(base_dir, value).lstrip("/")
         absolute = urlparse(value)
         if absolute.scheme in {"http", "https"}:
             path = absolute.path.lstrip("/")
             query = f"?{absolute.query}" if absolute.query else ""
-            return _proxy_url(path + query, token)
-        resolved = urljoin(base_dir, value).lstrip("/")
-        return _proxy_url(resolved, token)
+            resolved = path + query
+        else:
+            resolved = urljoin(base_dir, value).lstrip("/")
+        return _proxy_url(resolved, token) if token else _cookie_proxy_url(resolved)
 
     output: list[str] = []
     for line in body.splitlines():
