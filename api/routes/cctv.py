@@ -7,12 +7,12 @@ import time
 from urllib.parse import urljoin, urlparse
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from auth import Principal, current_principal, principal_from_token, require_authenticated
+from auth import COOKIE_NAME, Principal, current_principal, principal_from_token, require_authenticated
 from database import get_db
 from services.cctv_gateway import get_cctv_gateway
 
@@ -107,17 +107,22 @@ async def issue_playback_token(
 
 
 async def _authorize_playback(
+    request: Request,
     camera_id: str,
     access_token: str | None,
     credentials: HTTPAuthorizationCredentials | None,
     db: AsyncSession,
 ) -> str | None:
-    """Prefer a camera-scoped playback token; fall back to the user's JWT session."""
+    """Authorize camera playback with a scoped token, bearer session, or browser session cookie."""
     if access_token:
         _verify_playback_token(access_token, camera_id)
         return access_token
     if credentials and credentials.scheme.lower() == "bearer":
         await principal_from_token(credentials.credentials, db)
+        return None
+    session_token = request.cookies.get(COOKIE_NAME)
+    if session_token:
+        await principal_from_token(session_token, db)
         return None
     raise HTTPException(401, "CCTV playback authentication required")
 
@@ -125,6 +130,7 @@ async def _authorize_playback(
 @router.get("/{asset_path:path}")
 async def proxy_cctv_asset(
     asset_path: str,
+    request: Request,
     access_token: str | None = Query(default=None, min_length=1),
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: AsyncSession = Depends(get_db),
@@ -133,7 +139,7 @@ async def proxy_cctv_asset(
     if not match:
         raise HTTPException(400, "Invalid CCTV asset path")
     camera_id = _camera_id(match.group(1))
-    token = await _authorize_playback(camera_id, access_token, credentials, db)
+    token = await _authorize_playback(request, camera_id, access_token, credentials, db)
 
     gateway = get_cctv_gateway()
     if not gateway.configured:
@@ -161,7 +167,7 @@ async def proxy_cctv_asset(
         return Response(
             _rewrite_manifest(body, asset_path, token),
             media_type="application/vnd.apple.mpegurl",
-            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Access-Control-Allow-Origin": "*", "Vary": "Authorization"},
+            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Access-Control-Allow-Origin": "*", "Vary": "Authorization, Cookie"},
         )
 
     def iterator():
@@ -176,5 +182,5 @@ async def proxy_cctv_asset(
     return StreamingResponse(
         iterator(),
         media_type=safe_type,
-        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Access-Control-Allow-Origin": "*", "Vary": "Authorization"},
+        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Access-Control-Allow-Origin": "*", "Vary": "Authorization, Cookie"},
     )
