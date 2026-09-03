@@ -1,7 +1,6 @@
 import os, time, uuid, re
 from datetime import datetime, date
 from typing import Any, Optional
-import jwt
 from sqlalchemy import Column, String, Float, Boolean, DateTime, Date, Text, Integer, BigInteger
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from pgvector.sqlalchemy import Vector
@@ -32,17 +31,13 @@ class Camera(Base):
     def effective_fps(self): return self.observed_source_fps if self.observed_source_fps is not None else (self.observed_fps if self.observed_fps is not None else self.fps)
     @property
     def playback_id(self):
-        """Canonical provider playback id: external_id cam01..cam30, then stream_id fallback."""
         external = (self.external_id or "").strip()
-        if re.fullmatch(r"cam\d{2}", external, re.IGNORECASE):
-            return external.lower()
-        if self.stream_id is None:
-            return None
+        if re.fullmatch(r"cam\d{2}", external, re.IGNORECASE): return external.lower()
+        if self.stream_id is None: return None
         return f"cam{int(self.stream_id):02d}"
     @property
     def stream_url(self):
-        if self.rtsp_url:
-            return self.rtsp_url
+        if self.rtsp_url: return self.rtsp_url
         if self.stream_id is None:return None
         return f"rtsp://{os.getenv('RTSP_HOST_IP','103.250.160.189')}:8554/stream/cam{int(self.stream_id):02d}"
 
@@ -75,24 +70,18 @@ class CameraOut(BaseModel):
         stream_id=getattr(value,"stream_id",None)
         external_id=getattr(value,"external_id",None)
         if isinstance(value,dict):
-            stream_id=value.get("stream_id")
-            external_id=value.get("external_id")
+            stream_id=value.get("stream_id"); external_id=value.get("external_id")
         provider_id=None
-        if external_id and re.fullmatch(r"cam\d{2}", str(external_id).strip(), re.IGNORECASE):
-            provider_id=str(external_id).strip().lower()
-        elif stream_id is not None:
-            provider_id=f"cam{int(stream_id):02d}"
+        if external_id and re.fullmatch(r"cam\d{2}", str(external_id).strip(), re.IGNORECASE): provider_id=str(external_id).strip().lower()
+        elif stream_id is not None: provider_id=f"cam{int(stream_id):02d}"
         if provider_id:
-            number=int(provider_id[3:])
             rtsp_host=os.getenv("RTSP_HOST_IP","103.250.160.189")
             if isinstance(value,dict): value=dict(value)
             else: value={name:getattr(value,name) for name in cls.model_fields if hasattr(value,name)}
-            secret=(os.getenv("SECRET_KEY","") or "").strip()
-            playback_token=""
-            if secret:
-                playback_token=jwt.encode({"sub":"cctv-hls","camera":provider_id,"exp":int(time.time())+300},secret,algorithm="HS256")
-            token_query=f"?access_token={playback_token}" if playback_token else ""
-            value["hls_url"]=f"/api/cctv/{provider_id}/index.m3u8{token_query}"
+            # Browser playback is authenticated by the same-origin session cookie.
+            # Keep the URL stable so five-minute playback signing tokens cannot expire
+            # underneath an otherwise healthy live feed.
+            value["hls_url"]=f"/api/cctv/{provider_id}/index.m3u8"
             if not value.get("rtsp_url"): value["rtsp_url"]=f"rtsp://{rtsp_host}:8554/stream/{provider_id}"
             value["stream_url"]=value["rtsp_url"]
             if not value.get("whep_url"): value["whep_url"]=f"http://{rtsp_host}:8889/stream/{provider_id}/whep"
