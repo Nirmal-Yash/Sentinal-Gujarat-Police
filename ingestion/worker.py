@@ -18,6 +18,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 DB_URL = os.getenv("DATABASE_URL", "")
 FRAME_FPS = max(0.5, float(os.getenv("FRAME_FPS", "3")))
 JPEG_Q = int(os.getenv("JPEG_QUALITY", "70"))
+SNAPSHOT_TTL = max(10, int(os.getenv("SNAPSHOT_TTL_SECS", "30")))
 MAX_CAMS = max(1, int(os.getenv("MAX_CONCURRENT_CAMERAS", "50")))
 CATALOGUE_SYNC_INTERVAL = max(30, int(os.getenv("CATALOGUE_SYNC_INTERVAL", "300")))
 RECONNECT_MAX_DELAY = max(5, int(os.getenv("RECONNECT_MAX_DELAY", "30")))
@@ -140,7 +141,12 @@ class CameraWorker:
             b"codec": self.codec.encode(),
         }
         self.r.xadd(STREAM_KEY, fields, maxlen=STREAM_MAX, approximate=True)
-        self.r.set(f"snapshot:{self.cam_id}", frame_b64.encode(), ex=10)
+        # Keep both canonical registry and provider keys.  The UUID is the API
+        # identity; the provider alias is a cheap recovery path for streams
+        # that were restarted while a registry row was being refreshed.
+        encoded = frame_b64.encode()
+        self.r.set(f"snapshot:{self.cam_id}", encoded, ex=SNAPSHOT_TTL)
+        self.r.set(f"snapshot:cam{int(self.sid):02d}", encoded, ex=SNAPSHOT_TTL)
 
     def _stream_fps(self, cap):
         reported = cap.get(cv2.CAP_PROP_FPS) if cap.isOpened() else 0.0

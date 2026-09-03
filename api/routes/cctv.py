@@ -118,8 +118,14 @@ async def _authorize_playback(
 ) -> str | None:
     """Authorize camera playback with a scoped token, bearer session, or browser session cookie."""
     if access_token:
-        _verify_playback_token(access_token, camera_id)
-        return access_token
+        try:
+            _verify_playback_token(access_token, camera_id)
+            return access_token
+        except HTTPException:
+            # URL tokens are short-lived; use the authenticated session when one
+            # is present so a healthy feed survives token expiry.
+            if not ((credentials and credentials.scheme.lower() == "bearer") or request.cookies.get(COOKIE_NAME)):
+                raise
     if credentials and credentials.scheme.lower() == "bearer":
         await principal_from_token(credentials.credentials, db)
         return None

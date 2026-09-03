@@ -365,6 +365,53 @@ html[data-theme="light"] .camera-video-stage {
 .alert-actions button { color: var(--theme-text) !important; }
 .alert-evidence-meta span:last-child { display: none !important; }
 
+/* Metadata dialogs must remain readable over the legacy dark inline skin. */
+section[role="dialog"][aria-label*="metadata"] {
+  background: var(--theme-surface) !important;
+  color: var(--theme-text) !important;
+  border-color: var(--theme-border-strong) !important;
+}
+section[role="dialog"][aria-label*="metadata"] header {
+  background: var(--theme-surface-2) !important;
+  color: var(--theme-text) !important;
+  border-bottom-color: var(--theme-border) !important;
+}
+section[role="dialog"][aria-label*="metadata"] header span,
+section[role="dialog"][aria-label*="metadata"] > div span:last-child {
+  color: var(--theme-text-2) !important;
+}
+section[role="dialog"][aria-label*="metadata"] > div > div {
+  border-bottom-color: var(--theme-border) !important;
+}
+section[role="dialog"][aria-label*="metadata"] header button[aria-label="Close metadata"] {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 5px !important;
+  width: auto !important;
+  min-width: 66px !important;
+  height: 34px !important;
+  flex: 0 0 auto !important;
+  padding: 0 8px !important;
+  background: var(--theme-surface) !important;
+  color: var(--theme-text) !important;
+  border: 1px solid var(--theme-border-strong) !important;
+  border-radius: 8px !important;
+  cursor: pointer !important;
+}
+section[role="dialog"][aria-label*="metadata"] header button[aria-label="Close metadata"]::after {
+  content: "Close";
+  font-size: 11px;
+  font-weight: 800;
+}
+section[role="dialog"][aria-label*="metadata"] header button[aria-label="Close metadata"]:hover,
+section[role="dialog"][aria-label*="metadata"] header button[aria-label="Close metadata"]:focus-visible {
+  background: var(--accent-soft) !important;
+  color: var(--theme-accent-strong) !important;
+  border-color: var(--accent-border) !important;
+}
+section[role="dialog"][aria-label*="metadata"] header button[aria-label="Close metadata"] svg { stroke: currentColor !important; }
+
 /* Accent actions use a readable foreground in both themes. */
 .ui-button-default,
 .sentinel-map-search label,

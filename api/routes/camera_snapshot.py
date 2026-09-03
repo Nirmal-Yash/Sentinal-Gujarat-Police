@@ -80,6 +80,21 @@ async def snapshot(
     client = redis_lib.from_url(REDIS_URL, decode_responses=False)
     try:
         data = client.get(f"snapshot:{cam_id}")
+        if not data:
+            # Ingestion writes the UUID key, but a short restart window can
+            # leave only the provider alias.  Read that alias before reporting
+            # a false unavailable state.
+            data = client.get(f"snapshot:{provider_id}")
+        if not data:
+            # Last-resort recovery for frames already accepted into the stream
+            # when the separate snapshot key expired between requests.
+            for _, fields in client.xrevrange("raw_frames", count=200):
+                value = fields.get(b"cam_id") or fields.get("cam_id")
+                value_text = value.decode(errors="ignore") if isinstance(value, bytes) else str(value or "")
+                if value_text == str(cam_id):
+                    data = fields.get(b"frame") or fields.get("frame")
+                    if data:
+                        break
     finally:
         try:
             client.close()

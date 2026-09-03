@@ -39,7 +39,7 @@ class Camera(Base):
     def stream_url(self):
         if self.rtsp_url: return self.rtsp_url
         if self.stream_id is None:return None
-        return f"rtsp://{os.getenv('RTSP_HOST_IP','103.250.160.189')}:8554/stream/cam{int(self.stream_id):02d}"
+        return f"rtsp://{os.getenv('RTSP_HOST_IP','103.250.160.189')}:{int(os.getenv('RTSP_PORT','8554'))}/stream/cam{int(self.stream_id):02d}"
 
 class Alert(Base):
     __tablename__="alerts"
@@ -78,10 +78,13 @@ class CameraOut(BaseModel):
             rtsp_host=os.getenv("RTSP_HOST_IP","103.250.160.189")
             if isinstance(value,dict): value=dict(value)
             else: value={name:getattr(value,name) for name in cls.model_fields if hasattr(value,name)}
-            # Browser playback is authenticated by the same-origin session cookie.
-            # Keep the URL stable so five-minute playback signing tokens cannot expire
-            # underneath an otherwise healthy live feed.
-            value["hls_url"]=f"/api/cctv/{provider_id}/index.m3u8"
+            playback_token=""
+            secret=(os.getenv("SECRET_KEY","") or "").strip()
+            if secret:
+                import jwt
+                playback_token=jwt.encode({"sub":"cctv-hls","camera":provider_id,"exp":int(time.time())+300},secret,algorithm="HS256")
+            token_query=f"?access_token={playback_token}" if playback_token else ""
+            value["hls_url"]=f"/api/cctv/{provider_id}/index.m3u8{token_query}"
             if not value.get("rtsp_url"): value["rtsp_url"]=f"rtsp://{rtsp_host}:8554/stream/{provider_id}"
             value["stream_url"]=value["rtsp_url"]
             if not value.get("whep_url"): value["whep_url"]=f"http://{rtsp_host}:8889/stream/{provider_id}/whep"

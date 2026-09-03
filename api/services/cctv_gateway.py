@@ -22,6 +22,8 @@ class CctvGateway:
     def __init__(self, password: str, base_url: str = CCTV_BASE, timeout: float = 15.0):
         self.password = password or ""
         self.base_url = base_url.rstrip("/")
+        self.login_path = os.getenv("CCTV_LOGIN_PATH", LOGIN_PATH)
+        self.catalogue_path = os.getenv("CCTV_CATALOGUE_PATH", CATALOGUE_PATH)
         self.timeout = timeout
         self._session = requests.Session()
         self._session.headers.update({"User-Agent": "Sentinel-CCTV-Gateway/1.0"})
@@ -38,7 +40,7 @@ class CctvGateway:
             raise RuntimeError("CCTV_PASSWORD is not configured")
         self._session.cookies.clear()
         response = self._session.post(
-            f"{self.base_url}{LOGIN_PATH}",
+            f"{self.base_url}{self.login_path}",
             data={"password": self.password},
             timeout=self.timeout,
             allow_redirects=False,
@@ -82,7 +84,7 @@ class CctvGateway:
             return response
 
     def catalogue(self) -> list[dict]:
-        response = self.request(CATALOGUE_PATH)
+        response = self.request(self.catalogue_path)
         try:
             response.raise_for_status()
             payload = response.json()
@@ -118,8 +120,12 @@ def get_cctv_gateway() -> CctvGateway:
     global _gateway
     password = os.getenv("CCTV_PASSWORD", "")
     base_url = os.getenv("CCTV_BASE_URL", CCTV_BASE).rstrip("/")
-    if _gateway is None or _gateway.password != password or _gateway.base_url != base_url:
+    login_path = os.getenv("CCTV_LOGIN_PATH", LOGIN_PATH)
+    catalogue_path = os.getenv("CCTV_CATALOGUE_PATH", CATALOGUE_PATH)
+    if (_gateway is None or _gateway.password != password or _gateway.base_url != base_url
+            or _gateway.login_path != login_path or _gateway.catalogue_path != catalogue_path):
         with _gateway_lock:
-            if _gateway is None or _gateway.password != password or _gateway.base_url != base_url:
+            if (_gateway is None or _gateway.password != password or _gateway.base_url != base_url
+                    or _gateway.login_path != login_path or _gateway.catalogue_path != catalogue_path):
                 _gateway = CctvGateway(password=password, base_url=base_url)
     return _gateway

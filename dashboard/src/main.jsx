@@ -14,7 +14,7 @@ applyTheme(resolveInitialTheme(), { announce: false })
 
 // Metadata is intentionally always expanded; the dialog exposes only its close action.
 const metadataStyle = document.createElement('style')
-metadataStyle.textContent = 'section[role="dialog"][aria-label*="metadata"] header > button:first-of-type{display:none!important}'
+metadataStyle.textContent = 'section[role="dialog"][aria-label*="metadata"] header > button[aria-label="Collapse metadata"],section[role="dialog"][aria-label*="metadata"] header > button[aria-label="Expand metadata"]{display:none!important}'
 document.head.appendChild(metadataStyle)
 
 installSentinelRuntimeGuards()
