@@ -5,12 +5,12 @@ import os
 import uuid
 
 import redis as redis_lib
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
-from auth import Principal, require_authenticated
+from auth import COOKIE_NAME, Principal, current_principal, require_authenticated, principal_from_token
 from database import get_db
 from signed_asset_tokens import issue_asset_token, verify_asset_token
 
@@ -58,19 +58,24 @@ async def snapshot_token(
 @router.get("/{cam_id}/snapshot")
 async def snapshot(
     cam_id: uuid.UUID,
+    request: Request,
     access_token: str | None = Query(None, min_length=1),
     signed_token: str | None = Query(None, alias="st", min_length=1),
     db: AsyncSession = Depends(get_db),
 ):
-    access_token = access_token or signed_token
-    if not access_token:
-        raise HTTPException(401, "Snapshot token is required")
+    token = access_token or signed_token
     row = await _camera(db, cam_id)
     provider_id = _provider_id(row)
-    try:
-        verify_asset_token(token=access_token, kind="snapshot", resource=provider_id, env_name=SNAPSHOT_TOKEN_SECRET_ENV)
-    except (RuntimeError, ValueError) as exc:
-        raise HTTPException(401, "Invalid or expired snapshot token") from exc
+    if token:
+        try:
+            verify_asset_token(token=token, kind="snapshot", resource=provider_id, env_name=SNAPSHOT_TOKEN_SECRET_ENV)
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(401, "Invalid or expired snapshot token") from exc
+    else:
+        session_token = request.cookies.get(COOKIE_NAME)
+        if not session_token:
+            raise HTTPException(401, "Snapshot authentication required")
+        await principal_from_token(session_token, db)
 
     client = redis_lib.from_url(REDIS_URL, decode_responses=False)
     try:
