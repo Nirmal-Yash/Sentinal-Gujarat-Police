@@ -418,3 +418,48 @@ section[role="dialog"][aria-label*="metadata"] header button[aria-label="Close m
 button[style*="var(--accent)"] { color: #140b04 !important; }
 html[data-theme="light"] .ui-button-default,
 html[data-theme="light"] .ui-button-default:hover { color: #140b04 !important; }
+
+/* Camera Registry modal: explicit contrast and viewport containment. */
+.camera-registry-overlay,
+.camera-registry-modal { box-sizing:border-box; }
+.camera-registry-action {
+  min-height:34px !important;
+  color:var(--text) !important;
+  background:var(--surface2) !important;
+  border:1px solid var(--border-strong) !important;
+}
+.camera-registry-action:hover:not(:disabled),
+.camera-registry-action:focus-visible {
+  color:var(--text) !important;
+  background:var(--accent-soft) !important;
+  border-color:var(--accent-border) !important;
+  outline:none !important;
+}
+.camera-registry-action-primary {
+  color:var(--on-accent) !important;
+  background:var(--accent) !important;
+  border-color:var(--accent) !important;
+}
+.camera-registry-action-primary:hover:not(:disabled),
+.camera-registry-action-primary:focus-visible {
+  color:var(--on-accent) !important;
+  background:var(--accent-strong) !important;
+  border-color:var(--accent-strong) !important;
+}
+.camera-registry-close {
+  color:var(--text) !important;
+  background:var(--surface2) !important;
+  border:1px solid var(--border-strong) !important;
+}
+.camera-registry-close:hover,
+.camera-registry-close:focus-visible {
+  color:var(--accent-strong) !important;
+  background:var(--accent-soft) !important;
+  border-color:var(--accent-border) !important;
+  outline:none !important;
+}
+@media(max-width:760px){
+  .camera-registry-choice-grid{grid-template-columns:1fr !important}
+  .camera-registry-form-body{grid-template-columns:1fr !important;overflow:auto !important}
+  .camera-registry-map{min-height:280px !important}
+}

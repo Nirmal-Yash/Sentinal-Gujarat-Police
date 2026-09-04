@@ -48,14 +48,18 @@ async def _analyze(file: UploadFile) -> dict:
         raise HTTPException(413, "Registry import exceeds the 5 MiB limit")
     try:
         rows, headers = _parse(raw, suffix)
-    except (UnicodeDecodeError, ValueError, OSError) as exc:
-        raise HTTPException(422, "Registry file could not be parsed; CSV must be UTF-8 and XLSX must have a header row") from exc
-    if not rows:
-        raise HTTPException(422, "Registry file contains no data rows")
-    mapping, header_issues = normalize_headers(headers)
-    analyses = [analyze_row(row, number, mapping) for number, row in enumerate(rows, start=2)]
-    summary = summarize(analyses, header_issues)
-    return {"filename": file.filename, "headers": headers, "header_mapping": mapping, "summary": summary, "rows": analyses, "raw": raw, "suffix": suffix}
+        if not rows:
+            raise HTTPException(422, "Registry file contains no data rows")
+        mapping, header_issues = normalize_headers(headers)
+        analyses = [analyze_row(row, number, mapping) for number, row in enumerate(rows, start=2)]
+        summary = summarize(analyses, header_issues)
+        return {"filename": file.filename, "headers": headers, "header_mapping": mapping, "summary": summary, "rows": analyses, "raw": raw, "suffix": suffix}
+    except HTTPException:
+        raise
+    except (UnicodeDecodeError, ValueError, OSError, KeyError, TypeError, IndexError) as exc:
+        raise HTTPException(422, "Registry file could not be parsed or validated; upload a valid CSV/XLSX registry file.") from exc
+    except Exception as exc:
+        raise HTTPException(422, "Registry file could not be processed; upload a valid CSV/XLSX registry file.") from exc
 
 
 def _public_analysis(data: dict) -> dict:
