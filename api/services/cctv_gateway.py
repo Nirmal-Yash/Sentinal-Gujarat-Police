@@ -43,7 +43,7 @@ class CctvGateway:
             f"{self.base_url}{self.login_path}",
             data={"password": self.password},
             timeout=self.timeout,
-            allow_redirects=False,
+            allow_redirects=True,
         )
         if response.status_code not in {200, 302, 303}:
             raise RuntimeError(f"CCTV login failed with HTTP {response.status_code}")

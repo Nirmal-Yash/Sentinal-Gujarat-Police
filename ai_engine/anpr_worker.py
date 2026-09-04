@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Adaptive ANPR consumer for tracked vehicle crops produced by the detector."""
 import os, time, base64, uuid, logging, threading
-from concurrent.futures import ProcessPoolExecutor, get_context
+from concurrent.futures import ProcessPoolExecutor
+from multiprocessing import get_context
 from queue import SimpleQueue
 import cv2, numpy as np, redis, easyocr, yaml
 from event_schema import detection_event

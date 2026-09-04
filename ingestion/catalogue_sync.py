@@ -75,7 +75,8 @@ class CctvSession:
     def login(self) -> None:
         if not CCTV_PASSWORD:
             raise RuntimeError("CCTV_PASSWORD is required for current CCTV catalogue access")
-        response = self.session.post(f"{CCTV_BASE_URL}{CCTV_LOGIN_PATH}", data={"password": CCTV_PASSWORD}, timeout=15, allow_redirects=False)
+        response = self.session.post(f"{CCTV_BASE_URL}{CCTV_LOGIN_PATH}", data={"password": CCTV_PASSWORD}, timeout=15, allow_redirects=True)
+        log.info("CCTV login response: HTTP %s, final_url=%s, cookies=%s", response.status_code, response.url, bool(self.session.cookies.get_dict()))
         if response.status_code not in {200, 302, 303}:
             raise RuntimeError(f"CCTV login failed with HTTP {response.status_code}")
         if not self.session.cookies.get_dict():
