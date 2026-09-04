@@ -67,39 +67,86 @@ def _department(name: str, location: str):
 
 
 class CctvSession:
-    """Password-only CCTV session. Credentials remain inside ingestion."""
+    """Password-only CCTV connector; no username/email is ever required."""
     def __init__(self):
         self.session = requests.Session()
-        self.session.headers.update({"User-Agent": "Sentinel-Ingestion/1.0"})
+        self.session.headers.update({
+            "User-Agent": "Sentinel-Ingestion/1.0",
+            "Accept": "application/json, text/plain, */*",
+        })
+        self.access_token = None
 
     def login(self) -> None:
         if not CCTV_PASSWORD:
             raise RuntimeError("CCTV_PASSWORD is required for current CCTV catalogue access")
-        response = self.session.post(f"{CCTV_BASE_URL}{CCTV_LOGIN_PATH}", data={"password": CCTV_PASSWORD}, timeout=15, allow_redirects=True)
-        log.info("CCTV login response: HTTP %s, final_url=%s, cookies=%s", response.status_code, response.url, bool(self.session.cookies.get_dict()))
-        if response.status_code not in {200, 302, 303}:
-            raise RuntimeError(f"CCTV login failed with HTTP {response.status_code}")
-        if not self.session.cookies.get_dict():
-            raise RuntimeError("CCTV login did not return a session cookie")
+        response = self.session.post(
+            f"{CCTV_BASE_URL}{CCTV_LOGIN_PATH}",
+            data={"password": CCTV_PASSWORD},
+            headers={"Referer": f"{CCTV_BASE_URL}/"},
+            timeout=15,
+            allow_redirects=True,
+        )
+        try:
+            content_type = response.headers.get("Content-Type", "")
+            payload = None
+            if "json" in content_type.lower():
+                try:
+                    payload = response.json()
+                except ValueError:
+                    payload = None
+            if response.status_code not in {200, 204, 302, 303}:
+                raise RuntimeError(f"CCTV login failed with HTTP {response.status_code}")
+            if isinstance(payload, dict):
+                for key in ("access_token", "token", "jwt"):
+                    value = payload.get(key)
+                    if isinstance(value, str) and value.strip():
+                        self.access_token = value.strip()
+                        self.session.headers["Authorization"] = f"Bearer {self.access_token}"
+                        break
+            log.info(
+                "CCTV login response: HTTP %s final_url=%s cookie=%s bearer=%s content_type=%s",
+                response.status_code, response.url,
+                bool(self.session.cookies.get_dict()),
+                bool(self.access_token), content_type,
+            )
+        finally:
+            response.close()
 
     def catalogue(self) -> list[dict]:
         self.login()
-        response = self.session.get(f"{CCTV_BASE_URL}{CCTV_CATALOGUE_PATH}", timeout=15, allow_redirects=False)
-        if response.status_code in {401, 403, 302, 303}:
-            self.login()
-            response.close()
-            response = self.session.get(f"{CCTV_BASE_URL}{CCTV_CATALOGUE_PATH}", timeout=15, allow_redirects=False)
+        response = self.session.get(
+            f"{CCTV_BASE_URL}{CCTV_CATALOGUE_PATH}",
+            timeout=15,
+            allow_redirects=False,
+        )
         try:
+            if response.status_code in {401, 403, 302, 303}:
+                response.close()
+                self.login()
+                response = self.session.get(
+                    f"{CCTV_BASE_URL}{CCTV_CATALOGUE_PATH}",
+                    timeout=15,
+                    allow_redirects=False,
+                )
+            if response.status_code in {401, 403, 302, 303}:
+                raise RuntimeError(
+                    f"CCTV catalogue authentication rejected (HTTP {response.status_code})"
+                )
             response.raise_for_status()
-            payload = response.json()
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                raise RuntimeError("CCTV catalogue did not return valid JSON") from exc
+            if isinstance(payload, dict):
+                payload = payload.get("cameras") or payload.get("streams") or payload.get("data")
+            if not isinstance(payload, list):
+                raise RuntimeError("CCTV catalogue is not a JSON array")
+            cameras = [item for item in payload if isinstance(item, dict)]
+            if not cameras:
+                raise RuntimeError("CCTV catalogue returned no camera records")
+            return cameras
         finally:
             response.close()
-        if not isinstance(payload, list):
-            raise RuntimeError("CCTV catalogue is not a JSON array")
-        cameras = [item for item in payload if isinstance(item, dict)]
-        if not cameras:
-            raise RuntimeError("CCTV catalogue returned no camera records")
-        return cameras
 
 
 def fetch_catalogue(retries: int = 5):
