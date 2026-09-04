@@ -38,7 +38,7 @@ function LivePlayer({cam,muted=true,managed=false,active=true,onLiveStatus,onAsp
   const start=useCallback(()=>{
     cleanup(); const video=videoRef.current; if(!video || !sources.hls)return
     setState('LOADING'); setLive(false)
-    const fail=()=>{cleanup();setLive(false);setState('ERROR');clearTimeout(retryRef.current);retryRef.current=setTimeout(()=>start(),30000)}
+    const fail=()=>{\n      cleanup(); setLive(false);\n      if(cam?.is_test && cam?.stream_url){\n        setState('FALLBACK');\n        video.src=cam.stream_url;\n        video.load();\n        const fallbackTimer=setTimeout(()=>{if(!wasLiveRef.current){setState('ERROR')}},8000);\n        video.onplaying=()=>{clearTimeout(fallbackTimer);wasLiveRef.current=true;setLive(true);setState('ACTIVE')};\n        return;\n      }\n      setState('ERROR');\n      clearTimeout(retryRef.current);\n      retryRef.current=setTimeout(()=>start(),30000);\n    }
     if(Hls.isSupported()){
       const hls=new Hls({enableWorker:true,lowLatencyMode:true,backBufferLength:6,maxBufferLength:12,maxMaxBufferLength:24,liveSyncDurationCount:3,liveMaxLatencyDurationCount:6,maxBufferHole:.5,fragLoadingMaxRetry:3,fragLoadingRetryDelay:700,manifestLoadingMaxRetry:3,manifestLoadingRetryDelay:700,xhrSetup:(xhr)=>{xhr.withCredentials=true}})
       hls.attachMedia(video);hls.loadSource(sources.hls)
@@ -59,7 +59,7 @@ function LivePlayer({cam,muted=true,managed=false,active=true,onLiveStatus,onAsp
   return <div style={{position:'absolute',inset:0,background:'#000'}}>
     {visibleImage&&<img src={snapshot} alt="Latest camera frame" onLoad={metadata} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:fit,zIndex:1}}/>}
     <video ref={videoRef} autoPlay muted={muted} playsInline loop={cam?.is_test} onPlaying={markPlaying} onLoadedMetadata={metadata} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:fit,display:state==='ACTIVE'||state==='LOADING'?'block':'none',zIndex:2}}/>
-    {state==='ERROR'&&<div style={{position:'absolute',inset:0,zIndex:3,display:'grid',placeItems:'center',background:'rgba(0,0,0,.28)',color:'rgba(255,255,255,.75)',fontSize:11}}>Camera unavailable</div>}
+    {state==='ERROR'&&<div style={{position:'absolute',inset:0,zIndex:3,display:'grid',placeItems:'center',background:'rgba(0,0,0,.28)',color:'rgba(255,255,255,.75)',fontSize:11}}>{cam?.is_test?'Test video unavailable':'Camera unavailable'}</div>}
     {state==='LOADING'&&!snapshot&&<div style={{position:'absolute',inset:0,zIndex:3,display:'grid',placeItems:'center',color:'rgba(255,255,255,.65)',fontSize:11}}>Connecting…</div>}
     {live&&<span style={{position:'absolute',right:8,bottom:6,zIndex:5,color:'#fff',fontSize:9,fontWeight:800,letterSpacing:.5}}>● LIVE</span>}
   </div>
