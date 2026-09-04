@@ -39,7 +39,7 @@ function LivePlayer({cam,muted=true,managed=false,active=true,onLiveStatus,onAsp
     setState('LOADING'); setLive(false)
     const fail=()=>{cleanup();setLive(false);setState('ERROR');clearTimeout(retryRef.current);retryRef.current=setTimeout(()=>start(),30000)}
     if(Hls.isSupported()){
-      const hls=new Hls({enableWorker:true,lowLatencyMode:true,backBufferLength:6,maxBufferLength:12,maxMaxBufferLength:24,liveSyncDurationCount:3,liveMaxLatencyDurationCount:6,maxBufferHole:.5,fragLoadingMaxRetry:3,fragLoadingRetryDelay:700,manifestLoadingMaxRetry:3,manifestLoadingRetryDelay:700})
+      const hls=new Hls({enableWorker:true,lowLatencyMode:true,backBufferLength:6,maxBufferLength:12,maxMaxBufferLength:24,liveSyncDurationCount:3,liveMaxLatencyDurationCount:6,maxBufferHole:.5,fragLoadingMaxRetry:3,fragLoadingRetryDelay:700,manifestLoadingMaxRetry:3,manifestLoadingRetryDelay:700,xhrSetup:(xhr)=>{xhr.withCredentials=true}})
       hls.attachMedia(video);hls.loadSource(sources.hls)
       hls.on(Hls.Events.ERROR,(_,d)=>{if(!d.fatal)return;if(d.type===Hls.ErrorTypes.MEDIA_ERROR){try{hls.recoverMediaError();return}catch{}}if(d.type===Hls.ErrorTypes.NETWORK_ERROR){try{hls.startLoad();return}catch{}}fail()})
       hlsRef.current=hls
