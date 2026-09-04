@@ -38,7 +38,20 @@ function LivePlayer({cam,muted=true,managed=false,active=true,onLiveStatus,onAsp
   const start=useCallback(()=>{
     cleanup(); const video=videoRef.current; if(!video || !sources.hls)return
     setState('LOADING'); setLive(false)
-    const fail=()=>{\n      cleanup(); setLive(false);\n      if(cam?.is_test && cam?.stream_url){\n        setState('FALLBACK');\n        video.src=cam.stream_url;\n        video.load();\n        const fallbackTimer=setTimeout(()=>{if(!wasLiveRef.current){setState('ERROR')}},8000);\n        video.onplaying=()=>{clearTimeout(fallbackTimer);wasLiveRef.current=true;setLive(true);setState('ACTIVE')};\n        return;\n      }\n      setState('ERROR');\n      clearTimeout(retryRef.current);\n      retryRef.current=setTimeout(()=>start(),30000);\n    }
+    const fail=()=>{
+      cleanup(); setLive(false);
+      if(cam?.is_test && cam?.stream_url){
+        setState('FALLBACK');
+        video.src=cam.stream_url;
+        video.load();
+        const fallbackTimer=setTimeout(()=>{if(!wasLiveRef.current){setState('ERROR')}},8000);
+        video.onplaying=()=>{clearTimeout(fallbackTimer);wasLiveRef.current=true;setLive(true);setState('ACTIVE')};
+        return;
+      }
+      setState('ERROR');
+      clearTimeout(retryRef.current);
+      retryRef.current=setTimeout(()=>start(),30000);
+    }
     if(Hls.isSupported()){
       const hls=new Hls({enableWorker:true,lowLatencyMode:true,backBufferLength:6,maxBufferLength:12,maxMaxBufferLength:24,liveSyncDurationCount:3,liveMaxLatencyDurationCount:6,maxBufferHole:.5,fragLoadingMaxRetry:3,fragLoadingRetryDelay:700,manifestLoadingMaxRetry:3,manifestLoadingRetryDelay:700,xhrSetup:(xhr)=>{xhr.withCredentials=true}})
       hls.attachMedia(video);hls.loadSource(sources.hls)
