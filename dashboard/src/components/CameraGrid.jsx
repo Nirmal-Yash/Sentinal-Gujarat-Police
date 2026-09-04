@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, memo } from 'react'
+import { createPortal } from 'react-dom'
 import Hls from 'hls.js'
 import { useCameraPlayerSlot } from './cameraPlayerManager'
 
@@ -99,6 +100,22 @@ export default function CameraGrid({cameras=[],alertsByCam={},onLocate,focusCame
   return <div style={{display:'flex',flexDirection:'column',width:'100%',maxWidth:'100%',minWidth:0,height:'100%',background:'var(--bg)',overflow:'hidden',boxSizing:'border-box'}}>
     <header style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',borderBottom:'1px solid var(--border)',background:'var(--surface)'}}><b className="camera-grid-primary-metric">{cameras.length} Cameras</b>{pipelineStats&&<span className="camera-grid-secondary-metrics"><span className="camera-grid-metric-value">Frames {Number(pipelineStats.raw_frames||0).toLocaleString()}</span><span aria-hidden="true">·</span><span className="camera-grid-metric-value">Detections {Number(pipelineStats.detections||0).toLocaleString()}</span></span>}<div style={{marginLeft:'auto',display:'flex',gap:3}}>{[2,3,4,5].map(n=><button key={n} onClick={()=>{setCols(n);localStorage.setItem('sentinel.camera-grid.columns.v1',String(n))}} aria-label={`${n} camera columns`} style={{width:28,height:26,borderRadius:5,border:`1px solid ${cols===n?'var(--accent)':'var(--border)'}`,background:cols===n?'var(--accent)':'var(--surface2)',color:cols===n?'var(--on-accent)':'var(--text)',cursor:'pointer'}}>{n}</button>)}</div></header>
     <main style={{flex:1,minWidth:0,minHeight:0,width:'100%',maxWidth:'100%',overflowY:'auto',overflowX:'hidden',padding:10,boxSizing:'border-box'}}><div style={{display:'grid',width:'100%',minWidth:0,maxWidth:'100%',gridTemplateColumns:`repeat(${cols},minmax(0,1fr))`,gap:8,boxSizing:'border-box'}}>{cameras.map(cam=><CameraCard key={cam.id} cam={cam} alertCount={alertsByCam[cam.id]||0} onFocus={open} onLocate={onLocate}/>)}</div></main>
-    {focused&&<div onClick={e=>e.target===e.currentTarget&&setFocused(null)} className="camera-fullscreen-overlay"><section className="camera-fullscreen-panel"><header className="camera-fullscreen-header"><div className="camera-fullscreen-title"><b>CAM-{paddedId(focused)}</b><span>{focused.name||'Camera'}</span></div><button type="button" onClick={()=>setFocused(null)} className="camera-fullscreen-close">Close</button></header><div className="camera-fullscreen-stage" style={{aspectRatio:streamAspect(focused)}}><LivePlayer cam={focused} muted={false} active managed={false} fit="contain"/></div></section></div>}
+    {focused&&typeof document!=='undefined'&&createPortal(
+      <div onClick={e=>e.target===e.currentTarget&&setFocused(null)} className="camera-fullscreen-overlay">
+        <section className="camera-fullscreen-panel" aria-label={`Camera CAM-${paddedId(focused)} fullscreen view`}>
+          <header className="camera-fullscreen-header">
+            <div className="camera-fullscreen-title">
+              <b>CAM-{paddedId(focused)}</b>
+              <span>{focused.name||'Camera'}</span>
+            </div>
+            <button type="button" onClick={()=>setFocused(null)} className="camera-fullscreen-close">Close</button>
+          </header>
+          <div className="camera-fullscreen-stage" style={{aspectRatio:streamAspect(focused)}}>
+            <LivePlayer cam={focused} muted={false} active managed={false} fit="contain"/>
+          </div>
+        </section>
+      </div>,
+      document.body
+    )}
   </div>
 }

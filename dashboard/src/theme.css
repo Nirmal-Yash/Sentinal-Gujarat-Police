@@ -463,3 +463,62 @@ html[data-theme="light"] .ui-button-default:hover { color: #140b04 !important; }
   .camera-registry-form-body{grid-template-columns:1fr !important;overflow:auto !important}
   .camera-registry-map{min-height:280px !important}
 }
+
+/* Viewport/layout contract: navigation never participates in fullscreen media centering. */
+.sentinel-shell{
+  width:100%;
+  max-width:100vw;
+  min-width:0;
+  box-sizing:border-box;
+  overflow:hidden;
+}
+.sentinel-main{
+  min-width:0;
+  max-width:100%;
+  box-sizing:border-box;
+}
+.ui-sidebar{
+  position:relative;
+  min-width:0;
+  max-width:100%;
+  box-sizing:border-box;
+  overflow:hidden;
+}
+.ui-sidebar-content{
+  min-width:0;
+  box-sizing:border-box;
+  overflow-x:hidden;
+}
+.ui-sidebar-menu,
+.ui-sidebar-menu-item,
+.ui-sidebar-menu-button{
+  min-width:0;
+  max-width:100%;
+  box-sizing:border-box;
+}
+.ui-sidebar-menu-button{
+  overflow:hidden;
+}
+.sentinel-topbar{
+  min-width:0;
+  max-width:100%;
+  box-sizing:border-box;
+  overflow:hidden;
+}
+.sentinel-topbar-title,
+.sentinel-search-wrap,
+.sentinel-topbar-actions{
+  min-width:0;
+}
+.camera-fullscreen-overlay{
+  left:0 !important;
+  right:0 !important;
+  top:0 !important;
+  bottom:0 !important;
+  width:100vw !important;
+  height:100dvh !important;
+  max-width:100vw !important;
+  max-height:100dvh !important;
+  margin:0 !important;
+  transform:none !important;
+}
