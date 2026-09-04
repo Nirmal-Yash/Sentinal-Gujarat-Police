@@ -4,7 +4,7 @@ import { api } from '../api/client'
 const MAX_VIDEO_SIZE_BYTES = 200 * 1024 * 1024
 const bytes = n => n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`
 
-export default function TestDiagnosticsModal({ onClose, onStarted }) {
+export default function TestDiagnosticsModal({ onClose, onStarted, manageOnly=false }) {
   const [assets, setAssets] = useState([]), [selected, setSelected] = useState([]), [loop, setLoop] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState(''), [selectedFiles, setSelectedFiles] = useState([])
   useEffect(() => { api.getTestAssets().then(rows => { setAssets(rows); setSelected(rows.slice(0, 8).map(asset => asset.id)) }).catch(error => setError(error.message)) }, [])
   const upload = async event => {
@@ -39,7 +39,7 @@ export default function TestDiagnosticsModal({ onClose, onStarted }) {
     } catch (err) { setError(err.message || 'Video could not be removed') } finally { setBusy(false) }
   }
   const run = async () => {
-    if (!selected.length) return
+    if (manageOnly || !selected.length) return
     setBusy(true); setError('')
     try {
       const session = await api.createTestSession({ name: `Video test ${new Date().toLocaleString('en-IN')}`, cameras: selected.map((asset_id, index) => ({ asset_id, camera_label: `Test Camera ${index + 1}`, loop })) })
@@ -51,8 +51,8 @@ export default function TestDiagnosticsModal({ onClose, onStarted }) {
       <section style={modal}>
         <header style={header}>
           <div>
-            <b>Isolated video test mode</b>
-            <small style={sub}>Uses only test streams, tables, and MediaMTX paths. Production CCTV is never read.</small>
+            <b>{manageOnly ? 'Test Video Library' : 'Isolated video test mode'}</b>
+            <small style={sub}>{manageOnly ? 'Add or remove isolated test-feed videos. Production CCTV and data are unaffected.' : 'Uses only test streams, tables, and MediaMTX paths. Production CCTV is never read.'}</small>
           </div>
           <button type="button" onClick={onClose} style={close} aria-label="Close">×</button>
         </header>
@@ -94,8 +94,8 @@ export default function TestDiagnosticsModal({ onClose, onStarted }) {
         </main>
         <footer style={footer}>
           <span style={{marginRight:'auto',color:'var(--text2)',fontSize:11}}>{selected.length}/8 feeds selected</span>
-          <button type="button" onClick={onClose} style={secondary} disabled={busy}>Cancel</button>
-          <button type="button" disabled={busy || !selected.length} onClick={run} style={primary}>{busy ? 'Starting…' : 'Run test'}</button>
+          <button type="button" onClick={onClose} style={secondary} disabled={busy}>Close</button>
+          {!manageOnly && <button type="button" disabled={busy || !selected.length} onClick={run} style={primary}>{busy ? 'Starting…' : 'Run test'}</button>}
         </footer>
       </section>
     </div>
