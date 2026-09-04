@@ -11,6 +11,7 @@ import logging
 
 import requests
 import psycopg2
+from bs4 import BeautifulSoup
 from psycopg2.extras import execute_values
 
 log = logging.getLogger("catalogue_sync")
@@ -67,25 +68,76 @@ def _department(name: str, location: str):
 
 
 class CctvSession:
-    """Password-only CCTV connector; no username/email is ever required."""
+    """Password-only CCTV connector; no username/email is required.
+
+    The provider login is a browser-style form. We first GET the login page so
+    hidden/CSRF form fields and initial cookies are preserved, then POST the
+    password with those fields. The catalogue request reuses that session.
+    """
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
-            "User-Agent": "Sentinel-Ingestion/1.0",
-            "Accept": "application/json, text/plain, */*",
+            "User-Agent": "Mozilla/5.0 (compatible; Sentinel-Ingestion/1.0)",
+            "Accept": "text/html,application/xhtml+xml,application/json,text/plain,*/*",
         })
         self.access_token = None
 
     def login(self) -> None:
         if not CCTV_PASSWORD:
             raise RuntimeError("CCTV_PASSWORD is required for current CCTV catalogue access")
-        response = self.session.post(
-            f"{CCTV_BASE_URL}{CCTV_LOGIN_PATH}",
-            data={"password": CCTV_PASSWORD},
-            headers={"Referer": f"{CCTV_BASE_URL}/"},
+
+        login_url = f"{CCTV_BASE_URL}{CCTV_LOGIN_PATH}"
+
+        page = self.session.get(
+            login_url,
             timeout=15,
             allow_redirects=True,
+            headers={"Accept": "text/html,application/xhtml+xml,*/*"},
         )
+        try:
+            if page.status_code != 200:
+                raise RuntimeError(f"CCTV login page returned HTTP {page.status_code}")
+
+            fields = {}
+            try:
+                soup = BeautifulSoup(page.text, "html.parser")
+                form = soup.find("form")
+                if form:
+                    for element in form.find_all("input"):
+                        name = element.get("name")
+                        if name:
+                            fields[name] = element.get("value", "")
+                    action = form.get("action")
+                else:
+                    action = None
+            except Exception:
+                action = None
+
+            if not fields:
+                fields = {}
+
+            password_name = next(
+                (name for name in fields if name.lower() in {"password", "pass", "pwd"}),
+                "password",
+            )
+            fields[password_name] = CCTV_PASSWORD
+
+            submit_url = requests.compat.urljoin(login_url, action) if action else login_url
+
+            response = self.session.post(
+                submit_url,
+                data=fields,
+                headers={
+                    "Referer": page.url,
+                    "Origin": CCTV_BASE_URL,
+                    "Accept": "text/html,application/xhtml+xml,application/json,*/*",
+                },
+                timeout=15,
+                allow_redirects=True,
+            )
+        finally:
+            page.close()
+
         try:
             content_type = response.headers.get("Content-Type", "")
             payload = None
@@ -93,9 +145,11 @@ class CctvSession:
                 try:
                     payload = response.json()
                 except ValueError:
-                    payload = None
+                    pass
+
             if response.status_code not in {200, 204, 302, 303}:
                 raise RuntimeError(f"CCTV login failed with HTTP {response.status_code}")
+
             if isinstance(payload, dict):
                 for key in ("access_token", "token", "jwt"):
                     value = payload.get(key)
@@ -103,12 +157,27 @@ class CctvSession:
                         self.access_token = value.strip()
                         self.session.headers["Authorization"] = f"Bearer {self.access_token}"
                         break
+
+            cookies = self.session.cookies.get_dict()
+            # A successful browser-style login should either establish a session
+            # cookie or return a token. Do not reject a password-only provider
+            # solely because it does neither if the login landed back on the
+            # authenticated application page.
+            landed = response.url.rstrip("/")
+            login_root = login_url.rstrip("/")
+            authenticated_landing = landed != login_root and "/login" not in landed.lower()
+
             log.info(
-                "CCTV login response: HTTP %s final_url=%s cookie=%s bearer=%s content_type=%s",
-                response.status_code, response.url,
-                bool(self.session.cookies.get_dict()),
-                bool(self.access_token), content_type,
+                "CCTV login: HTTP=%s landing=%s cookie=%s bearer=%s fields=%s",
+                response.status_code,
+                response.url,
+                bool(cookies),
+                bool(self.access_token),
+                len(fields),
             )
+
+            if not cookies and not self.access_token and not authenticated_landing:
+                raise RuntimeError("CCTV login did not establish an authenticated session")
         finally:
             response.close()
 
@@ -118,29 +187,37 @@ class CctvSession:
             f"{CCTV_BASE_URL}{CCTV_CATALOGUE_PATH}",
             timeout=15,
             allow_redirects=False,
+            headers={"Accept": "application/json,text/plain,*/*"},
         )
         try:
             if response.status_code in {401, 403, 302, 303}:
+                location = response.headers.get("Location", "")
                 response.close()
                 self.login()
                 response = self.session.get(
                     f"{CCTV_BASE_URL}{CCTV_CATALOGUE_PATH}",
                     timeout=15,
                     allow_redirects=False,
+                    headers={"Accept": "application/json,text/plain,*/*"},
                 )
-            if response.status_code in {401, 403, 302, 303}:
-                raise RuntimeError(
-                    f"CCTV catalogue authentication rejected (HTTP {response.status_code})"
-                )
+                if response.status_code in {401, 403, 302, 303}:
+                    raise RuntimeError(
+                        f"CCTV catalogue authentication rejected (HTTP {response.status_code}; Location={location or 'none'})"
+                    )
+
             response.raise_for_status()
             try:
                 payload = response.json()
             except ValueError as exc:
-                raise RuntimeError("CCTV catalogue did not return valid JSON") from exc
+                preview = response.text[:160].replace("\n", " ")
+                raise RuntimeError(f"CCTV catalogue did not return JSON: {preview!r}") from exc
+
             if isinstance(payload, dict):
                 payload = payload.get("cameras") or payload.get("streams") or payload.get("data")
+
             if not isinstance(payload, list):
                 raise RuntimeError("CCTV catalogue is not a JSON array")
+
             cameras = [item for item in payload if isinstance(item, dict)]
             if not cameras:
                 raise RuntimeError("CCTV catalogue returned no camera records")
