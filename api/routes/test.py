@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from auth import ROLE_ORDER, Principal, current_principal, principal_from_token, require_role
+from auth import ROLE_ORDER, Principal, current_principal, require_role
 from database import get_db
 
 router = APIRouter(prefix="/test", tags=["test"])
@@ -18,14 +18,10 @@ ALLOWED_SUFFIXES = {".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v"}
 def enabled():
     if os.getenv("TEST_ENDPOINT_ENABLED", "false").lower() != "true": raise HTTPException(404, "Video test mode is disabled")
 
-async def require_test_video_viewer(access_token: str | None = Query(None), db: AsyncSession = Depends(get_db)) -> Principal:
-    """Authorize browser playback without making isolated test videos public.
-
-    HTML video tags cannot attach an Authorization header, so authenticated
-    deployments provide the already-issued JWT as a short-lived query token.
-    Local compatibility mode retains its existing no-login behaviour.
-    """
-    principal = await (principal_from_token(access_token, db) if access_token else current_principal(None, db))
+async def require_test_video_viewer(
+    principal: Principal = Depends(current_principal),
+) -> Principal:
+    """Authorize isolated test playback with the Sentinel session cookie."""
     if ROLE_ORDER.get(principal.role, 0) < ROLE_ORDER["VIEWER"]:
         raise HTTPException(403, "Insufficient role")
     return principal
