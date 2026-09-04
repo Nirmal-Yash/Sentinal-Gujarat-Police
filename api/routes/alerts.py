@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy import select, update, desc, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from models import Alert, AlertOut, Camera
-from auth import require_permission, Principal
+from auth import require_permission, has_permission, Principal
 from database import get_db
 from typing import Optional
 from datetime import datetime, timezone
@@ -73,7 +73,7 @@ async def _broadcast_transition(alert: Alert, from_status: str, to_status: str, 
         pass
 
 async def _transition(alert_id, target, principal, db, reason=None):
-    if not principal or principal.role not in {"OPERATOR", "ADMIN", "SUPERADMIN"}:
+    if not principal or not has_permission(principal, "alert:operate"):
         raise HTTPException(status_code=403, detail="Alert operation permission required")
     alert = (await db.execute(select(Alert).where(Alert.id == alert_id).with_for_update())).scalar_one_or_none()
     if alert is None:
