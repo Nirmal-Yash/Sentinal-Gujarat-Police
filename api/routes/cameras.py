@@ -4,14 +4,14 @@ from sqlalchemy import select, text, or_, String
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from models import Camera, CameraOut, CameraCreate
-from auth import require_authenticated, require_role, Principal
+from auth import require_permission, require_role, Principal
 from database import get_db
 import uuid, os, base64, csv, io, json
 from openpyxl import load_workbook
 from pydantic import ValidationError
 import redis as redis_lib
 
-router = APIRouter(prefix="/cameras", tags=["cameras"], dependencies=[Depends(require_authenticated)])
+router = APIRouter(prefix="/cameras", tags=["cameras"], dependencies=[Depends(require_permission("camera:read"))])
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
 

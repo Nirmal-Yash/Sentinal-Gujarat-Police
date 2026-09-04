@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
-from auth import AUTH_REQUIRED, COOKIE_MAX_AGE, COOKIE_NAME, COOKIE_SAMESITE, COOKIE_SECURE, REFRESH_COOKIE_NAME, REFRESH_TOKEN_HOURS, Principal, current_principal, require_role, verify_password, issue_access_token, issue_refresh_token, hash_password, enforce_session_limit, is_locked, record_attempt
+from auth import AUTH_REQUIRED, COOKIE_MAX_AGE, COOKIE_NAME, COOKIE_SAMESITE, COOKIE_SECURE, REFRESH_COOKIE_NAME, REFRESH_TOKEN_HOURS, ALGORITHM, Principal, current_principal, principal_from_token, require_role, verify_password, issue_access_token, issue_refresh_token, hash_password, enforce_session_limit, is_locked, record_attempt
 from rate_limit import rate_limit
 from security_hardening import enforce_password_policy
 

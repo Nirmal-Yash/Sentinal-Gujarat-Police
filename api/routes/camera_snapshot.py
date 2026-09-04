@@ -10,7 +10,7 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
-from auth import COOKIE_NAME, Principal, current_principal, require_authenticated, principal_from_token
+from auth import COOKIE_NAME, Principal, current_principal, require_permission, require_authenticated, principal_from_token
 from database import get_db
 from signed_asset_tokens import issue_asset_token, verify_asset_token
 
@@ -42,7 +42,7 @@ def _provider_id(row) -> str:
 @router.get("/{cam_id}/snapshot-token")
 async def snapshot_token(
     cam_id: uuid.UUID,
-    _: Principal = Depends(require_authenticated),
+    _: Principal = Depends(require_permission("camera:read")),
     db: AsyncSession = Depends(get_db),
 ):
     row = await _camera(db, cam_id)
@@ -62,6 +62,7 @@ async def snapshot(
     access_token: str | None = Query(None, min_length=1),
     signed_token: str | None = Query(None, alias="st", min_length=1),
     db: AsyncSession = Depends(get_db),
+    __: Principal = Depends(require_permission("camera:read")),
 ):
     token = access_token or signed_token
     row = await _camera(db, cam_id)

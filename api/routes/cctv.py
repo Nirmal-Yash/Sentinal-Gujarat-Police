@@ -12,11 +12,11 @@ from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from auth import COOKIE_NAME, Principal, principal_from_token, require_authenticated
+from auth import COOKIE_NAME, Principal, principal_from_token, require_permission, require_authenticated
 from database import get_db
 from services.cctv_gateway import get_cctv_gateway
 
-router = APIRouter(prefix="/cctv", tags=["cctv"])
+router = APIRouter(prefix="/cctv", tags=["cctv"], dependencies=[Depends(require_permission("camera:read"))])
 security = HTTPBearer(auto_error=False)
 _URI_ATTR = re.compile(r'URI="([^"]+)"')
 _SECRET_PLACEHOLDERS = {"", "change-me", "changeme", "sentinel-change-in-production", "replace-me", "replace-with-long-random-secret"}
