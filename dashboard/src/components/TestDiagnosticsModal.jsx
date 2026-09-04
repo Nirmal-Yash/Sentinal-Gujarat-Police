@@ -46,7 +46,60 @@ export default function TestDiagnosticsModal({ onClose, onStarted }) {
       onStarted(session); onClose()
     } catch (err) { setError(err.message || 'Could not start test') } finally { setBusy(false) }
   }
-  return <div style={overlay} onClick={event => event.target === event.currentTarget && onClose()}><section style={modal}><header style={header}><div><b>Isolated video test mode</b><small style={sub}>Uses only test streams, tables, and MediaMTX paths. Production CCTV is never read.</small></div><button onClick={onClose} style={close}>×</button></header><main style={{ padding: 16, overflowY: 'auto' }}><div style={uploadBox}><b>Upload test video</b><small>MP4, MKV, MOV, WebM, AVI or M4V · Maximum 200 MB per file · FFmpeg probes resolution.</small><input type="file" accept="video/*,.mkv,.avi,.m4v" multiple disabled={busy} onChange={upload}/>{selectedFiles.map(file => <div key={`${file.name}-${file.size}`} style={file.size > MAX_VIDEO_SIZE_BYTES ? invalidFile : validFile}><span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{file.name}</span><span style={{marginLeft:'auto',fontFamily:'ui-monospace,SFMono-Regular,Menlo,monospace'}}>{(file.size / 1024 / 1024).toFixed(1)} MB</span>{file.size > MAX_VIDEO_SIZE_BYTES && <span style={{color:'var(--red)',fontWeight:800}}>⚠ Exceeds limit</span>}</div>)}</div><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '14px 0 8px' }}><b style={{ fontSize: 12 }}>Available local videos</b><label style={{ fontSize: 11, color: 'var(--text2)' }}><input type="checkbox" checked={loop} onChange={event => setLoop(event.target.checked)}/> Loop feeds</label></div><div style={assetGrid}>{assets.map(asset => <div key={asset.id} style={{ ...assetCard, borderColor: selected.includes(asset.id) ? 'var(--accent)' : 'var(--border)' }}><input type="checkbox" checked={selected.includes(asset.id)} onChange={() => toggle(asset.id)} disabled={busy}/><span style={{minWidth:0,flex:1}}><b style={{display:'block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{asset.display_name}</b><small>{asset.source_kind === 'upload' ? 'Uploaded' : 'Bundled'} {asset.in_use ? '· In use by a test session' : ''} · {asset.width || '?'}×{asset.height || '?'} · {asset.fps ? (Number(asset.fps).toFixed(1) + ' FPS') : 'FPS N/A'} · {bytes(asset.size_bytes || 0)}</small></span>{asset.source_kind === 'upload' ? <button type="button" onClick={() => removeAsset(asset)} disabled={busy || asset.in_use} aria-label={asset.in_use ? 'Video is in use' : 'Remove test video'} style={removeButton}>{asset.in_use ? 'In use' : 'Remove'}</button> : <span style={protectedBadge}>Bundled</span>}</div>)}</div></div>{!assets.length && <p style={note}>No readable local video was found. Upload a test video to continue.</p>}{error && <p style={{ color: 'var(--red)', fontSize: 12 }}>{error}</p>}</main><footer style={footer}><span style={{ marginRight: 'auto', color: 'var(--text2)', fontSize: 11 }}>{selected.length}/8 feeds selected</span><button onClick={onClose} style={secondary}>Cancel</button><button disabled={busy || !selected.length} onClick={run} style={primary}>{busy ? 'Starting…' : 'Run test'}</button></footer></section></div>
+  return (
+    <div style={overlay} onClick={event => event.target === event.currentTarget && onClose()}>
+      <section style={modal}>
+        <header style={header}>
+          <div>
+            <b>Isolated video test mode</b>
+            <small style={sub}>Uses only test streams, tables, and MediaMTX paths. Production CCTV is never read.</small>
+          </div>
+          <button type="button" onClick={onClose} style={close} aria-label="Close">×</button>
+        </header>
+        <main style={{padding:16, overflowY:'auto', minHeight:0}}>
+          <div style={uploadBox}>
+            <b>Upload test video</b>
+            <small>MP4, MKV, MOV, WebM, AVI or M4V · Maximum 200 MB per file.</small>
+            <input type="file" accept="video/*,.mkv,.avi,.m4v" multiple disabled={busy} onChange={upload}/>
+            {selectedFiles.map(file => (
+              <div key={`${file.name}-${file.size}`} style={file.size > MAX_VIDEO_SIZE_BYTES ? invalidFile : validFile}>
+                <span style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{file.name}</span>
+                <span style={{marginLeft:'auto', fontFamily:'ui-monospace,SFMono-Regular,Menlo,monospace'}}>{(file.size / 1024 / 1024).toFixed(1)} MB</span>
+                {file.size > MAX_VIDEO_SIZE_BYTES && <span style={{color:'var(--red)',fontWeight:800}}>⚠ Exceeds limit</span>}
+              </div>
+            ))}
+          </div>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', margin:'14px 0 8px', gap:10}}>
+            <b style={{fontSize:12}}>Available local videos</b>
+            <label style={{fontSize:11,color:'var(--text2)'}}><input type="checkbox" checked={loop} onChange={event => setLoop(event.target.checked)}/> Loop feeds</label>
+          </div>
+          <div style={assetGrid}>
+            {assets.map(asset => (
+              <div key={asset.id} style={{...assetCard, borderColor:selected.includes(asset.id)?'var(--accent)':'var(--border)'}}>
+                <input type="checkbox" checked={selected.includes(asset.id)} onChange={() => toggle(asset.id)} disabled={busy}/>
+                <span style={{minWidth:0,flex:1}}>
+                  <b style={{display:'block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{asset.display_name}</b>
+                  <small>{asset.source_kind === 'upload' ? 'Uploaded' : 'Bundled'} {asset.in_use ? '· In use by a test session' : ''} · {asset.width || '?'}×{asset.height || '?'} · {asset.fps ? `${Number(asset.fps).toFixed(1)} FPS` : 'FPS N/A'} · {bytes(asset.size_bytes || 0)}</small>
+                </span>
+                {asset.source_kind === 'upload' ? (
+                  <button type="button" onClick={() => removeAsset(asset)} disabled={busy || asset.in_use} style={removeButton} aria-label={asset.in_use ? 'Video is in use' : `Remove ${asset.display_name}`}>
+                    {asset.in_use ? 'In use' : 'Remove'}
+                  </button>
+                ) : <span style={protectedBadge}>Bundled</span>}
+              </div>
+            ))}
+          </div>
+          {!assets.length && <p style={note}>No readable local video was found. Upload a test video to continue.</p>}
+          {error && <p style={{color:'var(--red)',fontSize:12}} role="alert">{error}</p>}
+        </main>
+        <footer style={footer}>
+          <span style={{marginRight:'auto',color:'var(--text2)',fontSize:11}}>{selected.length}/8 feeds selected</span>
+          <button type="button" onClick={onClose} style={secondary} disabled={busy}>Cancel</button>
+          <button type="button" disabled={busy || !selected.length} onClick={run} style={primary}>{busy ? 'Starting…' : 'Run test'}</button>
+        </footer>
+      </section>
+    </div>
+  )
 }
 const overlay = { position: 'fixed', inset: 0, zIndex: 3100, display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,.72)' }
 const modal = { width: 'min(760px,95vw)', maxHeight: '88vh', display: 'flex', flexDirection: 'column', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 9, overflow: 'hidden' }
