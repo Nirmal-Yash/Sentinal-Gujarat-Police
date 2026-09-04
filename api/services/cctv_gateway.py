@@ -1,7 +1,6 @@
 """Authenticated gateway client for the current cctv.corp8.cloud infrastructure.
 
-The CCTV provider uses a password-only form login that returns a session cookie.
-The password remains server-side; browser clients never receive it.
+The CCTV provider requires a registered email + access password. Credentials remain server-side for the HLS gateway; browser clients never receive them.
 """
 from __future__ import annotations
 
@@ -19,7 +18,8 @@ CATALOGUE_PATH = "/cameras.json"
 
 
 class CctvGateway:
-    def __init__(self, password: str, base_url: str = CCTV_BASE, timeout: float = 15.0):
+    def __init__(self, email: str, password: str, base_url: str = CCTV_BASE, timeout: float = 15.0):
+        self.email = (email or "").strip()
         self.password = password or ""
         self.base_url = base_url.rstrip("/")
         self.login_path = os.getenv("CCTV_LOGIN_PATH", LOGIN_PATH)
@@ -33,9 +33,11 @@ class CctvGateway:
 
     @property
     def configured(self) -> bool:
-        return bool(self.password)
+        return bool(self.email and self.password)
 
     def _login_locked(self) -> None:
+        if not self.email:
+            raise RuntimeError("CCTV_EMAIL is not configured")
         if not self.password:
             raise RuntimeError("CCTV_PASSWORD is not configured")
         self._session.cookies.clear()
@@ -53,7 +55,7 @@ class CctvGateway:
 
         response = self._session.post(
             login_url,
-            data={"password": self.password},
+            data={"email": self.email, "password": self.password},
             headers={
                 "Referer": login_url,
                 "Origin": self.base_url,
@@ -84,7 +86,8 @@ class CctvGateway:
 
     def ensure_authenticated(self, force: bool = False) -> None:
         with self._lock:
-            if not force and (time.monotonic() - self._authenticated_at) < 300 and self._session.cookies.get_dict():
+            has_session = bool(self._session.cookies.get_dict() or self._session.headers.get("Authorization"))
+            if not force and (time.monotonic() - self._authenticated_at) < 300 and has_session:
                 return
             try:
                 self._login_locked()
@@ -154,14 +157,15 @@ _gateway_lock = threading.Lock()
 
 def get_cctv_gateway() -> CctvGateway:
     global _gateway
+    email = os.getenv("CCTV_EMAIL", "").strip()
     password = os.getenv("CCTV_PASSWORD", "")
     base_url = os.getenv("CCTV_BASE_URL", CCTV_BASE).rstrip("/")
     login_path = os.getenv("CCTV_LOGIN_PATH", LOGIN_PATH)
     catalogue_path = os.getenv("CCTV_CATALOGUE_PATH", CATALOGUE_PATH)
-    if (_gateway is None or _gateway.password != password or _gateway.base_url != base_url
+    if (_gateway is None or _gateway.email != email or _gateway.password != password or _gateway.base_url != base_url
             or _gateway.login_path != login_path or _gateway.catalogue_path != catalogue_path):
         with _gateway_lock:
             if (_gateway is None or _gateway.password != password or _gateway.base_url != base_url
                     or _gateway.login_path != login_path or _gateway.catalogue_path != catalogue_path):
-                _gateway = CctvGateway(password=password, base_url=base_url)
+                _gateway = CctvGateway(email=email, password=password, base_url=base_url)
     return _gateway

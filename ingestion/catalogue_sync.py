@@ -13,11 +13,13 @@ import logging
 import requests
 import psycopg2
 from psycopg2.extras import execute_values
+from urllib.parse import quote
 
 log = logging.getLogger("catalogue_sync")
 CCTV_BASE_URL = os.getenv("CCTV_BASE_URL", "https://cctv.corp8.cloud").rstrip("/")
 CCTV_LOGIN_PATH = os.getenv("CCTV_LOGIN_PATH", "/auth/login")
 CCTV_CATALOGUE_PATH = os.getenv("CCTV_CATALOGUE_PATH", "/cameras.json")
+CCTV_EMAIL = os.getenv("CCTV_EMAIL", "").strip()
 CCTV_PASSWORD = os.getenv("CCTV_PASSWORD", "")
 RTSP_HOST_IP = os.getenv("RTSP_HOST_IP", "103.250.160.189")
 RTSP_PORT = int(os.getenv("RTSP_PORT", "8554"))
@@ -38,12 +40,15 @@ def _canonical_id(raw_id) -> tuple[int, str]:
 
 def _build_urls(cam: dict) -> dict:
     sid, canonical = _canonical_id(cam.get("id"))
-    rtsp = cam.get("rtsp_url") or f"rtsp://{RTSP_HOST_IP}:{RTSP_PORT}/stream/{canonical}"
+    user = quote(CCTV_EMAIL, safe="")
+    password = quote(CCTV_PASSWORD, safe="")
+    credentials = f"{user}:{password}@" if user and password else ""
+    rtsp = f"rtsp://{credentials}{RTSP_HOST_IP}:{RTSP_PORT}/stream/{canonical}"
     # HLS is intentionally same-origin from the application's perspective.
     # The API exposes /api/cctv/<cam>/index.m3u8 and fetches the provider using
     # the authenticated server-side session.
     hls = f"/api/cctv/{canonical}/index.m3u8"
-    whep = cam.get("whep_url") or ""
+    whep = f"http://{credentials}{RTSP_HOST_IP}:8889/stream/{canonical}/whep"
     return {
         "stream_id": sid,
         "canonical_id": canonical,
@@ -95,17 +100,17 @@ def _department(name: str, location: str):
 
 
 class CctvSession:
-    """Password-only CCTV session. Credentials remain inside ingestion."""
+    """Authenticated CCTV session. Email/password remain inside ingestion."""
 
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "Sentinel-Ingestion/1.0"})
 
     def login(self) -> None:
+        if not CCTV_EMAIL:
+            raise RuntimeError("CCTV_EMAIL is required for current CCTV catalogue access")
         if not CCTV_PASSWORD:
-            raise RuntimeError(
-                "CCTV_PASSWORD is required for current CCTV catalogue access"
-            )
+            raise RuntimeError("CCTV_PASSWORD is required for current CCTV catalogue access")
 
         login_url = f"{CCTV_BASE_URL}{CCTV_LOGIN_PATH}"
         # Seed provider state before the password-only form submission.
@@ -122,7 +127,7 @@ class CctvSession:
 
         response = self.session.post(
             login_url,
-            data={"password": CCTV_PASSWORD},
+            data={"email": CCTV_EMAIL, "password": CCTV_PASSWORD},
             headers={
                 "Referer": login_url,
                 "Origin": CCTV_BASE_URL,

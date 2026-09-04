@@ -112,7 +112,7 @@ class CameraWorker:
         self.last_forwarded = 0.0
 
     def _open(self):
-        log.info("Opening RTSP/TCP source for %s: %s", self.name, self.url)
+        log.info("Opening RTSP/TCP source for %s", self.name)
         return self.adapter.open()
 
     def _reconnect(self):

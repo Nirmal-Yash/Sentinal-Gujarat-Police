@@ -213,7 +213,7 @@ field_encryption = FieldEncryption()
 
 def redact(value: object) -> str:
     text = str(value)
-    secret_values = [os.getenv("CCTV_PASSWORD", ""), os.getenv("SECRET_KEY", ""), os.getenv("SNAPSHOT_TOKEN_SECRET", ""), os.getenv("JWT_REFRESH_SECRET_KEY", "")]
+    secret_values = [os.getenv("CCTV_EMAIL", ""), os.getenv("CCTV_PASSWORD", ""), os.getenv("SECRET_KEY", ""), os.getenv("SNAPSHOT_TOKEN_SECRET", ""), os.getenv("JWT_REFRESH_SECRET_KEY", "")]
     for secret in secret_values:
         if secret and secret not in INSECURE_VALUES:
             text = text.replace(secret, "[REDACTED]")

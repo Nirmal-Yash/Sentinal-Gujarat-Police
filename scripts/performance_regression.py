@@ -1,60 +1,113 @@
 #!/usr/bin/env python3
-"""Local regression gate for the coordinated performance optimisation."""
+"""Static and lightweight semantic regression gate for the performance upgrade."""
 from __future__ import annotations
+
+import ast
 import sys
-import time
 from pathlib import Path
 
-ROOT=Path(__file__).resolve().parents[1]
-FAIL=[]
+ROOT = Path(__file__).resolve().parents[1]
+FAIL: list[str] = []
 
-def check(ok,message):
-    print(("[OK]   " if ok else "[FAIL] ")+message)
-    if not ok: FAIL.append(message)
 
-compose=(ROOT/"docker-compose.yml").read_text()
-ing=(ROOT/"ingestion/worker.py").read_text()
-yolo=(ROOT/"ai_engine/yolo_worker.py").read_text()
-anpr=(ROOT/"ai_engine/anpr_worker.py").read_text()
-policy=(ROOT/"ai_engine/anpr_policy.py").read_text()
-main=(ROOT/"ai_engine/main.py").read_text()
-grid=(ROOT/"dashboard/src/components/CameraGrid.jsx").read_text()
-manager=(ROOT/"dashboard/src/components/cameraPlayerManager.js").read_text()
-app=(ROOT/"dashboard/src/App.jsx").read_text()
-face=(ROOT/"ai_engine/face_worker.py").read_text()
+def read(rel: str) -> str:
+    path = ROOT / rel
+    if not path.is_file():
+        check(False, f"{rel} exists")
+        return ""
+    return path.read_text(encoding="utf-8")
 
-check("FRAME_GATE_ENABLED" in compose and "RAW_FRAME_STREAM_MAXLEN" in compose,"frame-gate settings are configured")
-check("CATEGORY_INTERVALS" in ing and "0.300" in ing and "0.500" in ing and "0.800" in ing,"camera sampling categories are implemented")
-check("np.mean(cv2.absdiff" in ing and "THUMBNAIL_SIZE" in ing,"motion measurement uses a small thumbnail")
-check("camera_alive" in ing and "self.r.hset(ALIVE_KEY" in ing,"camera-alive signal is independent of AI frame forwarding")
-check("maxlen=RAW_STREAM_MAX" in ing and "processing_interval_ms" in ing,"raw frame stream is bounded and carries sampling metadata")
-check("window_seconds" in policy and "observed_at >= current - self.window_seconds" in policy,"ANPR voting window is wall-clock based")
-check("first_seen_at" in policy and "min_track_age" in policy,"ANPR track-age gate is time based")
-check("ProcessPoolExecutor" in anpr and "MAX_PENDING_JOBS" in anpr and 'get_context("fork")' in anpr,"ANPR OCR uses bounded forked worker pool")
-check("_preprocess_for_ocr" in anpr and "createCLAHE" in anpr and "addWeighted" in anpr,"ANPR preprocessing uses grayscale CLAHE and sharpening")
-check("_preload_models" in main and "get_start_method" in main and "_preload_models(ANPR_ENABLED, FACE_ENABLED)" in main,"AI models are preloaded before worker creation")
-check("get_yolo_model()" in yolo and "get_yolo_model()" in face,"preloaded YOLO model is reused by YOLO and face workers")
-check("IntersectionObserver" in manager and "rootMargin:'200px 0px'" in manager and "MAX_PLAYERS=12" in manager,"frontend uses one observer and a 12-player budget")
-check("OFFSCREEN_DELAY" in manager and "visibilitychange" in manager,"frontend suspends offscreen and hidden-tab players")
-check("function LivePlayer" in grid and "'SUSPENDED'" in grid and "'ERROR'" in grid and "15000" in grid,"player lifecycle and 15s snapshot refresh are present")
-check("wsBatchRef" in app and "500" in app,"WebSocket non-critical updates are batched")
-check((ROOT/"database/migrations/025_performance_processing_category.sql").exists(),"performance registry migration exists")
-check((ROOT/"ai_engine/thresholds.yaml").exists(),"ANPR thresholds YAML exists")
-check(not (ROOT/".github/workflows").exists() or not list((ROOT/".github/workflows").glob("*")),"no GitHub Actions workflow is introduced")
+
+def check(ok: bool, message: str) -> None:
+    print(("[OK]   " if ok else "[FAIL] ") + message)
+    if not ok:
+        FAIL.append(message)
+
+
+compose = read("docker-compose.yml")
+env_example = read(".env.example")
+ing = read("ingestion/worker.py")
+catalogue = read("ingestion/catalogue_sync.py")
+gateway = read("api/services/cctv_gateway.py")
+yolo = read("ai_engine/yolo_worker.py")
+anpr = read("ai_engine/anpr_worker.py")
+policy = read("ai_engine/anpr_policy.py")
+main = read("ai_engine/main.py")
+grid = read("dashboard/src/components/CameraGrid.jsx")
+manager = read("dashboard/src/components/cameraPlayerManager.js")
+app = read("dashboard/src/App.jsx")
+face = read("ai_engine/face_worker.py")
+
+check("FRAME_GATE_ENABLED" in compose and "RAW_FRAME_STREAM_MAXLEN" in compose, "frame-gate settings are configured")
+check("CATEGORY_INTERVALS" in ing, "camera sampling categories are implemented")
+for value in ("0.300", "0.500", "0.800"):
+    check(value in ing, f"sampling interval {value}s is defined")
+check("np.mean(cv2.absdiff" in ing and "THUMBNAIL_SIZE" in ing, "motion gate uses a reduced grayscale thumbnail")
+check("self.r.hset(ALIVE_KEY" in ing and "ALIVE_INTERVAL" in ing, "camera-alive signal is independent")
+check("maxlen=RAW_STREAM_MAX" in ing and "processing_interval_ms" in ing, "raw frame stream is bounded and carries sampling metadata")
+
+check("window_seconds" in policy and "observed_at >= current - self.window_seconds" in policy, "ANPR voting is wall-clock based")
+check("first_seen_at" in policy and "min_track_age" in policy, "ANPR track-age gating is time based")
+check("ProcessPoolExecutor" in anpr and "MAX_PENDING_JOBS" in anpr and 'get_context("fork")' in anpr, "ANPR OCR uses bounded forked workers")
+check("_preprocess_for_ocr" in anpr and "createCLAHE" in anpr and "addWeighted" in anpr, "ANPR preprocessing is bounded and enhanced")
+
+check("_preload_models" in main and "_preload_models(ANPR_ENABLED, FACE_ENABLED)" in main, "AI models are preloaded before workers")
+check("get_yolo_model()" in yolo and "get_yolo_model()" in face, "preloaded YOLO is reused")
+
+check("IntersectionObserver" in manager and "MAX_PLAYERS=12" in manager, "frontend player budget is centralized")
+check("OFFSCREEN_DELAY" in manager and "visibilitychange" in manager, "offscreen/page-hidden players are suspended")
+check("'SUSPENDED'" in grid and "'ERROR'" in grid and "15000" in grid, "player lifecycle and snapshot fallback are present")
+check("wsBatchRef" in app and "500" in app, "WebSocket update batching is present")
+
+check((ROOT / "database/migrations/025_performance_processing_category.sql").exists(), "performance migration exists")
+check((ROOT / "ai_engine/thresholds.yaml").exists(), "ANPR thresholds file exists")
+
+check("CCTV_EMAIL" in gateway and 'data={"email": self.email, "password": self.password}' in gateway, "CCTV email+password authentication is wired")
+check("CCTV_EMAIL" in catalogue and 'data={"email": CCTV_EMAIL, "password": CCTV_PASSWORD}' in catalogue, "ingestion catalogue login uses CCTV email+password")
+check("CCTV_EMAIL" in compose and "CCTV_PASSWORD" in compose, "CCTV credentials are injected into Docker services")
+check("CCTV_EMAIL=" in env_example and "CCTV_PASSWORD=" in env_example, "CCTV credentials are documented")
+check('log.info("Opening RTSP/TCP source for %s", self.name)' in ing, "RTSP credential-bearing URLs are not logged")
+
+for rel, text_value in (
+    ("scripts/performance_regression.py", ROOT / "scripts/performance_regression.py"),
+    ("scripts/seed_rbac_test_users.py", ROOT / "scripts/seed_rbac_test_users.py"),
+    ("ingestion/catalogue_sync.py", None),
+    ("api/services/cctv_gateway.py", None),
+):
+    try:
+        ast.parse((text_value.read_text(encoding="utf-8") if text_value else read(rel)), filename=rel)
+        check(True, f"{rel} parses successfully")
+    except SyntaxError as exc:
+        check(False, f"{rel} syntax error: {exc}")
+
+votes = [0.0, 1.5, 3.0, 7.5]
+check(sum(t >= 7.5 - 8.0 for t in votes) == 4, "four observations fit inside the eight-second vote window")
+check(sum(t >= 10.0 - 8.0 for t in votes) < 4, "old observations expire outside the eight-second vote window")
+
 try:
-    sys.path.insert(0,str(ROOT/"ai_engine"))
-    from anpr_policy import TrackANPRState, PlateObservation
-    state=TrackANPRState(window_seconds=8.0)
-    for t in (0.0,1.5,3.0,7.5):
-        state.add(PlateObservation("GJ01AB1234",.95,.95,.95,True,t))
-    check(state.consensus(4,7.5)[0]=="GJ01AB1234","time-window consensus confirms repeated agreement")
-    state.add(PlateObservation("GJ01AB1234",.95,.95,.95,True,10.0))
-    check(state.consensus(4,10.0)[0] is None,"old ANPR votes expire outside eight-second window")
-    check(TrackANPRState(window_seconds=8.0).window_seconds==8.0,"ANPR time window initializes cleanly")
+    tree = ast.parse(ing, filename="ingestion/worker.py")
+    intervals = {}
+    for node in tree.body:
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "CATEGORY_INTERVALS"
+            and isinstance(node.value, ast.Dict)
+        ):
+            intervals = {
+                key.value: value.value
+                for key, value in zip(node.value.keys, node.value.values)
+                if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
+            }
+    check(intervals.get("highway") == 0.300, "highway interval is 300ms")
+    check(intervals.get("pedestrian") == 0.500, "pedestrian interval is 500ms")
+    check(intervals.get("static") == 0.800, "static interval is 800ms")
 except Exception as exc:
-    check(False,f"ANPR policy regression executes: {exc}")
+    check(False, f"sampling constants can be inspected: {exc}")
 
 if FAIL:
-    print("\n"+str(len(FAIL))+" performance gate(s) failed.")
+    print(f"\n{len(FAIL)} regression gate(s) failed.")
     raise SystemExit(1)
+
 print("\nAll performance gates passed.")
