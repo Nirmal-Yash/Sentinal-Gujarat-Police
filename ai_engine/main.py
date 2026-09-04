@@ -3,7 +3,11 @@
 import os
 import time
 import logging
+import multiprocessing as mp
+from pathlib import Path
 from multiprocessing import Process
+import numpy as np
+from ultralytics import YOLO
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [AI-ENGINE][%(levelname)s] %(message)s")
@@ -16,6 +20,8 @@ BEHAVIOR_ENABLED = os.getenv("BEHAVIOR_ENABLED", "true").lower() == "true"
 SUPERVISOR_INTERVAL = max(5, int(os.getenv("AI_SUPERVISOR_INTERVAL_SECS", "10")))
 RESTART_BASE_DELAY = max(1, float(os.getenv("AI_RESTART_BASE_DELAY_SECS", "2")))
 RESTART_MAX_DELAY = max(RESTART_BASE_DELAY, float(os.getenv("AI_RESTART_MAX_DELAY_SECS", "60")))
+YOLO_MODEL_PATH = os.getenv("YOLO_MODEL", "yolov8n.pt")
+INFER_SIZE = int(os.getenv("INFER_SIZE", "416"))
 
 try:
     from process_health import heartbeat, publish
@@ -25,6 +31,25 @@ except ImportError:
     def heartbeat(*args, **kwargs):
         return None
 
+
+def _preload_models(run_anpr, run_face):
+    if mp.get_start_method(allow_none=True) not in (None, "fork"):
+        raise RuntimeError("Performance model sharing requires multiprocessing start method=fork")
+    from shared_models import set_yolo_model, set_ocr_reader
+    log.info("Preloading YOLO once: %s", YOLO_MODEL_PATH)
+    model = YOLO(YOLO_MODEL_PATH)
+    model(np.zeros((INFER_SIZE, INFER_SIZE, 3), dtype=np.uint8), verbose=False)
+    set_yolo_model(model)
+    try:
+        log.info("YOLO preload complete (%s bytes)", Path(YOLO_MODEL_PATH).stat().st_size)
+    except OSError:
+        log.info("YOLO preload complete")
+    if run_anpr:
+        import easyocr
+        log.info("Preloading EasyOCR once")
+        reader = easyocr.Reader(["en"], gpu=os.getenv("ANPR_OCR_GPU", "false").lower() == "true", verbose=False)
+        set_ocr_reader(reader)
+        log.info("EasyOCR preload complete")
 
 def spawn(target, name):
     p = Process(target=target, name=name, daemon=True)
@@ -43,6 +68,7 @@ def main():
     from face_worker import run as run_face
     from behavior_worker import run as run_behavior
 
+    _preload_models(ANPR_ENABLED, FACE_ENABLED)
     procs = {}
 
     for i in range(YOLO_WORKERS):

@@ -6,14 +6,23 @@ import redis
 from ultralytics import YOLO
 from deep_sort_realtime.deepsort_tracker import DeepSort
 from event_schema import detection_event
+from shared_models import get_yolo_model
 
 log = logging.getLogger("yolo_worker")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 YOLO_MODEL = os.getenv("YOLO_MODEL", "yolov8n.pt")
 CONF = float(os.getenv("DETECTION_CONF", "0.4"))
-FRAME_SKIP = max(1, int(os.getenv("FRAME_SKIP", "3")))
-ANPR_DISPATCH_INTERVAL = max(0.2, float(os.getenv("ANPR_DISPATCH_INTERVAL_SECS", "0.8")))
+FRAME_SKIP = max(1, int(os.getenv("FRAME_SKIP", "1")))
 TEST_MODE = os.getenv("TEST_MODE", "false").lower() == "true"
+ALIVE_KEY = os.getenv("CAMERA_ALIVE_KEY", "camera_alive")
+ALIVE_STALE_SECS = max(1.0, float(os.getenv("TRACK_INACTIVITY_EXPIRY_SECS", "3")))
+ALIVE_MONITOR_ENABLED = os.getenv("ALIVE_MONITOR_ENABLED", "true").lower() == "true" and not TEST_MODE
+_shared_model = None
+
+def set_shared_model(model):
+    global _shared_model
+    _shared_model = model
+ANPR_DISPATCH_INTERVAL = max(0.2, float(os.getenv("ANPR_DISPATCH_INTERVAL_SECS", "1.5")))
 PREFIX = "test:" if TEST_MODE else ""
 GROUP = "test_ai_workers" if TEST_MODE else "ai_workers"
 IN_STREAM = f"{PREFIX}raw_frames"
@@ -24,7 +33,7 @@ TRACK_HASH_PREFIX = f"{PREFIX}vehicle_tracks:"
 CONFIRMED_KEY_PREFIX = f"{PREFIX}anpr_confirmed:"
 OUT_MAX = 5000
 INFER_SIZE = int(os.getenv("INFER_SIZE", "416"))
-TRACK_MAX_AGE = max(5, int(os.getenv("TRACK_MAX_AGE", "30")))
+TRACK_MAX_AGE = max(2, int(os.getenv("TRACK_MAX_AGE", "8")))
 TRACK_N_INIT = max(1, int(os.getenv("TRACK_N_INIT", "3")))
 TARGET_CLS = {0: "person", 2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
 VEHICLE_TYPES = {"car", "motorcycle", "bus", "truck"}
@@ -72,15 +81,32 @@ class WorkerState:
 def run():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [YOLO][%(levelname)s] %(message)s")
     log.info("Loading %s (infer_size=%s, skip=%s)", YOLO_MODEL, INFER_SIZE, FRAME_SKIP)
-    model = YOLO(YOLO_MODEL)
+    model = _shared_model or get_yolo_model() or YOLO(YOLO_MODEL)
     r = redis.from_url(REDIS_URL, decode_responses=False)
     consumer = f"yolo-{uuid.uuid4().hex[:8]}"
     _ensure_group(r, IN_STREAM, GROUP)
     _ensure_group(r, RESET_STREAM, "reset_watchers")
     states = {}
+    first_seen = {}
+    stale_state = {}
+    last_alive_check = 0.0
     last_reset_id = b"0"
 
     while True:
+        now = time.monotonic()
+        if ALIVE_MONITOR_ENABLED and now - last_alive_check >= 1.0:
+            epoch_now = time.time()
+            for cam_id, state in list(states.items()):
+                raw_alive = r.hget(ALIVE_KEY, cam_id)
+                alive_at = float(raw_alive or 0.0)
+                stale = (not alive_at) or (epoch_now - alive_at) > ALIVE_STALE_SECS
+                if stale and not stale_state.get(cam_id, False):
+                    state.reset()
+                    first_seen.pop(cam_id, None)
+                    stale_state[cam_id] = True
+                elif not stale:
+                    stale_state[cam_id] = False
+            last_alive_check = now
         try:
             resets = r.xread({RESET_STREAM: last_reset_id}, count=20, block=1)
             for _, entries in resets or []:
@@ -106,7 +132,13 @@ def run():
                     frame = _decode_frame(data)
                     if frame is None:
                         continue
-                    state = states.setdefault(cam_id, WorkerState())
+                    if cam_id not in states:
+                        frame_interval_ms = float(data.get(b"processing_interval_ms", b"500") or b"500")
+                        dynamic_age = max(2, int(np.ceil((ALIVE_STALE_SECS * 1000.0) / max(1.0, frame_interval_ms))))
+                        states[cam_id] = WorkerState()
+                        states[cam_id].tracker = DeepSort(max_age=dynamic_age, n_init=TRACK_N_INIT)
+                        first_seen[cam_id] = {}
+                    state = states[cam_id]
                     state.frame_ctr += 1
                     if state.frame_ctr % FRAME_SKIP:
                         continue
@@ -129,6 +161,8 @@ def run():
                     track_key = f"{TRACK_HASH_PREFIX}{cam_id}"
                     now = time.monotonic()
                     for track in tracks:
+                        track_key_id = str(track.track_id)
+                        first_seen[cam_id].setdefault(track_key_id, now)
                         if not track.is_confirmed():
                             continue
                         l, t, r2, b = [int(v) for v in track.to_ltrb()]
@@ -156,7 +190,8 @@ def run():
                             continue
                         request = detection_event(data, "anpr_request", track_id=track.track_id, conf=track_conf,
                                                   x1=l, y1=t, x2=r2, y2=b, frame_w=w, frame_h=h,
-                                                  vehicle_type=etype, vehicle_crop=crop_b64)
+                                                  vehicle_type=etype, vehicle_crop=crop_b64,
+                                                  track_first_seen_at=first_seen[cam_id].get(str(track.track_id), now))
                         request[b"event_type"] = b"anpr_request"
                         r.xadd(ANPR_STREAM, request, maxlen=OUT_MAX, approximate=True)
                         state.last_anpr_dispatch[key] = now

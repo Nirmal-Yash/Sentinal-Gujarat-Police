@@ -7,6 +7,7 @@ from multiprocessing import Process
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 
 import cv2
+import numpy as np
 import redis
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -16,7 +17,15 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [INGEST][%(levelname
 log = logging.getLogger(__name__)
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 DB_URL = os.getenv("DATABASE_URL", "")
-FRAME_FPS = max(0.5, float(os.getenv("FRAME_FPS", "3")))
+SOURCE_MAX_FPS = max(1.0, float(os.getenv("SOURCE_MAX_FPS", "15")))
+FRAME_GATE_ENABLED = os.getenv("FRAME_GATE_ENABLED", "true").lower() == "true"
+MOTION_THRESHOLD = max(0.0, float(os.getenv("FRAME_GATE_MOTION_THRESHOLD", "4.0")))
+IDLE_MAX_SECS = max(1.0, float(os.getenv("FRAME_GATE_IDLE_SECS", "10")))
+THUMBNAIL_SIZE = max(16, int(os.getenv("FRAME_GATE_THUMBNAIL_SIZE", "160")))
+ALIVE_KEY = os.getenv("CAMERA_ALIVE_KEY", "camera_alive")
+ALIVE_INTERVAL = max(0.5, float(os.getenv("CAMERA_ALIVE_INTERVAL_SECS", "1")))
+RAW_STREAM_MAX = max(100, int(os.getenv("RAW_FRAME_STREAM_MAXLEN", "500")))
+CATEGORY_INTERVALS = {"highway":0.300,"pedestrian":0.500,"static":0.800}
 JPEG_Q = int(os.getenv("JPEG_QUALITY", "70"))
 SNAPSHOT_TTL = max(10, int(os.getenv("SNAPSHOT_TTL_SECS", "30")))
 MAX_CAMS = max(1, int(os.getenv("MAX_CONCURRENT_CAMERAS", "50")))
@@ -34,7 +43,7 @@ def get_cameras():
     conn = psycopg2.connect(DB_URL)
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT id,name,stream_id,rtsp_url,codec FROM cameras WHERE status='active' AND rtsp_url IS NOT NULL AND rtsp_url<>'' ORDER BY stream_id LIMIT %s", (MAX_CAMS,))
+            cur.execute("SELECT id,name,stream_id,rtsp_url,codec,COALESCE(processing_fps_category,'pedestrian') AS processing_fps_category FROM cameras WHERE status='active' AND rtsp_url IS NOT NULL AND rtsp_url<>'' ORDER BY stream_id LIMIT %s", (MAX_CAMS,))
             return [dict(r) for r in cur.fetchall()]
     finally:
         conn.close()
@@ -95,7 +104,12 @@ class CameraWorker:
         self.codec = cam.get("codec") or "unknown"
         self.adapter = adapter_for(cam)
         self.r = r
-        self.interval = 1.0 / FRAME_FPS
+        category = str(cam.get("processing_fps_category") or "pedestrian").lower()
+        self.processing_category = category if category in CATEGORY_INTERVALS else "pedestrian"
+        self.interval = CATEGORY_INTERVALS[self.processing_category]
+        self.prev_thumb = None
+        self.last_alive = 0.0
+        self.last_forwarded = 0.0
 
     def _open(self):
         log.info("Opening RTSP/TCP source for %s: %s", self.name, self.url)
@@ -124,6 +138,28 @@ class CameraWorker:
             raise RuntimeError("JPEG encoding failed")
         return base64.b64encode(buf).decode()
 
+    def _scene_activity(self, frame):
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        thumb = cv2.resize(gray, (THUMBNAIL_SIZE, max(1, round(THUMBNAIL_SIZE*0.5625))), interpolation=cv2.INTER_AREA)
+        activity = 255.0 if self.prev_thumb is None else float(np.mean(cv2.absdiff(thumb, self.prev_thumb)))
+        self.prev_thumb = thumb
+        return activity
+
+    def _camera_alive(self):
+        if time.monotonic() - self.last_alive >= ALIVE_INTERVAL:
+            self.r.hset(ALIVE_KEY, self.cam_id, str(time.time()))
+            self.last_alive = time.monotonic()
+
+    def _should_forward(self, frame):
+        activity = self._scene_activity(frame) if FRAME_GATE_ENABLED else 255.0
+        elapsed = time.monotonic() - self.last_forwarded
+        if elapsed < self.interval:
+            return False
+        if not FRAME_GATE_ENABLED or activity >= MOTION_THRESHOLD or elapsed >= IDLE_MAX_SECS:
+            self.last_forwarded = time.monotonic()
+            return True
+        return False
+
     def _publish(self, frame_b64, pts_ms, w, h):
         now = datetime.now(timezone.utc).isoformat().encode()
         fields = {
@@ -139,8 +175,10 @@ class CameraWorker:
             b"width": str(w).encode(),
             b"height": str(h).encode(),
             b"codec": self.codec.encode(),
+            b"processing_fps_category": self.processing_category.encode(),
+            b"processing_interval_ms": str(int(self.interval*1000)).encode(),
         }
-        self.r.xadd(STREAM_KEY, fields, maxlen=STREAM_MAX, approximate=True)
+        self.r.xadd(STREAM_KEY, fields, maxlen=RAW_STREAM_MAX, approximate=True)
         # Keep both canonical registry and provider keys.  The UUID is the API
         # identity; the provider alias is a cheap recovery path for streams
         # that were restarted while a registry row was being refreshed.
@@ -204,14 +242,15 @@ class CameraWorker:
 
                 fail_streak = 0
                 observed_frames += 1
+                self._camera_alive()
                 pts_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
                 if not pts_ms or pts_ms < 0:
                     pts_ms = 0.0
 
                 now = time.monotonic()
-                if last_publish and now - last_publish < self.interval:
+                self._camera_alive()
+                if not self._should_forward(frame):
                     continue
-
                 last_publish = now
 
                 if prev_pts is not None:

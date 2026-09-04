@@ -21,5 +21,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')" && \
     python -c "import easyocr; easyocr.Reader(['en'], gpu=False)"
 
-COPY *.py .
+COPY *.py thresholds.yaml .
 CMD ["python", "-u", "main.py"]

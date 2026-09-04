@@ -7,6 +7,7 @@ from ultralytics import YOLO
 import insightface
 from insightface.app import FaceAnalysis
 from event_schema import detection_event
+from shared_models import get_yolo_model
 
 log = logging.getLogger("face_worker")
 
@@ -33,7 +34,7 @@ def run():
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s [FACE][%(levelname)s] %(message)s")
     log.info("Loading YOLO + InsightFace ArcFace …")
-    yolo = YOLO(os.getenv("YOLO_MODEL", "yolov8n.pt"))
+    yolo = get_yolo_model() or YOLO(os.getenv("YOLO_MODEL", "yolov8n.pt"))
 
     face_app = FaceAnalysis(
         name="buffalo_s",          # lightweight model
