@@ -20,7 +20,7 @@ class Camera(Base):
     observed_codec=Column(String(64)); observed_width=Column(Integer); observed_height=Column(Integer); observed_fps=Column(Float); observed_source_fps=Column(Float); observed_decode_fps=Column(Float); observed_published_fps=Column(Float); observed_at=Column(DateTime(timezone=True))
     health_status=Column(String(50),default="unknown"); last_frame_at=Column(DateTime(timezone=True)); reconnect_count=Column(Integer,default=0); decode_failure_count=Column(Integer,default=0); updated_at=Column(DateTime(timezone=True),default=datetime.utcnow)
     external_id=Column(String(255)); installation_date=Column(Date); ptz_capable=Column(Boolean,default=False); night_vision_capable=Column(Boolean,default=False); coord_source=Column(String(32),default="unknown"); coord_confidence=Column(Float)
-    department_source=Column(String(32),default="unknown"); department_confidence=Column(Float); vendor_id=Column(UUID(as_uuid=True)); model_id=Column(UUID(as_uuid=True))
+    department_source=Column(String(32),default="unknown"); department_confidence=Column(Float); vendor_id=Column(UUID(as_uuid=True)); model_id=Column(UUID(as_uuid=True)); processing_fps_category=Column(String(32),default="pedestrian",nullable=False)
     @property
     def effective_codec(self): return self.observed_codec or self.codec
     @property
