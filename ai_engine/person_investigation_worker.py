@@ -10,8 +10,11 @@ from insightface.app import FaceAnalysis
 
 log = logging.getLogger("person_investigation")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-STREAM = "person:investigations"
-GROUP = "person_investigation_workers"
+TEST_MODE = os.getenv('TEST_MODE', 'false').lower() == 'true'
+PREFIX = 'test:' if TEST_MODE else ''
+STREAM = f'{PREFIX}person:investigations'
+GROUP = f'{PREFIX}person_investigation_workers'
+IMAGE_PREFIX = f'{PREFIX}person:image:'
 RESULT_TTL = int(os.getenv("PERSON_INVESTIGATION_RESULT_TTL", "120"))
 DET_SIZE = max(320, int(os.getenv("PERSON_FACE_DET_SIZE", "640")))
 DET_THRESH = max(0.30, min(0.75, float(os.getenv("PERSON_FACE_DET_THRESHOLD", "0.40"))))
@@ -75,7 +78,7 @@ def run():
         for _, entries in messages:
             for message_id, data in entries:
                 request_id = data.get(b"request_id", b"").decode()
-                result_key = data.get(b"result_key", f"person:result:{request_id}".encode()).decode()
+                result_key = data.get(b"result_key", f"{PREFIX}person:result:{request_id}".encode()).decode()
                 operation = data.get(b"operation", b"investigate").decode()
                 try:
                     raw = r.get(data[b"image_key"])
@@ -116,7 +119,7 @@ def run():
                 finally:
                     r.xack(STREAM, GROUP, message_id)
                     if request_id:
-                        r.delete(f"person:image:{request_id}")
+                        r.delete(f"{IMAGE_PREFIX}{request_id}")
 
 
 if __name__ == "__main__":

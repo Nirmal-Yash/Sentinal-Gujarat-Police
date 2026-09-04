@@ -94,13 +94,17 @@ def _prepare_face_image(payload: bytes) -> bytes:
         output = BytesIO(); image.save(output, format='JPEG', quality=95, optimize=True); return output.getvalue()
 
 
-async def _run_person_analysis(payload: bytes, timeout: float, operation: str):
+async def _run_person_analysis(payload: bytes, timeout: float, operation: str, test_mode: bool = False):
     import redis.asyncio as redis_async
     r = redis_async.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379'), decode_responses=False)
-    job_id = uuid.uuid4().hex; image_key = f'person:image:{job_id}'; result_key = f'person:result:{job_id}'
+    job_id = uuid.uuid4().hex
+    prefix = 'test:' if test_mode else ''
+    image_key = f'{prefix}person:image:{job_id}'
+    result_key = f'{prefix}person:result:{job_id}'
+    stream = f'{prefix}person:investigations'
     try:
         await r.set(image_key, payload, ex=max(30, int(timeout) + 10))
-        await r.xadd('person:investigations', {'request_id': job_id, 'image_key': image_key, 'result_key': result_key, 'operation': operation}, maxlen=1000, approximate=True)
+        await r.xadd(stream, {'request_id': job_id, 'image_key': image_key, 'result_key': result_key, 'operation': operation}, maxlen=1000, approximate=True)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             raw = await r.get(result_key)
@@ -118,7 +122,7 @@ async def validate_person_photo(file: UploadFile = File(...), principal: Princip
     payload = await file.read()
     if not payload or len(payload) > 10 * 1024 * 1024: raise HTTPException(413, 'Image must be between 1 byte and 10 MB')
     try:
-        result = await _run_person_analysis(_prepare_face_image(payload), float(os.getenv('PERSON_INVESTIGATION_TIMEOUT', '20')), 'validate')
+        result = await _run_person_analysis(_prepare_face_image(payload), float(os.getenv('PERSON_INVESTIGATION_TIMEOUT', '20')), 'validate', False)
         if result.get('status') == 'error': raise HTTPException(503, 'Person analysis service unavailable')
         faces = result.get('faces') or []
         return {'valid': bool(faces), 'face_count': int(result.get('face_count', len(faces))), 'faces': faces, 'message': 'Face detected' if faces else 'No visible face detected'}
@@ -141,7 +145,7 @@ async def investigate_person(files: list[UploadFile] = File(...), x_test_session
         if not file.content_type or not file.content_type.startswith('image/'): continue
         payload = await file.read()
         if not payload or len(payload) > 10 * 1024 * 1024: continue
-        try: result = await _run_person_analysis(_prepare_face_image(payload), timeout, 'investigate')
+        try: result = await _run_person_analysis(_prepare_face_image(payload), timeout, 'investigate', session_uuid is not None)
         except TimeoutError: continue
         if result.get('status') == 'ok': all_embeddings.extend(result.get('embeddings', []))
     if not all_embeddings: return {'status':'no_match','matches':[],'message':'No usable face embedding was produced','session_id':session_uuid}
