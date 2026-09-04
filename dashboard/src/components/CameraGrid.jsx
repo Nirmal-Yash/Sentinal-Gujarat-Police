@@ -12,7 +12,7 @@ const playbackSources = cam => {
     const match=String(cam.stream_url).match(/\/api\/test\/sessions\/([^/]+)\/feeds\/([^/]+)\/video/)
     if(match) return {hls:`/test-hls/test/${match[1]}/cam${match[2]}/index.m3u8`}
   }
-  const configured=String(cam?.hls_url||'')
+  const configured=String(cam?.hls_url||'').split('?')[0]
   return {hls:configured.startsWith('/api/cctv/')?configured:`/api/cctv/cam${id}/index.m3u8`}
 }
 

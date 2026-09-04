@@ -78,13 +78,7 @@ class CameraOut(BaseModel):
             rtsp_host=os.getenv("RTSP_HOST_IP","103.250.160.189")
             if isinstance(value,dict): value=dict(value)
             else: value={name:getattr(value,name) for name in cls.model_fields if hasattr(value,name)}
-            playback_token=""
-            secret=(os.getenv("SECRET_KEY","") or "").strip()
-            if secret:
-                import jwt
-                playback_token=jwt.encode({"sub":"cctv-hls","camera":provider_id,"exp":int(time.time())+300},secret,algorithm="HS256")
-            token_query=f"?access_token={playback_token}" if playback_token else ""
-            value["hls_url"]=f"/api/cctv/{provider_id}/index.m3u8{token_query}"
+            # Browser playback is authorized by the Sentinel session cookie.\n            value["hls_url"]=f"/api/cctv/{provider_id}/index.m3u8"
             if not value.get("rtsp_url"): value["rtsp_url"]=f"rtsp://{rtsp_host}:8554/stream/{provider_id}"
             value["stream_url"]=value["rtsp_url"]
             if not value.get("whep_url"): value["whep_url"]=f"http://{rtsp_host}:8889/stream/{provider_id}/whep"
