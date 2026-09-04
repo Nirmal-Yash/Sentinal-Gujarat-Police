@@ -63,7 +63,7 @@ async def list_assets(_: Principal = Depends(require_role("ADMIN")), db: AsyncSe
             if path.is_file() and path.suffix.lower() in ALLOWED_SUFFIXES:
                 try: await _register_asset(db, path, kind)
                 except HTTPException: continue
-    await db.commit(); rows = await db.execute(text("SELECT id,display_name,source_kind,width,height,fps,duration_seconds,size_bytes FROM test_video_assets ORDER BY source_kind,display_name"))
+    await db.commit(); rows = await db.execute(text("SELECT a.id,a.display_name,a.source_kind,a.width,a.height,a.fps,a.duration_seconds,a.size_bytes, EXISTS(SELECT 1 FROM test_session_feeds f WHERE f.asset_id=a.id) AS in_use FROM test_video_assets a ORDER BY a.source_kind,a.display_name"))
     return [dict(row) for row in rows.mappings().all()]
 
 @router.post("/feeds/upload", status_code=201)
@@ -80,6 +80,41 @@ async def upload_feed(file: UploadFile = File(...), _: Principal = Depends(requi
         asset = await _register_asset(db, target, "upload"); await db.commit(); return asset
     except Exception:
         target.unlink(missing_ok=True); raise
+
+@router.delete("/assets/{asset_id}")
+async def delete_asset(
+    asset_id: uuid.UUID,
+    _: Principal = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    enabled()
+    row = (await db.execute(text("""
+        SELECT id, storage_key, display_name, source_kind
+        FROM test_video_assets
+        WHERE id=CAST(:id AS uuid)
+        FOR UPDATE
+    """), {"id": str(asset_id)})).mappings().first()
+    if not row:
+        raise HTTPException(404, "Test video not found")
+    if row["source_kind"] != "upload":
+        raise HTTPException(409, "Bundled test videos cannot be removed")
+    referenced = await db.scalar(text("""
+        SELECT EXISTS(
+            SELECT 1 FROM test_session_feeds
+            WHERE asset_id=CAST(:id AS uuid)
+        )
+    """), {"id": str(asset_id)})
+    if referenced:
+        raise HTTPException(409, "Test video is referenced by a test session and cannot be removed")
+    path = Path(row["storage_key"])
+    await db.execute(text("DELETE FROM test_video_assets WHERE id=CAST(:id AS uuid)"), {"id": str(asset_id)})
+    await db.commit()
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        raise HTTPException(500, "Video metadata removed but the video file could not be deleted") from exc
+    return {"status": "removed", "id": str(asset_id), "display_name": row["display_name"]}
+
 
 @router.post("/sessions", status_code=201)
 async def create_session(body: TestSessionCreate, principal: Principal = Depends(require_role("ADMIN")), db: AsyncSession = Depends(get_db)):
