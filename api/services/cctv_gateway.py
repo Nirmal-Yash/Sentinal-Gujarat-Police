@@ -39,18 +39,48 @@ class CctvGateway:
         if not self.password:
             raise RuntimeError("CCTV_PASSWORD is not configured")
         self._session.cookies.clear()
+        login_url = f"{self.base_url}{self.login_path}"
+        try:
+            page = self._session.get(
+                login_url,
+                timeout=self.timeout,
+                allow_redirects=True,
+                headers={"Accept": "text/html,application/xhtml+xml,*/*"},
+            )
+        except requests.RequestException as exc:
+            raise RuntimeError(f"CCTV login page request failed: {exc}") from exc
+        page.close()
+
         response = self._session.post(
-            f"{self.base_url}{self.login_path}",
+            login_url,
             data={"password": self.password},
+            headers={
+                "Referer": login_url,
+                "Origin": self.base_url,
+                "Accept": "text/html,application/xhtml+xml,application/json,*/*",
+            },
             timeout=self.timeout,
             allow_redirects=True,
         )
-        if response.status_code not in {200, 302, 303}:
-            raise RuntimeError(f"CCTV login failed with HTTP {response.status_code}")
-        if not self._session.cookies.get_dict():
-            raise RuntimeError("CCTV login returned without a session cookie")
-        self._authenticated_at = time.monotonic()
-        self._last_login_error = None
+        try:
+            if response.status_code not in {200, 204}:
+                raise RuntimeError(f"CCTV login failed with HTTP {response.status_code}")
+            token = None
+            try:
+                payload = response.json()
+                if isinstance(payload, dict):
+                    token = payload.get("access_token") or payload.get("token") or payload.get("jwt")
+            except ValueError:
+                pass
+            if token:
+                self._session.headers["Authorization"] = f"Bearer {token}"
+            cookies = self._session.cookies.get_dict()
+            if not cookies and not token:
+                raise RuntimeError("CCTV login did not establish an authenticated session")
+            self._authenticated_at = time.monotonic()
+            self._last_login_error = None
+        finally:
+            response.close()
 
     def ensure_authenticated(self, force: bool = False) -> None:
         with self._lock:
@@ -72,7 +102,7 @@ class CctvGateway:
                 allow_redirects=False,
                 stream=stream,
             )
-            if response.status_code in {401, 403, 302, 303}:
+            if response.status_code in {401, 403}:
                 response.close()
                 self._login_locked()
                 response = self._session.get(
@@ -80,6 +110,12 @@ class CctvGateway:
                     timeout=self.timeout,
                     allow_redirects=False,
                     stream=stream,
+                )
+            if response.status_code in {302, 303}:
+                location = response.headers.get("Location", "")
+                response.close()
+                raise RuntimeError(
+                    f"CCTV upstream redirected authenticated request to {location or 'login'}"
                 )
             return response
 

@@ -107,22 +107,51 @@ class CctvSession:
                 "CCTV_PASSWORD is required for current CCTV catalogue access"
             )
 
+        login_url = f"{CCTV_BASE_URL}{CCTV_LOGIN_PATH}"
+        # Seed provider state before the password-only form submission.
+        try:
+            page = self.session.get(
+                login_url,
+                timeout=15,
+                allow_redirects=True,
+                headers={"Accept": "text/html,application/xhtml+xml,*/*"},
+            )
+        except requests.RequestException as exc:
+            raise RuntimeError(f"CCTV login page request failed: {exc}") from exc
+        page.close()
+
         response = self.session.post(
-            f"{CCTV_BASE_URL}{CCTV_LOGIN_PATH}",
+            login_url,
             data={"password": CCTV_PASSWORD},
+            headers={
+                "Referer": login_url,
+                "Origin": CCTV_BASE_URL,
+                "Accept": "text/html,application/xhtml+xml,application/json,*/*",
+            },
             timeout=15,
-            allow_redirects=False,
+            allow_redirects=True,
         )
 
-        if response.status_code not in {200, 302, 303}:
-            raise RuntimeError(
-                f"CCTV login failed with HTTP {response.status_code}"
-            )
+        try:
+            if response.status_code not in {200, 204}:
+                raise RuntimeError(f"CCTV login failed with HTTP {response.status_code}")
 
-        if not self.session.cookies.get_dict():
-            raise RuntimeError(
-                "CCTV login did not return a session cookie"
-            )
+            cookies = self.session.cookies.get_dict()
+            token = None
+            try:
+                payload = response.json()
+                if isinstance(payload, dict):
+                    token = payload.get("access_token") or payload.get("token") or payload.get("jwt")
+            except ValueError:
+                pass
+
+            if token:
+                self.session.headers["Authorization"] = f"Bearer {token}"
+
+            if not cookies and not token:
+                raise RuntimeError("CCTV login did not establish an authenticated session")
+        finally:
+            response.close()
 
     def catalogue(self) -> list[dict]:
         self.login()
