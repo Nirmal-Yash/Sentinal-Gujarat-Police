@@ -80,8 +80,8 @@ export default function TestDiagnosticsModal({ onClose, onStarted, manageOnly=fa
                   <b style={{display:'block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{asset.display_name}</b>
                   <small>Test Feed {asset.in_use ? '· In use by a test session' : ''} · {asset.width || '?'}×{asset.height || '?'} · {asset.fps ? `${Number(asset.fps).toFixed(1)} FPS` : 'FPS N/A'} · {bytes(asset.size_bytes || 0)}</small>
                 </span>
-                <button type="button" onClick={() => removeAsset(asset)} disabled={busy || asset.in_use} style={removeButton} aria-label={asset.in_use ? 'Video is in use' : `Remove ${asset.display_name}`}>
-                  {asset.in_use ? 'In use' : 'Remove'}
+                <button type="button" onClick={() => removeAsset(asset)} disabled={busy} style={removeButton} aria-label={`Remove ${asset.display_name}`}>
+                  {asset.in_use ? 'Remove (live)' : 'Remove'}
                 </button>
               </div>
             ))}
