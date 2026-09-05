@@ -52,7 +52,8 @@ def _preload_models(run_anpr, run_face):
         log.info("EasyOCR preload complete")
 
 def spawn(target, name):
-    p = Process(target=target, name=name, daemon=True)
+    # Workers must be non-daemonic because ANPR launches a ProcessPoolExecutor for OCR.
+    p = Process(target=target, name=name, daemon=False)
     started = time.time()
     p.start()
     log.info("Spawned %s (pid %s)", name, p.pid)
