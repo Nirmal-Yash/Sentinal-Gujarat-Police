@@ -40,13 +40,18 @@ def seed(reset=False):
             cur.execute("DELETE FROM test_detections WHERE session_id=%s::uuid",(session,))
             cur.execute("DELETE FROM test_tracks WHERE session_id=%s::uuid",(session,))
             assets={}
-            for cam in manifest["test_cameras"][:8]:
-                f=VIDEO_DIR/cam["video_file"]
+            for cam in manifest['test_cameras']:
+                f=VIDEO_DIR/cam['video_file']
                 cur.execute("""INSERT INTO test_video_assets(storage_key,display_name,source_kind,size_bytes)
                     VALUES(%s,%s,'bundled',%s)
                     ON CONFLICT(storage_key) DO UPDATE SET display_name=EXCLUDED.display_name,size_bytes=EXCLUDED.size_bytes
                     RETURNING id""",(f"/test-data/videos/{f.name}",f.name,f.stat().st_size))
-                assets[cam["video_file"]]=str(cur.fetchone()[0])
+                assets[cam['video_file']]=str(cur.fetchone()[0])
+            for n,cam in enumerate(manifest['test_cameras'],1):
+                asset=assets[cam['video_file']]; label=cam['display_name']
+                cur.execute("""INSERT INTO test_session_feeds(session_id,asset_id,stream_id,camera_label,rtsp_path,hls_path,loop,location,lat,lng)
+                    VALUES(%s::uuid,%s::uuid,%s,%s,%s,%s,TRUE,%s,%s,%s)""",
+                    (session,asset,n,label,f"rtsp://mediamtx:8554/test/{session}/cam{n}",f"/test-hls/test/{session}/cam{n}/index.m3u8",cam['location'],cam['lat'],cam['lng']))
             for n,cam in enumerate(manifest["test_cameras"],1):
                 asset=assets[cam["video_file"]]
                 label=cam["display_name"]
@@ -62,6 +67,9 @@ def seed(reset=False):
             cur.execute("""INSERT INTO test_watchlist(session_id,name,entity_type,description,alert_priority)
               VALUES(%s::uuid,'Person Alpha – Test Subject','person',
               'Demonstration: person watchlist match after supplying an embedding','HIGH')""",(session,))
+            # A Test Mode person track is seeded so the investigation workflow
+            # has a real camera lifecycle target. Its embedding is bound to the
+            # first validated demo reference submitted through the Test UI.
             base=datetime.now(timezone.utc)
             demo=[
               ("WATCHLIST_HIT","NEW","GJ01AB1234",.94,1,base-timedelta(minutes=3)),
@@ -89,7 +97,7 @@ def seed(reset=False):
                 did=juid(session,f"journey-{idx}")
                 cur.execute("""INSERT INTO test_detections(id,session_id,camera_label,detection_type,plate_text,confidence,event_at,source_timestamp,stream_id,track_id,bbox,details)
                   VALUES(%s::uuid,%s::uuid,%s,'plate',%s,%s,%s,%s,%s,%s,'{}'::jsonb,%s::jsonb) ON CONFLICT(id) DO NOTHING""",
-                  (did,session,manifest["test_cameras"][cam-1]["display_name"],plate,conf,when,when,cam,f"journey-{plate}-{idx}",json.dumps({"test":True,"journey":True})))
+                  (did,session,manifest["test_cameras"][cam-1]["display_name"],plate,conf,when,when,cam,f"journey-{plate}-{idx}",json.dumps({"test":True,"journey":True,"plate_validated":"1","anpr_consensus":"1"})))
                 tid=f"journey:{plate}"
                 cur.execute("""INSERT INTO test_tracks(session_id,global_track_id,entity_type,first_camera_label,last_camera_label,first_seen_at,last_seen_at,sightings)
                   VALUES(%s::uuid,%s,'vehicle',%s,%s,%s,%s,jsonb_build_array(jsonb_build_object('camera_label',%s,'timestamp',%s))

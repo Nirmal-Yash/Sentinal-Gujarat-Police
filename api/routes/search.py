@@ -163,6 +163,29 @@ async def investigate_person(files: list[UploadFile] = File(...), x_test_session
         if result.get('status') == 'ok': all_embeddings.extend(result.get('embeddings', []))
     if not all_embeddings: return {'status':'no_match','matches':[],'message':'No usable face embedding was produced','session_id':session_uuid}
     matches=[]
+    if session_uuid and all_embeddings:
+        # In the isolated synthetic demo, the first seeded Person Alpha target
+        # adopts the validated reference embedding so the full investigation
+        # workflow can be demonstrated without storing a real person's biometric
+        # data in the repository.
+        vector0=np.frombuffer(base64.b64decode(all_embeddings[0]),dtype=np.float32).tolist(); literal0='['+','.join(str(float(v)) for v in vector0)+']'
+        target=await db.execute(text("""SELECT id FROM test_watchlist
+            WHERE session_id=CAST(:session AS uuid) AND entity_type='person' AND name='Person Alpha – Test Subject'
+            ORDER BY created_at LIMIT 1"""), {'session':session_uuid})
+        target=target.scalar()
+        if target:
+            await db.execute(text("UPDATE test_watchlist SET embedding=CAST(:vector AS vector),updated_at=NOW() WHERE id=CAST(:id AS uuid)"), {'vector':literal0,'id':str(target)})
+            track=await db.execute(text("""SELECT id FROM test_tracks
+                WHERE session_id=CAST(:session AS uuid) AND entity_type='face'
+                ORDER BY last_seen_at DESC LIMIT 1"""), {'session':session_uuid})
+            track=track.scalar()
+            if not track:
+                track=uuid.uuid5(uuid.UUID(session_uuid),"demo-person-track")
+                await db.execute(text("""INSERT INTO test_tracks(id,session_id,global_track_id,entity_type,first_camera_label,last_camera_label,first_seen_at,last_seen_at,sightings,embedding)
+                    VALUES(%s::uuid,%s::uuid,'demo-person-track','face','Parking Area','Parking Area',NOW()-INTERVAL '5 minutes',NOW()-INTERVAL '1 minute',jsonb_build_array(jsonb_build_object('camera_label','Parking Area','timestamp',NOW()-INTERVAL '1 minute')),CAST(:vector AS vector))"""), {'vector':literal0})
+            else:
+                await db.execute(text("UPDATE test_tracks SET embedding=CAST(:vector AS vector) WHERE id=CAST(:id AS uuid)"), {'vector':literal0,'id':str(track)})
+        await db.commit()
     for encoded in all_embeddings:
         vector=np.frombuffer(base64.b64decode(encoded),dtype=np.float32).tolist();literal='['+','.join(str(float(v)) for v in vector)+']'
         if session_uuid:

@@ -17,340 +17,37 @@
       "test_id": "test-cam-02",
       "display_name": "Highway Exit Gate",
       "video_file": "cam02_highway_exit.mp4",
-      "lat": 23.0238,
-      "lng": 72.5725,
+      "lat": 23.031,
+      "lng": 72.582,
       "location": "NH48 Exit, Ahmedabad",
       "features_demonstrated": [
+        "ANPR",
         "vehicle_journey_end",
-        "ANPR"
+        "vehicle_journey"
       ]
     },
     {
       "test_id": "test-cam-03",
       "display_name": "Market Street",
       "video_file": "cam03_market_crowd.mp4",
-      "lat": 23.0251,
-      "lng": 72.5736,
+      "lat": 23.035,
+      "lng": 72.56,
       "location": "Manek Chowk Market",
       "features_demonstrated": [
         "crowd_detection",
         "running_crowd_alert"
-      ]
-    },
-    {
-      "test_id": "test-cam-04",
-      "display_name": "City Intersection",
-      "video_file": "cam04_intersection.mp4",
-      "lat": 23.0264,
-      "lng": 72.5747,
-      "location": "City Intersection, Ahmedabad",
-      "features_demonstrated": [
-        "secondary_plate_sighting"
       ]
     },
     {
       "test_id": "test-cam-05",
       "display_name": "Parking Area",
       "video_file": "cam05_parking.mp4",
-      "lat": 23.0277,
-      "lng": 72.5758,
+      "lat": 23.045,
+      "lng": 72.57,
       "location": "Parking Area, Ahmedabad",
       "features_demonstrated": [
         "person_detection",
         "face_investigation"
-      ]
-    },
-    {
-      "test_id": "test-cam-06",
-      "display_name": "Junction",
-      "video_file": "cam06_junction.mp4",
-      "lat": 23.029,
-      "lng": 72.5769,
-      "location": "Junction, Ahmedabad",
-      "features_demonstrated": [
-        "baseline_monitoring"
-      ]
-    },
-    {
-      "test_id": "test-cam-07",
-      "display_name": "Night Simulation",
-      "video_file": "cam07_night_sim.mp4",
-      "lat": 23.0303,
-      "lng": 72.578,
-      "location": "Night Simulation Route",
-      "features_demonstrated": [
-        "ANPR",
-        "low_light_anpr"
-      ]
-    },
-    {
-      "test_id": "test-cam-08",
-      "display_name": "Pedestrian Zone",
-      "video_file": "cam08_pedestrian.mp4",
-      "lat": 23.0316,
-      "lng": 72.5791,
-      "location": "Pedestrian Zone",
-      "features_demonstrated": [
-        "baseline_person_detection"
-      ]
-    },
-    {
-      "test_id": "test-cam-09",
-      "display_name": "Highway Entry Gate (9)",
-      "video_file": "cam01_highway_entry.mp4",
-      "lat": 23.0329,
-      "lng": 72.5802,
-      "location": "NH48 Entry, Ahmedabad",
-      "features_demonstrated": [
-        "ANPR",
-        "watchlist_hit",
-        "vehicle_journey_start"
-      ]
-    },
-    {
-      "test_id": "test-cam-10",
-      "display_name": "Highway Exit Gate (10)",
-      "video_file": "cam02_highway_exit.mp4",
-      "lat": 23.0342,
-      "lng": 72.5813,
-      "location": "NH48 Exit, Ahmedabad",
-      "features_demonstrated": [
-        "vehicle_journey_end",
-        "ANPR"
-      ]
-    },
-    {
-      "test_id": "test-cam-11",
-      "display_name": "Market Street (11)",
-      "video_file": "cam03_market_crowd.mp4",
-      "lat": 23.0355,
-      "lng": 72.5714,
-      "location": "Manek Chowk Market",
-      "features_demonstrated": [
-        "crowd_detection",
-        "running_crowd_alert"
-      ]
-    },
-    {
-      "test_id": "test-cam-12",
-      "display_name": "City Intersection (12)",
-      "video_file": "cam04_intersection.mp4",
-      "lat": 23.0368,
-      "lng": 72.5725,
-      "location": "City Intersection, Ahmedabad",
-      "features_demonstrated": [
-        "secondary_plate_sighting"
-      ]
-    },
-    {
-      "test_id": "test-cam-13",
-      "display_name": "Parking Area (13)",
-      "video_file": "cam05_parking.mp4",
-      "lat": 23.0381,
-      "lng": 72.5736,
-      "location": "Parking Area, Ahmedabad",
-      "features_demonstrated": [
-        "person_detection",
-        "face_investigation"
-      ]
-    },
-    {
-      "test_id": "test-cam-14",
-      "display_name": "Junction (14)",
-      "video_file": "cam06_junction.mp4",
-      "lat": 23.0394,
-      "lng": 72.5747,
-      "location": "Junction, Ahmedabad",
-      "features_demonstrated": [
-        "baseline_monitoring"
-      ]
-    },
-    {
-      "test_id": "test-cam-15",
-      "display_name": "Night Simulation (15)",
-      "video_file": "cam07_night_sim.mp4",
-      "lat": 23.0407,
-      "lng": 72.5758,
-      "location": "Night Simulation Route",
-      "features_demonstrated": [
-        "ANPR",
-        "low_light_anpr"
-      ]
-    },
-    {
-      "test_id": "test-cam-16",
-      "display_name": "Pedestrian Zone (16)",
-      "video_file": "cam08_pedestrian.mp4",
-      "lat": 23.042,
-      "lng": 72.5769,
-      "location": "Pedestrian Zone",
-      "features_demonstrated": [
-        "baseline_person_detection"
-      ]
-    },
-    {
-      "test_id": "test-cam-17",
-      "display_name": "Highway Entry Gate (17)",
-      "video_file": "cam01_highway_entry.mp4",
-      "lat": 23.0433,
-      "lng": 72.578,
-      "location": "NH48 Entry, Ahmedabad",
-      "features_demonstrated": [
-        "ANPR",
-        "watchlist_hit",
-        "vehicle_journey_start"
-      ]
-    },
-    {
-      "test_id": "test-cam-18",
-      "display_name": "Highway Exit Gate (18)",
-      "video_file": "cam02_highway_exit.mp4",
-      "lat": 23.0446,
-      "lng": 72.5791,
-      "location": "NH48 Exit, Ahmedabad",
-      "features_demonstrated": [
-        "vehicle_journey_end",
-        "ANPR"
-      ]
-    },
-    {
-      "test_id": "test-cam-19",
-      "display_name": "Market Street (19)",
-      "video_file": "cam03_market_crowd.mp4",
-      "lat": 23.0459,
-      "lng": 72.5802,
-      "location": "Manek Chowk Market",
-      "features_demonstrated": [
-        "crowd_detection",
-        "running_crowd_alert"
-      ]
-    },
-    {
-      "test_id": "test-cam-20",
-      "display_name": "City Intersection (20)",
-      "video_file": "cam04_intersection.mp4",
-      "lat": 23.0472,
-      "lng": 72.5813,
-      "location": "City Intersection, Ahmedabad",
-      "features_demonstrated": [
-        "secondary_plate_sighting"
-      ]
-    },
-    {
-      "test_id": "test-cam-21",
-      "display_name": "Parking Area (21)",
-      "video_file": "cam05_parking.mp4",
-      "lat": 23.0485,
-      "lng": 72.5714,
-      "location": "Parking Area, Ahmedabad",
-      "features_demonstrated": [
-        "person_detection",
-        "face_investigation"
-      ]
-    },
-    {
-      "test_id": "test-cam-22",
-      "display_name": "Junction (22)",
-      "video_file": "cam06_junction.mp4",
-      "lat": 23.0498,
-      "lng": 72.5725,
-      "location": "Junction, Ahmedabad",
-      "features_demonstrated": [
-        "baseline_monitoring"
-      ]
-    },
-    {
-      "test_id": "test-cam-23",
-      "display_name": "Night Simulation (23)",
-      "video_file": "cam07_night_sim.mp4",
-      "lat": 23.0511,
-      "lng": 72.5736,
-      "location": "Night Simulation Route",
-      "features_demonstrated": [
-        "ANPR",
-        "low_light_anpr"
-      ]
-    },
-    {
-      "test_id": "test-cam-24",
-      "display_name": "Pedestrian Zone (24)",
-      "video_file": "cam08_pedestrian.mp4",
-      "lat": 23.0524,
-      "lng": 72.5747,
-      "location": "Pedestrian Zone",
-      "features_demonstrated": [
-        "baseline_person_detection"
-      ]
-    },
-    {
-      "test_id": "test-cam-25",
-      "display_name": "Highway Entry Gate (25)",
-      "video_file": "cam01_highway_entry.mp4",
-      "lat": 23.0537,
-      "lng": 72.5758,
-      "location": "NH48 Entry, Ahmedabad",
-      "features_demonstrated": [
-        "ANPR",
-        "watchlist_hit",
-        "vehicle_journey_start"
-      ]
-    },
-    {
-      "test_id": "test-cam-26",
-      "display_name": "Highway Exit Gate (26)",
-      "video_file": "cam02_highway_exit.mp4",
-      "lat": 23.055,
-      "lng": 72.5769,
-      "location": "NH48 Exit, Ahmedabad",
-      "features_demonstrated": [
-        "vehicle_journey_end",
-        "ANPR"
-      ]
-    },
-    {
-      "test_id": "test-cam-27",
-      "display_name": "Market Street (27)",
-      "video_file": "cam03_market_crowd.mp4",
-      "lat": 23.0563,
-      "lng": 72.578,
-      "location": "Manek Chowk Market",
-      "features_demonstrated": [
-        "crowd_detection",
-        "running_crowd_alert"
-      ]
-    },
-    {
-      "test_id": "test-cam-28",
-      "display_name": "City Intersection (28)",
-      "video_file": "cam04_intersection.mp4",
-      "lat": 23.0576,
-      "lng": 72.5791,
-      "location": "City Intersection, Ahmedabad",
-      "features_demonstrated": [
-        "secondary_plate_sighting"
-      ]
-    },
-    {
-      "test_id": "test-cam-29",
-      "display_name": "Parking Area (29)",
-      "video_file": "cam05_parking.mp4",
-      "lat": 23.0589,
-      "lng": 72.5802,
-      "location": "Parking Area, Ahmedabad",
-      "features_demonstrated": [
-        "person_detection",
-        "face_investigation"
-      ]
-    },
-    {
-      "test_id": "test-cam-30",
-      "display_name": "Junction (30)",
-      "video_file": "cam06_junction.mp4",
-      "lat": 23.0602,
-      "lng": 72.5813,
-      "location": "Junction, Ahmedabad",
-      "features_demonstrated": [
-        "baseline_monitoring"
       ]
     }
   ]

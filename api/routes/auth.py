@@ -93,6 +93,7 @@ async def login(body: Login, request: Request, response: Response, db: AsyncSess
 
     try:
         await record_attempt(username, request, True, db)
+        await db.execute(text("UPDATE users SET last_login=NOW() WHERE id=CAST(:uid AS uuid)"), {'uid': str(row['id'])})
         await enforce_session_limit(str(row['id']), db)
 
         # Create the logical session first, then replace its temporary JTI/expiry
