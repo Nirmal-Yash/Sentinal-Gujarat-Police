@@ -94,13 +94,13 @@ def _prepare_face_image(payload: bytes) -> bytes:
         output = BytesIO(); image.save(output, format='JPEG', quality=95, optimize=True); return output.getvalue()
 
 
-async def _run_person_analysis(payload: bytes, timeout: float, operation: str):
+async def _run_person_analysis(payload: bytes, timeout: float, operation: str, test_mode: bool = False):
     import redis.asyncio as redis_async
     r = redis_async.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379'), decode_responses=False)
-    job_id = uuid.uuid4().hex; image_key = f'person:image:{job_id}'; result_key = f'person:result:{job_id}'
+    job_id = uuid.uuid4().hex; prefix = 'test:' if test_mode else ''; image_key = f'{prefix}person:image:{job_id}'; result_key = f'{prefix}person:result:{job_id}'; stream = f'{prefix}person:investigations'
     try:
         await r.set(image_key, payload, ex=max(30, int(timeout) + 10))
-        await r.xadd('person:investigations', {'request_id': job_id, 'image_key': image_key, 'result_key': result_key, 'operation': operation}, maxlen=1000, approximate=True)
+        await r.xadd(stream, {'request_id': job_id, 'image_key': image_key, 'result_key': result_key, 'operation': operation}, maxlen=1000, approximate=True)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             raw = await r.get(result_key)
@@ -113,7 +113,13 @@ async def _run_person_analysis(payload: bytes, timeout: float, operation: str):
 
 
 @router.post('/person/validate', dependencies=[Depends(rate_limit('person-investigation', int(os.getenv('PERSON_SEARCH_RATE_LIMIT', '20')), int(os.getenv('PERSON_SEARCH_RATE_WINDOW', '60'))))])
-async def validate_person_photo(file: UploadFile = File(...), principal: Principal = Depends(require_permission('search:read'))):
+async def validate_person_photo(file: UploadFile = File(...), x_test_session_id: str | None = Header(None, alias='X-Test-Session-Id'), db: AsyncSession = Depends(get_db), principal: Principal = Depends(require_permission('search:read'))):
+    session_uuid = None
+    if x_test_session_id:
+        try: session_uuid = str(uuid.UUID(x_test_session_id))
+        except ValueError as exc: raise HTTPException(400, 'Invalid X-Test-Session-Id') from exc
+        if not await db.scalar(text("SELECT 1 FROM test_sessions WHERE id=CAST(:id AS uuid) AND status IN ('starting','active')"), {'id': session_uuid}):
+            raise HTTPException(404, 'Test session not active')
     if not file.content_type or not file.content_type.startswith('image/'): raise HTTPException(415, 'Upload an image file')
     payload = await file.read()
     if not payload or len(payload) > 10 * 1024 * 1024: raise HTTPException(413, 'Image must be between 1 byte and 10 MB')
