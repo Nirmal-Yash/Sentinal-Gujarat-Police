@@ -41,7 +41,7 @@ function AppContent(){
  const[path,navigate]=useSpaRoute(),[now,setNow]=useState(()=>new Date()),[routeMotion,setRouteMotion]=useState(0)
  const wsBatchRef=useRef([]),wsBatchTimerRef=useRef(null)
  useTheme()
- const[cameras,setCameras]=useState(()=>readCachedJson(PRODUCTION_CAMERAS_KEY,[])),[productionCameras,setProductionCameras]=useState(()=>readCachedJson(PRODUCTION_CAMERAS_KEY,[])),[alerts,setAlerts]=useState([]),[counts,setCounts]=useState(null),[pipelineStats,setPipelineStats]=useState(null),[analytics,setAnalytics]=useState([])
+ const[cameras,setCameras]=useState(()=>{const cached=readCachedJson(PRODUCTION_CAMERAS_KEY,[]);return Array.isArray(cached)?cached:[]} ),[productionCameras,setProductionCameras]=useState(()=>{const cached=readCachedJson(PRODUCTION_CAMERAS_KEY,[]);return Array.isArray(cached)?cached:[]} ),[alerts,setAlerts]=useState([]),[counts,setCounts]=useState(null),[pipelineStats,setPipelineStats]=useState(null),[analytics,setAnalytics]=useState([])
  const[mapFocus,setMapFocus]=useState({id:null,nonce:0}),[cameraFocus,setCameraFocus]=useState({id:null,nonce:0}),[vehicleRoute,setVehicleRoute]=useState({sightings:[],nonce:0})
  const[showSearch,setShowSearch]=useState(false),[showTestAssetManager,setShowTestAssetManager]=useState(false),[searchInit,setSearchInit]=useState(null),[showWatchlist,setShowWatchlist]=useState(false),[showOnboard,setShowOnboard]=useState(false),[showVendors,setShowVendors]=useState(false)
  const[authRequired,setAuthRequired]=useState(null),[testEnabled,setTestEnabled]=useState(false),[principal,setPrincipal]=useState(null),[authReady,setAuthReady]=useState(false),[authError,setAuthError]=useState('')
