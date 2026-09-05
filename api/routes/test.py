@@ -235,6 +235,14 @@ async def create_session(body: TestSessionCreate, principal: Principal = Depends
         asset = assets[feed.asset_id]; label = feed.camera_label.strip() or f"Test Camera {number} — {asset['display_name']}"
         await db.execute(text("""INSERT INTO test_session_feeds(session_id,asset_id,stream_id,camera_label,rtsp_path,hls_path,loop,width,height,fps)
           VALUES(CAST(:session AS uuid),CAST(:asset AS uuid),:stream,:label,:rtsp,:hls,:loop,:width,:height,:fps)"""), {"session": session_id,"asset": str(feed.asset_id),"stream": number,"label": label,"rtsp": f"rtsp://mediamtx:8554/test/{session_id}/cam{number}","hls": f"/test-hls/test/{session_id}/cam{number}/index.m3u8","loop": feed.loop,"width": asset["width"],"height": asset["height"],"fps": asset["fps"]})
+    # Seed configurable plate watchlist entries into this Test session only.
+    seed_plates = [p.strip().upper() for p in os.getenv("TEST_WATCHLIST_SEED_PLATES", "GXIOSGJ").split(",") if p.strip()]
+    for seed_plate in seed_plates:
+        await db.execute(text("""INSERT INTO test_watchlist(session_id,name,entity_type,description,plate_number,alert_priority)
+          VALUES(CAST(:session AS uuid),:name,'vehicle',:description,:plate,'HIGH')"""), {
+            "session": session_id, "name": f"Test Watchlist — {seed_plate}",
+            "description": "Seeded Test Mode plate watchlist entry", "plate": seed_plate,
+        })
     # The existing ingestion service detects this starting row and spawns one
     # isolated decoder subprocess. No operational worker or Docker service is
     # restarted to run a test.

@@ -165,7 +165,8 @@ def run():
                 continue
             raw_text, ocr_conf, _ = result
             normalized = normalize_indian_plate(raw_text)
-            if not normalized or ocr_conf < OCR_CONF or not plate_is_valid(normalized):
+            test_allowlisted = TEST_MODE and normalized in TEST_PLATE_ALLOWLIST
+            if not normalized or ocr_conf < OCR_CONF or (not plate_is_valid(normalized) and not test_allowlisted):
                 continue
             state.add(PlateObservation(normalized, ocr_conf, float(meta["track_conf"]), float(meta["quality"]), True, time.monotonic()))
             plate, consensus = state.consensus(MIN_OBS, time.monotonic())
