@@ -32,6 +32,8 @@ TRACK_MIN_AGE = max(0.0, float(os.getenv("ANPR_TRACK_MIN_AGE_SECS", str(_thresho
 MAX_TRACKS = max(1, int(os.getenv("ANPR_MAX_CONCURRENT_TRACKS", "128")))
 MIN_VEHICLE_W = int(os.getenv("ANPR_MIN_VEHICLE_W", "80"))
 MIN_VEHICLE_H = int(os.getenv("ANPR_MIN_VEHICLE_H", "60"))
+MIN_PLATE_W = max(20, int(os.getenv("ANPR_MIN_PLATE_WIDTH", "45")))
+MIN_PLATE_H = max(10, int(os.getenv("ANPR_MIN_PLATE_HEIGHT", "15")))
 OCR_WORKERS = max(1, min(4, int(os.getenv("ANPR_OCR_WORKERS", str(_thresholds["ocr_workers"])))))
 MAX_PENDING_JOBS = max(1, int(os.getenv("ANPR_MAX_PENDING_JOBS", str(_thresholds["max_pending_jobs"]))))
 

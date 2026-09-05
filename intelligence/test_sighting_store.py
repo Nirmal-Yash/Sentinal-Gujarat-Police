@@ -68,7 +68,7 @@ def persist(data: dict):
             cur.execute("""INSERT INTO test_tracks(session_id,global_track_id,entity_type,first_camera_label,last_camera_label,first_seen_at,last_seen_at,sightings)
               VALUES(%s::uuid,%s,%s,%s,%s,%s,%s,jsonb_build_array(jsonb_build_object('camera_label',%s,'timestamp',%s)))
               ON CONFLICT(session_id,global_track_id) DO UPDATE SET last_camera_label=EXCLUDED.last_camera_label,last_seen_at=EXCLUDED.last_seen_at,sightings=test_tracks.sightings || EXCLUDED.sightings""",
-              (session_id,global_track,camera_label,camera_label,timestamp,timestamp,camera_label,timestamp.isoformat()))
+              (session_id,global_track,kind,camera_label,camera_label,timestamp,timestamp,camera_label,timestamp.isoformat()))
             if embedding and kind == "face":
                 cur.execute("UPDATE test_tracks SET embedding=CAST(%s AS vector) WHERE session_id=%s::uuid AND global_track_id=%s", (_vector_literal(embedding), session_id, global_track))
             alert = None; watchlist_match = None
