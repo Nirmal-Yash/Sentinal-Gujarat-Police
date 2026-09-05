@@ -64,8 +64,10 @@ def _csv_payload(row: dict) -> tuple[dict, dict]:
     for key, value in row.items():
         normalized = (key or "").strip().lower().replace(" ", "_").replace("-", "_")
         target = CSV_ALIASES.get(normalized, normalized)
-        if value is not None and value.strip() != "":
-            payload[target] = value.strip(); column_map[key] = target
+        if value is not None:
+            text_value = str(value).strip()
+            if text_value:
+                payload[target] = text_value; column_map[key] = target
     for key in ("stream_id", "retention_days"):
         if key in payload:
             payload[key] = int(payload[key])

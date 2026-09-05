@@ -9,7 +9,7 @@ const bytes = n => n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${M
 
 export default function TestDiagnosticsModal({ onClose, onStarted, manageOnly=false, testSessionId=null, onFeedAdded }) {
   const [assets, setAssets] = useState(() => readTestCache(TEST_ASSETS_KEY)), [selected, setSelected] = useState([]), [loop, setLoop] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState(''), [selectedFiles, setSelectedFiles] = useState([])
-  useEffect(() => { api.getTestAssets().then(rows => { setAssets(rows); try { localStorage.setItem(TEST_ASSETS_KEY, JSON.stringify(rows)) } catch {} try { const saved=JSON.parse(localStorage.getItem(TEST_SELECTION_KEY)||'[]'); const valid=saved.filter(id=>rows.some(asset=>String(asset.id)===String(id))).slice(0,8); setSelected(valid.length?valid:rows.slice(0,8).map(asset=>asset.id)); } catch { setSelected(rows.slice(0,8).map(asset=>asset.id)) } }).catch(error => setError(error.message)) }, [])
+  useEffect(() => { api.getTestAssets().then(rows => { setAssets(rows); try { localStorage.setItem(TEST_ASSETS_KEY, JSON.stringify(rows)) } catch {} try { localStorage.setItem(TEST_ASSETS_KEY, JSON.stringify(rows)) } catch {} try { const saved=JSON.parse(localStorage.getItem(TEST_SELECTION_KEY)||'[]'); const valid=saved.filter(id=>rows.some(asset=>String(asset.id)===String(id))).slice(0,8); setSelected(valid.length?valid:rows.slice(0,8).map(asset=>asset.id)); } catch { setSelected(rows.slice(0,8).map(asset=>asset.id)) } }).catch(error => setError(error.message)) }, [])
   const upload = async event => {
     const files = Array.from(event.target.files || [])
     event.target.value = ''
@@ -24,7 +24,7 @@ export default function TestDiagnosticsModal({ onClose, onStarted, manageOnly=fa
     try {
       const uploaded = []
       for (const file of files) uploaded.push(await api.uploadTestVideo(file))
-      setAssets(current => [...uploaded, ...current.filter(item => !uploaded.some(asset => asset.id === item.id))])
+      setAssets(current => { const next=[...uploaded,...current.filter(item=>!uploaded.some(asset=>asset.id===item.id))]; try { localStorage.setItem(TEST_ASSETS_KEY,JSON.stringify(next)) } catch {} return next })
       setSelected(current => { const next=[...new Set([...current,...uploaded.map(asset=>asset.id)])].slice(0,8); try { localStorage.setItem(TEST_SELECTION_KEY,JSON.stringify(next)) } catch {} return next })
       setSelectedFiles([])
     } catch (err) { setError(err.message || 'Video upload failed') } finally { setBusy(false) }
