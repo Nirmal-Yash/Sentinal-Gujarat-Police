@@ -3,7 +3,7 @@ import base64, csv, io, mimetypes, os, signal, uuid
 import numpy as np
 from datetime import datetime
 from pathlib import Path
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text

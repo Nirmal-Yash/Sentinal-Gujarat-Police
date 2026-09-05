@@ -10,6 +10,14 @@ def check(ok,msg):
  print(f"[{'OK' if ok else 'FAIL'}] {msg}")
  if not ok: failures.append(msg)
 def main():
+    # Catch import-time syntax errors before Docker healthchecks can fail.
+    python_files = [p for root in ("api", "ingestion", "intelligence", "ai_engine") for p in (ROOT/root).rglob("*.py") if "__pycache__" not in p.parts]
+    for py_file in python_files:
+        try:
+            subprocess.run([sys.executable, "-m", "py_compile", str(py_file)], cwd=ROOT, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            check(True, f"Python syntax compiles: {py_file.relative_to(ROOT)}")
+        except subprocess.CalledProcessError as exc:
+            check(False, f"Python syntax compiles: {py_file.relative_to(ROOT)} ({exc.stderr.strip()})")
  required=[".env.example","docker-compose.yml","api/auth.py","api/routes/cctv.py","api/services/cctv_gateway.py","api/routes/cameras.py","api/routes/camera_imports.py","api/routes/test.py","api/routes/search.py","api/routes/alerts.py","api/routes/evidence.py","ai_engine/main.py","ai_engine/shared_models.py","ai_engine/yolo_worker.py","ai_engine/anpr_worker.py","ai_engine/anpr_policy.py","ai_engine/behavior_worker.py","ai_engine/face_worker.py","ai_engine/thresholds.yaml","ingestion/worker.py","ingestion/catalogue_sync.py","ingestion/test_runner.py","intelligence/alert_engine.py","intelligence/sighting_store.py","dashboard/src/App.jsx","dashboard/src/api/client.js","dashboard/src/components/CameraGrid.jsx","dashboard/src/components/cameraPlayerManager.js","dashboard/src/components/TestFeedManager.jsx","dashboard/src/components/AlertPanel.jsx","dashboard/src/components/AlertWorkspace.jsx","dashboard/src/components/NotificationBell.jsx","database/migrations/019_rbac_roles.sql","database/migrations/020_test_alert_lifecycle.sql","database/migrations/021_audit_integrity.sql","database/migrations/023_p1_intelligence_consistency.sql","database/migrations/024_stream_metadata_provenance.sql","database/migrations/025_processing_fps_category.sql","database/migrations/026_test_watchlists.sql"]
  for p in required: check((ROOT/p).is_file(),f"required component exists: {p}")
  versions=[m.group(1) for p in (ROOT/"database/migrations").glob("*.sql") if (m:=re.match(r"^(\d+)_",p.name))]
@@ -44,7 +52,7 @@ model=read("api/models.py"); registry=read("dashboard/src/components/CameraRegis
  check('pattern="^(highway|pedestrian|static)$"' in model and 'name="processing_fps_category"' in registry,"camera processing category is consistent")
  compose=read("docker-compose.yml"); env=read(".env.example")
  check("CCTV_EMAIL=" in env and "CCTV_PASSWORD=" in env,".env.example documents CCTV credentials")
-    check("CCTV_EMAIL=${CCTV_EMAIL:?CCTV_EMAIL must be supplied}" in compose and "CCTV_PASSWORD=${CCTV_PASSWORD:?CCTV_PASSWORD must be supplied}" in compose,"Compose requires CCTV credentials")
+check("CCTV_EMAIL=${CCTV_EMAIL:?CCTV_EMAIL must be supplied}" in compose and "CCTV_PASSWORD=${CCTV_PASSWORD:?CCTV_PASSWORD must be supplied}" in compose,"Compose requires CCTV credentials")
  check("test_person_investigation:" in compose and "test_ai_worker:" in compose and "test_intelligence:" in compose,"Compose has isolated Test services")
  check("ANPR_OCR_WORKERS" in compose and "ANPR_MAX_PENDING_JOBS" in compose,"Compose exposes ANPR pool controls")
  contract_tests=list((ROOT/"tests").glob("test_*_contract.py"))
