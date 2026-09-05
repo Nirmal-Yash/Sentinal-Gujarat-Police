@@ -59,6 +59,8 @@ jobs:
           CCTV_PASSWORD: ci-cctv-password
           SECRET_KEY: ci-signing-secret
           SNAPSHOT_TOKEN_SECRET: ci-snapshot-secret
+          JWT_SECRET_KEY: ci-jwt-secret
+          BOOTSTRAP_ADMIN_PASSWORD: ci-admin-password
         run: docker compose config -q
       - name: Docker API startup smoke test
         env:
