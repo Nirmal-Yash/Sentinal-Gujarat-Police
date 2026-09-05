@@ -124,7 +124,7 @@ async def validate_person_photo(file: UploadFile = File(...), x_test_session_id:
     payload = await file.read()
     if not payload or len(payload) > 10 * 1024 * 1024: raise HTTPException(413, 'Image must be between 1 byte and 10 MB')
     try:
-        result = await _run_person_analysis(_prepare_face_image(payload), float(os.getenv('PERSON_INVESTIGATION_TIMEOUT', '20')), 'validate')
+        result = await _run_person_analysis(_prepare_face_image(payload), float(os.getenv('PERSON_INVESTIGATION_TIMEOUT', '20')), 'validate', session_uuid is not None)
         if result.get('status') == 'error': raise HTTPException(503, 'Person analysis service unavailable')
         faces = result.get('faces') or []
         return {'valid': bool(faces), 'face_count': int(result.get('face_count', len(faces))), 'faces': faces, 'message': 'Face detected' if faces else 'No visible face detected'}
@@ -147,7 +147,7 @@ async def investigate_person(files: list[UploadFile] = File(...), x_test_session
         if not file.content_type or not file.content_type.startswith('image/'): continue
         payload = await file.read()
         if not payload or len(payload) > 10 * 1024 * 1024: continue
-        try: result = await _run_person_analysis(_prepare_face_image(payload), timeout, 'investigate')
+        try: result = await _run_person_analysis(_prepare_face_image(payload), timeout, 'investigate', session_uuid is not None)
         except TimeoutError: continue
         if result.get('status') == 'ok': all_embeddings.extend(result.get('embeddings', []))
     if not all_embeddings: return {'status':'no_match','matches':[],'message':'No usable face embedding was produced','session_id':session_uuid}
