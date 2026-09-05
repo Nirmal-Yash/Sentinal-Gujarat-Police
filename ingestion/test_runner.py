@@ -15,20 +15,36 @@ def runner(session_id: str):
     with conn.cursor() as cur:
         cur.execute("""SELECT f.stream_id,a.storage_key,f.loop FROM test_session_feeds f JOIN test_video_assets a ON a.id=f.asset_id WHERE f.session_id=%s::uuid ORDER BY f.stream_id""", (session_id,)); rows = cur.fetchall()
         cur.execute("UPDATE test_sessions SET status='active',started_at=COALESCE(started_at,NOW()),error=NULL WHERE id=%s::uuid", (session_id,))
-    feeds, publishers, frames = [], [], 0
+    feeds, publishers, frames = [], {}, 0
     try:
         for stream_id, source, loop in rows:
             cap = cv2.VideoCapture(source)
             if not cap.isOpened(): raise RuntimeError(f"Cannot decode test source: {os.path.basename(source)}")
             width, height, source_fps = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)), cap.get(cv2.CAP_PROP_FPS)
             with conn.cursor() as cur: cur.execute("UPDATE test_session_feeds SET width=%s,height=%s,fps=%s WHERE session_id=%s::uuid AND stream_id=%s", (width or None,height or None,source_fps or None,session_id,stream_id))
-            publishers.append(subprocess.Popen([imageio_ffmpeg.get_ffmpeg_exe(),"-hide_banner","-loglevel","error","-re","-stream_loop","-1" if loop else "0","-i",source,"-map","0:v:0","-an","-c:v","libx264","-preset","veryfast","-tune","zerolatency","-f","rtsp","-rtsp_transport","tcp",f"{RTSP_BASE}/test/{session_id}/cam{stream_id}"], start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL))
+            publishers[stream_id] = subprocess.Popen([imageio_ffmpeg.get_ffmpeg_exe(),"-hide_banner","-loglevel","error","-re","-stream_loop","-1" if loop else "0","-i",source,"-map","0:v:0","-an","-c:v","libx264","-preset","veryfast","-tune","zerolatency","-f","rtsp","-rtsp_transport","tcp",f"{RTSP_BASE}/test/{session_id}/cam{stream_id}"], start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL))
             feeds.append({"stream_id": stream_id,"cap": cap,"loop": loop,"next": 0.0,"pts": 0})
         client = redis.from_url(REDIS_URL, decode_responses=False)
         while running and feeds:
             if client.get(f"test:stop:{session_id}"):
                 break
             now = time.monotonic()
+            for key in list(client.scan_iter(match=f'test:remove_feed:{session_id}:*')):
+                try: removed_stream = int(str(key).rsplit(':',1)[1])
+                except (ValueError, IndexError): client.delete(key); continue
+                for feed in list(feeds):
+                    if int(feed['stream_id']) != removed_stream: continue
+                    feed['cap'].release()
+                    feeds.remove(feed)
+                    process = publishers.pop(removed_stream, None)
+                    if process is not None:
+                        try: os.killpg(process.pid, signal.SIGTERM)
+                        except ProcessLookupError: pass
+                client.delete(key)
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE test_sessions SET frames_processed=%s WHERE id=%s::uuid", (frames,session_id))
+            if not feeds:
+                break
             for feed in list(feeds):
                 if now < feed["next"]: continue
                 ok, frame = feed["cap"].read()
@@ -48,7 +64,7 @@ def runner(session_id: str):
         with conn.cursor() as cur: cur.execute("UPDATE test_sessions SET status='error',error=%s WHERE id=%s::uuid", (str(exc)[:2000],session_id))
     finally:
         for feed in feeds: feed["cap"].release()
-        for process in publishers:
+        for process in publishers.values():
             try: os.killpg(process.pid, signal.SIGTERM)
             except ProcessLookupError: pass
         conn.close()

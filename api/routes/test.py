@@ -89,29 +89,72 @@ async def delete_asset(
 ):
     enabled()
     row = (await db.execute(text("""
-        SELECT id, storage_key, display_name, source_kind
+        SELECT id, storage_key, display_name
         FROM test_video_assets
         WHERE id=CAST(:id AS uuid)
         FOR UPDATE
     """), {"id": str(asset_id)})).mappings().first()
     if not row:
         raise HTTPException(404, "Test video not found")
-    referenced = await db.scalar(text("""
-        SELECT EXISTS(
-            SELECT 1 FROM test_session_feeds
-            WHERE asset_id=CAST(:id AS uuid)
-        )
-    """), {"id": str(asset_id)})
-    if referenced:
-        raise HTTPException(409, "Test video is referenced by a test session and cannot be removed")
-    path = Path(row["storage_key"])
-    await db.execute(text("DELETE FROM test_video_assets WHERE id=CAST(:id AS uuid)"), {"id": str(asset_id)})
+
+    refs = (await db.execute(text("""
+        SELECT f.session_id, f.stream_id
+        FROM test_session_feeds f
+        JOIN test_sessions s ON s.id=f.session_id
+        WHERE f.asset_id=CAST(:id AS uuid)
+          AND s.status IN ('starting','active')
+    """), {"id": str(asset_id)})).mappings().all()
+
+    import redis
+    client = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
+    for ref in refs:
+        client.setex(f"test:remove_feed:{ref['session_id']}:{ref['stream_id']}", 60, "1")
+
+    await db.execute(
+        text("DELETE FROM test_session_feeds WHERE asset_id=CAST(:id AS uuid)"),
+        {"id": str(asset_id)},
+    )
+    await db.execute(
+        text("DELETE FROM test_video_assets WHERE id=CAST(:id AS uuid)"),
+        {"id": str(asset_id)},
+    )
     await db.commit()
+
+    path = Path(row["storage_key"])
     try:
         path.unlink(missing_ok=True)
     except OSError as exc:
-        raise HTTPException(500, "Video metadata removed but the video file could not be deleted") from exc
+        raise HTTPException(500, "Test video metadata was removed but the video file could not be deleted") from exc
+
     return {"status": "removed", "id": str(asset_id), "display_name": row["display_name"]}
+
+
+@router.delete("/sessions/{session_id}/feeds/{stream_id}")
+async def delete_session_feed(
+    session_id: uuid.UUID,
+    stream_id: int,
+    _: Principal = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    enabled()
+    row = (await db.execute(text("""
+        SELECT id
+        FROM test_session_feeds
+        WHERE session_id=CAST(:session AS uuid) AND stream_id=:stream
+        FOR UPDATE
+    """), {"session": str(session_id), "stream": stream_id})).mappings().first()
+    if not row:
+        raise HTTPException(404, "Test feed not found")
+
+    import redis
+    client = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
+    client.setex(f"test:remove_feed:{session_id}:{stream_id}", 60, "1")
+    await db.execute(
+        text("DELETE FROM test_session_feeds WHERE session_id=CAST(:session AS uuid) AND stream_id=:stream"),
+        {"session": str(session_id), "stream": stream_id},
+    )
+    await db.commit()
+    return {"status": "removed", "session_id": str(session_id), "stream_id": stream_id}
 
 
 @router.post("/sessions", status_code=201)
