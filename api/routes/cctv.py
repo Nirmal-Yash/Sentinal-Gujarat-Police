@@ -23,6 +23,24 @@ _SECRET_PLACEHOLDERS = {"", "change-me", "changeme", "sentinel-change-in-product
 _CAMERA_RE = re.compile(r"cam(\d{2})", re.IGNORECASE)
 
 
+def _cors_headers(request: Request) -> dict[str, str]:
+    """Return CORS headers only for configured credentialed browser origins."""
+    origin = request.headers.get("origin")
+    allowed = {
+        value.strip()
+        for value in os.getenv(
+            "ALLOWED_ORIGINS",
+            os.getenv("CORS_ORIGINS", "http://localhost:3000"),
+        ).split(",")
+        if value.strip()
+    }
+    headers = {"Vary": "Origin"}
+    if origin and origin in allowed:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+    return headers
+
+
 def _secret() -> str:
     secret = (os.getenv("SECRET_KEY", "") or "").strip()
     if secret.lower() in _SECRET_PLACEHOLDERS:
@@ -176,7 +194,7 @@ async def proxy_cctv_asset(
         return Response(
             _rewrite_manifest(body, asset_path, token),
             media_type="application/vnd.apple.mpegurl",
-            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Access-Control-Allow-Origin": "*", "Vary": "Authorization, Cookie"},
+            headers={**_cors_headers(request), "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Vary": "Authorization, Cookie, Origin"},
         )
 
     def iterator():
@@ -191,5 +209,5 @@ async def proxy_cctv_asset(
     return StreamingResponse(
         iterator(),
         media_type=safe_type,
-        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Access-Control-Allow-Origin": "*", "Vary": "Authorization, Cookie"},
+        headers={**_cors_headers(request), "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Vary": "Authorization, Cookie, Origin"},
     )
