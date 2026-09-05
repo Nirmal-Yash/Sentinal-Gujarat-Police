@@ -1,7 +1,6 @@
 """Authenticated gateway client for the current cctv.corp8.cloud infrastructure.
 
-The CCTV provider uses a password-only form login that returns a session cookie.
-The password remains server-side; browser clients never receive it.
+The CCTV provider requires an assigned email plus password. Credentials remain server-side for catalogue and HLS proxy requests.
 """
 from __future__ import annotations
 
@@ -19,7 +18,8 @@ CATALOGUE_PATH = "/cameras.json"
 
 
 class CctvGateway:
-    def __init__(self, password: str, base_url: str = CCTV_BASE, timeout: float = 15.0):
+    def __init__(self, email: str, password: str, base_url: str = CCTV_BASE, timeout: float = 15.0):
+        self.email = (email or "").strip()
         self.password = password or ""
         self.base_url = base_url.rstrip("/")
         self.login_path = os.getenv("CCTV_LOGIN_PATH", LOGIN_PATH)
@@ -33,24 +33,54 @@ class CctvGateway:
 
     @property
     def configured(self) -> bool:
-        return bool(self.password)
+        return bool(self.email and self.password)
 
     def _login_locked(self) -> None:
+        if not self.email:
+            raise RuntimeError("CCTV_EMAIL is not configured")
         if not self.password:
             raise RuntimeError("CCTV_PASSWORD is not configured")
         self._session.cookies.clear()
+        login_url = f"{self.base_url}{self.login_path}"
+        try:
+            page = self._session.get(
+                login_url,
+                timeout=self.timeout,
+                allow_redirects=True,
+                headers={"Accept": "text/html,application/xhtml+xml,*/*"},
+            )
+        except requests.RequestException as exc:
+            raise RuntimeError(f"CCTV login page request failed: {exc}") from exc
+        page.close()
         response = self._session.post(
-            f"{self.base_url}{self.login_path}",
-            data={"password": self.password},
+            login_url,
+            data={"email": self.email, "password": self.password},
+            headers={
+                "Referer": login_url,
+                "Origin": self.base_url,
+                "Accept": "text/html,application/xhtml+xml,application/json,*/*",
+            },
             timeout=self.timeout,
-            allow_redirects=False,
+            allow_redirects=True,
         )
-        if response.status_code not in {200, 302, 303}:
-            raise RuntimeError(f"CCTV login failed with HTTP {response.status_code}")
-        if not self._session.cookies.get_dict():
-            raise RuntimeError("CCTV login returned without a session cookie")
-        self._authenticated_at = time.monotonic()
-        self._last_login_error = None
+        try:
+            if response.status_code not in {200, 204}:
+                raise RuntimeError(f"CCTV login failed with HTTP {response.status_code}")
+            token = None
+            try:
+                payload = response.json()
+                if isinstance(payload, dict):
+                    token = payload.get("access_token") or payload.get("token") or payload.get("jwt")
+            except ValueError:
+                pass
+            if token:
+                self._session.headers["Authorization"] = f"Bearer {token}"
+            if not (self._session.cookies.get_dict() or token):
+                raise RuntimeError("CCTV login did not establish an authenticated session")
+            self._authenticated_at = time.monotonic()
+            self._last_login_error = None
+        finally:
+            response.close()
 
     def ensure_authenticated(self, force: bool = False) -> None:
         with self._lock:
@@ -118,14 +148,15 @@ _gateway_lock = threading.Lock()
 
 def get_cctv_gateway() -> CctvGateway:
     global _gateway
+    email = os.getenv("CCTV_EMAIL", "").strip()
     password = os.getenv("CCTV_PASSWORD", "")
     base_url = os.getenv("CCTV_BASE_URL", CCTV_BASE).rstrip("/")
     login_path = os.getenv("CCTV_LOGIN_PATH", LOGIN_PATH)
     catalogue_path = os.getenv("CCTV_CATALOGUE_PATH", CATALOGUE_PATH)
-    if (_gateway is None or _gateway.password != password or _gateway.base_url != base_url
+    if (_gateway is None or _gateway.email != email or _gateway.password != password or _gateway.base_url != base_url
             or _gateway.login_path != login_path or _gateway.catalogue_path != catalogue_path):
         with _gateway_lock:
             if (_gateway is None or _gateway.password != password or _gateway.base_url != base_url
                     or _gateway.login_path != login_path or _gateway.catalogue_path != catalogue_path):
-                _gateway = CctvGateway(password=password, base_url=base_url)
+                _gateway = CctvGateway(email=email, password=password, base_url=base_url)
     return _gateway

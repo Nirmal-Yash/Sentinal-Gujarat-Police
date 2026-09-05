@@ -17,6 +17,7 @@ log = logging.getLogger("catalogue_sync")
 CCTV_BASE_URL = os.getenv("CCTV_BASE_URL", "https://cctv.corp8.cloud").rstrip("/")
 CCTV_LOGIN_PATH = os.getenv("CCTV_LOGIN_PATH", "/auth/login")
 CCTV_CATALOGUE_PATH = os.getenv("CCTV_CATALOGUE_PATH", "/cameras.json")
+CCTV_EMAIL = os.getenv("CCTV_EMAIL", "").strip()
 CCTV_PASSWORD = os.getenv("CCTV_PASSWORD", "")
 RTSP_HOST_IP = os.getenv("RTSP_HOST_IP", "103.250.160.189")
 RTSP_PORT = int(os.getenv("RTSP_PORT", "8554"))
@@ -33,6 +34,18 @@ def _canonical_id(raw_id) -> tuple[int, str]:
     if numeric < 0:
         raise ValueError(f"Invalid CCTV camera id: {raw_id!r}")
     return numeric, f"cam{numeric:02d}"
+
+
+def _processing_category(name: str, location: str, raw: object = None) -> str:
+    value = str(raw or "").strip().lower()
+    if value in {"highway", "pedestrian", "static"}:
+        return value
+    context = f"{name} {location}".lower()
+    if any(token in context for token in ("highway", "expressway", "ring road", "flyover")):
+        return "highway"
+    if any(token in context for token in ("parking", "entrance", "office", "building")):
+        return "static"
+    return "pedestrian"
 
 
 def _build_urls(cam: dict) -> dict:
@@ -73,13 +86,39 @@ class CctvSession:
         self.session.headers.update({"User-Agent": "Sentinel-Ingestion/1.0"})
 
     def login(self) -> None:
+        if not CCTV_EMAIL:
+            raise RuntimeError("CCTV_EMAIL is required for current CCTV catalogue access")
         if not CCTV_PASSWORD:
             raise RuntimeError("CCTV_PASSWORD is required for current CCTV catalogue access")
-        response = self.session.post(f"{CCTV_BASE_URL}{CCTV_LOGIN_PATH}", data={"password": CCTV_PASSWORD}, timeout=15, allow_redirects=False)
-        if response.status_code not in {200, 302, 303}:
-            raise RuntimeError(f"CCTV login failed with HTTP {response.status_code}")
-        if not self.session.cookies.get_dict():
-            raise RuntimeError("CCTV login did not return a session cookie")
+        login_url = f"{CCTV_BASE_URL}{CCTV_LOGIN_PATH}"
+        try:
+            page = self.session.get(login_url, timeout=15, allow_redirects=True, headers={"Accept":"text/html,application/xhtml+xml,*/*"})
+        except requests.RequestException as exc:
+            raise RuntimeError(f"CCTV login page request failed: {exc}") from exc
+        page.close()
+        response = self.session.post(
+            login_url,
+            data={"email": CCTV_EMAIL, "password": CCTV_PASSWORD},
+            headers={"Referer":login_url,"Origin":CCTV_BASE_URL,"Accept":"text/html,application/xhtml+xml,application/json,*/*"},
+            timeout=15,
+            allow_redirects=True,
+        )
+        try:
+            if response.status_code not in {200, 204}:
+                raise RuntimeError(f"CCTV login failed with HTTP {response.status_code}")
+            token = None
+            try:
+                payload = response.json()
+                if isinstance(payload, dict):
+                    token = payload.get("access_token") or payload.get("token") or payload.get("jwt")
+            except ValueError:
+                pass
+            if token:
+                self.session.headers["Authorization"] = f"Bearer {token}"
+            if not (self.session.cookies.get_dict() or token):
+                raise RuntimeError("CCTV login did not establish an authenticated session")
+        finally:
+            response.close()
 
     def catalogue(self) -> list[dict]:
         self.login()
@@ -141,7 +180,8 @@ def sync(conn=None) -> int:
         provided_fps = float(cam["fps"]) if cam.get("fps") is not None else None
         if lat is not None:
             coordinate_counts[(lat, lng)] = coordinate_counts.get((lat, lng), 0) + 1
-        rows.append((sid, name, cam.get("location", ""), lat, lng, coord_source, coord_confidence, department, department_confidence, urls["rtsp"], urls["hls"], urls["whep"], provided_codec, provided_width, provided_height, provided_fps, provided_codec, provided_width, provided_height, provided_fps, "active" if cam.get("live", True) else "offline", "cctv.corp8.cloud", urls["canonical_id"]))
+        processing_category = _processing_category(name, cam.get("location", ""), cam.get("processing_fps_category") or cam.get("fps_category"))
+        rows.append((sid, name, cam.get("location", ""), lat, lng, coord_source, coord_confidence, department, department_confidence, urls["rtsp"], urls["hls"], urls["whep"], provided_codec, provided_width, provided_height, provided_fps, provided_codec, provided_width, provided_height, provided_fps, processing_category, "active" if cam.get("live", True) else "offline", "cctv.corp8.cloud", urls["canonical_id"]))
     for coordinates, count in coordinate_counts.items():
         if count > 1:
             log.warning("CCTV catalogue has %s cameras at same coordinates %s", count, coordinates)
@@ -150,7 +190,7 @@ def sync(conn=None) -> int:
           (stream_id,name,location,lat,lng,coord_source,coord_confidence,
            department,department_confidence,rtsp_url,hls_url,whep_url,
            codec,width,height,fps,provided_codec,provided_width,provided_height,
-           provided_fps,status,last_seen_at,source_system,external_id)
+           provided_fps,processing_fps_category,status,last_seen_at,source_system,external_id)
         VALUES %s
         ON CONFLICT (stream_id) DO UPDATE SET
           name=EXCLUDED.name, location=EXCLUDED.location,
@@ -165,12 +205,13 @@ def sync(conn=None) -> int:
           source_system=EXCLUDED.source_system, external_id=EXCLUDED.external_id,
           provided_codec=EXCLUDED.provided_codec, provided_width=EXCLUDED.provided_width,
           provided_height=EXCLUDED.provided_height, provided_fps=EXCLUDED.provided_fps,
+          processing_fps_category=EXCLUDED.processing_fps_category,
           codec=COALESCE(EXCLUDED.codec,cameras.codec), width=COALESCE(EXCLUDED.width,cameras.width),
           height=COALESCE(EXCLUDED.height,cameras.height), fps=COALESCE(EXCLUDED.fps,cameras.fps),
           status=EXCLUDED.status, last_seen_at=NOW(), updated_at=NOW()
     """
-    template = "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),%s,%s)"
-    expected_values = 23
+    template = "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),%s,%s)"
+    expected_values = 24
     if rows and len(rows[0]) != expected_values:
         raise RuntimeError(f"Catalogue row/template mismatch: row has {len(rows[0])} values; expected {expected_values}")
     try:

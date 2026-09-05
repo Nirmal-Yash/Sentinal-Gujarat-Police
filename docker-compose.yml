@@ -46,6 +46,7 @@ services:
       - CCTV_BASE_URL=${CCTV_BASE_URL:-https://cctv.corp8.cloud}
       - CCTV_LOGIN_PATH=${CCTV_LOGIN_PATH:-/auth/login}
       - CCTV_CATALOGUE_PATH=${CCTV_CATALOGUE_PATH:-/cameras.json}
+      - CCTV_EMAIL=${CCTV_EMAIL:?CCTV_EMAIL must be supplied}
       - CCTV_PASSWORD=${CCTV_PASSWORD:?CCTV_PASSWORD must be supplied}
       - RTSP_HOST_IP=${RTSP_HOST_IP:-103.250.160.189}
       - RTSP_PORT=${RTSP_PORT:-8554}
