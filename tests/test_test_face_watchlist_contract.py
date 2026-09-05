@@ -14,3 +14,10 @@ def test_test_alert_api_treats_undefined_filters_as_unset():
     source=(ROOT/"api/routes/test_alerts.py").read_text(encoding="utf-8")
     assert 'priority.lower() in {"undefined", "null"}' in source
     assert 'status.lower() in {"undefined", "null"}' in source
+
+def test_test_sighting_store_scopes_watchlist_queries_and_imports_numpy():
+    source=(ROOT / "intelligence" / "test_sighting_store.py").read_text(encoding="utf-8")
+    assert "import numpy as np" in source
+    assert "session_id=%s::uuid" in source
+    assert "FROM test_watchlists" in source
+    assert "FROM watchlist" not in source
