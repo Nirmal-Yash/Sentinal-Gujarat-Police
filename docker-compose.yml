@@ -69,7 +69,7 @@ services:
       - TEST_FEED_POLL_SECS=${TEST_FEED_POLL_SECS:-0.5}
     volumes:
       - ./videos:/videos
-      - ./test-data/videos:/test-data/videos:ro
+      - ./test-data:/test-data:ro
       - test_videos:/test_videos
 
   ai_worker:
