@@ -10,7 +10,7 @@ export default function WatchlistModal({onClose,testMode=false,testSession=null}
  useEffect(()=>{load()},[testMode,testSession?.id])
  const load=async()=>{try{setEntries(testMode&&testSession?.id?await api.getTestWatchlist(testSession.id):await api.getWatchlist())}catch(e){setError(e.message)}}
  const change=(field,value)=>{setForm(f=>({...f,[field]:value}));setError('')}
- const choosePerson=async e=>{const file=e.target.files?.[0];e.target.value='';if(!file)return;if(!file.type.startsWith('image/')){setError('Select an image file.');return}setPersonFile(file);setPersonCheck(null);setChecking(true);setError('');try{setPersonCheck(await api.validatePersonPhoto(file))}catch(err){setError(err.message)}finally{setChecking(false)}}
+ const choosePerson=async e=>{const file=e.target.files?.[0];e.target.value='';if(!file)return;if(!file.type.startsWith('image/')){setError('Select an image file.');return}setPersonFile(file);setPersonCheck(null);setChecking(true);setError('');try{setPersonCheck(await api.validatePersonPhoto(file,testMode&&testSession?.id?testSession.id:undefined))}catch(err){setError(err.message)}finally{setChecking(false)}}
  const submit=async()=>{
    if(!form.name.trim())return setError('Name is required.')
    if(form.entity_type==='person'){

@@ -136,6 +136,8 @@ services:
       - PERSON_FACE_DET_THRESHOLD=${PERSON_FACE_DET_THRESHOLD:-0.35}
       - PERSON_FACE_MIN_INPUT=${PERSON_FACE_MIN_INPUT:-640}
       - PERSON_FACE_MAX_INPUT=${PERSON_FACE_MAX_INPUT:-2200}
+      - AI_HEALTH_PREFIX=${AI_HEALTH_PREFIX:-sentinel:ai:health:}
+      - AI_HEALTH_TTL_SECS=${AI_HEALTH_TTL_SECS:-45}
     shm_size: '1gb'
     deploy:
       resources:
@@ -159,6 +161,8 @@ services:
       - PERSON_FACE_DET_THRESHOLD=${PERSON_FACE_DET_THRESHOLD:-0.50}
       - PERSON_FACE_MIN_INPUT=${PERSON_FACE_MIN_INPUT:-160}
       - PERSON_FACE_MAX_INPUT=${PERSON_FACE_MAX_INPUT:-1280}
+      - AI_HEALTH_PREFIX=${AI_HEALTH_PREFIX:-sentinel:ai:health:}
+      - AI_HEALTH_TTL_SECS=${AI_HEALTH_TTL_SECS:-45}
     shm_size: '1gb'
 
   test_ai_worker:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """On-demand person investigation and reference-photo validation worker."""
-import base64, json, logging, os, uuid
+import base64, json, logging, os, uuid, time
 from io import BytesIO
 
 import numpy as np
@@ -21,6 +21,8 @@ DET_THRESH = max(0.30, min(0.75, float(os.getenv("PERSON_FACE_DET_THRESHOLD", "0
 MAX_IMAGE_BYTES = int(os.getenv("PERSON_MAX_IMAGE_BYTES", str(10 * 1024 * 1024)))
 MIN_FACE_INPUT = max(320, int(os.getenv("PERSON_FACE_MIN_INPUT", "640")))
 MAX_FACE_INPUT = max(MIN_FACE_INPUT, int(os.getenv("PERSON_FACE_MAX_INPUT", "2200")))
+HEALTH_PREFIX=os.getenv('AI_HEALTH_PREFIX','sentinel:ai:health:')
+HEALTH_TTL=int(os.getenv('AI_HEALTH_TTL_SECS','45'))
 
 
 def ensure_group(r):
@@ -62,6 +64,9 @@ def run():
     r = redis.from_url(REDIS_URL, decode_responses=False)
     ensure_group(r)
     consumer = f"person-{uuid.uuid4().hex[:8]}"
+    health_key=f"{HEALTH_PREFIX}{'test:' if TEST_MODE else ''}person_investigation"
+    r.setex(health_key,HEALTH_TTL,'ready')
+    processed=0
     log.info("Person investigation worker ready (det_size=%s det_thresh=%.2f).", DET_SIZE, DET_THRESH)
 
     while True:
@@ -77,6 +82,7 @@ def run():
 
         for _, entries in messages:
             for message_id, data in entries:
+                processed += 1
                 request_id = data.get(b"request_id", b"").decode()
                 result_key = data.get(b"result_key", f"person:result:{request_id}".encode()).decode()
                 operation = data.get(b"operation", b"investigate").decode()
@@ -117,6 +123,7 @@ def run():
                     log.error("Person operation %s failed: %s", request_id, exc, exc_info=True)
                     r.set(result_key, json.dumps({"status":"error","error":"Person image analysis failed","embeddings":[],"faces":[],"face_count":0}).encode(), ex=RESULT_TTL)
                 finally:
+                    r.setex(health_key,HEALTH_TTL,json.dumps({'status':'processing','processed':processed,'stream':STREAM}))
                     r.xack(STREAM, GROUP, message_id)
                     if request_id:
                         r.delete(f"{IMAGE_PREFIX}{request_id}")

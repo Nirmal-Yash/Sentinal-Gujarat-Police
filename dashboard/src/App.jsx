@@ -20,7 +20,7 @@ import AlertWorkspace from './components/AlertWorkspace'
 import './components/alerts/alerts.css'
 import { normalizePath } from './routeState.mjs'
 
-const TEST_SESSION_KEY='sentinel.test.session.v1',PRODUCTION_CAMERAS_KEY='sentinel.production.cameras.v1',TEST_CAMERAS_KEY='sentinel.test.cameras.v1',RETURN_ROUTE_KEY='sentinel.overlay.return.route.v1',AUTH_ROUTE_KEY='sentinel.auth.return.route.v1',MAX_LIVE_ALERTS=300,AUTH_TOKEN_KEY='sentinel.jwt'
+const TEST_SESSION_KEY='sentinel.test.session.v1',TEST_ROUTE_PREFIX='/test',PRODUCTION_CAMERAS_KEY='sentinel.production.cameras.v1',TEST_CAMERAS_KEY='sentinel.test.cameras.v1',RETURN_ROUTE_KEY='sentinel.overlay.return.route.v1',AUTH_ROUTE_KEY='sentinel.auth.return.route.v1',MAX_LIVE_ALERTS=300,AUTH_TOKEN_KEY='sentinel.jwt'
 const readSession=()=>{try{return sessionStorage.getItem(TEST_SESSION_KEY)}catch{return null}}
 const writeSession=v=>{try{v?sessionStorage.setItem(TEST_SESSION_KEY,v):sessionStorage.removeItem(TEST_SESSION_KEY)}catch{}}
 const readCachedJson=(key,fallback)=>{try{const raw=localStorage.getItem(key);return raw?JSON.parse(raw):fallback}catch{return fallback}}

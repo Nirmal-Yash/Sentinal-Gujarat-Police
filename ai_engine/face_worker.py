@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Face Worker: detect persons → crop face → InsightFace ArcFace 512-d embedding."""
-import os, base64, uuid, logging
+import os, base64, uuid, logging, time, json
 import cv2, numpy as np
 import redis
 from ultralytics import YOLO
@@ -19,6 +19,8 @@ GROUP      = "test_face_workers" if TEST_MODE else "face_workers"
 IN_STREAM  = f"{PREFIX}raw_frames"
 OUT_STREAM = f"{PREFIX}detections"
 OUT_MAX    = 5000
+HEALTH_PREFIX = os.getenv('AI_HEALTH_PREFIX','sentinel:ai:health:')
+HEALTH_TTL = int(os.getenv('AI_HEALTH_TTL_SECS','45'))
 
 PERSON_CLS = {0}   # COCO class 0 = person
 
@@ -45,6 +47,10 @@ def run():
     r        = redis.from_url(REDIS_URL, decode_responses=False)
     _ensure_group(r)
     consumer = f"face-{uuid.uuid4().hex[:8]}"
+    health_key=f"{HEALTH_PREFIX}{'test:' if TEST_MODE else ''}face"
+    processed=emitted=0
+    last_health=0.0
+    r.setex(health_key,HEALTH_TTL,'ready')
     log.info("Face worker ready.")
 
     while True:
@@ -61,6 +67,7 @@ def run():
         for _, entries in msgs:
             for msg_id, data in entries:
                 try:
+                    processed += 1
                     cam_id    = data[b"cam_id"].decode()
                     buf       = base64.b64decode(data[b"frame"])
                     arr       = np.frombuffer(buf, np.uint8)
@@ -86,11 +93,18 @@ def run():
                                 emb_norm.astype(np.float32).tobytes()
                             ).decode()
 
+                            fb=face.bbox
+                            fx1,fy1=int(x1+fb[0]),int(head_h+fb[1])
+                            fx2,fy2=int(x1+fb[2]),int(head_h+fb[3])
                             r.xadd(OUT_STREAM, detection_event(
                                 data, "face", embedding=emb_b64, conf=float(face.det_score),
-                                x1=x1, y1=y1, x2=x2, y2=y2), maxlen=OUT_MAX, approximate=True)
+                                x1=fx1, y1=fy1, x2=fx2, y2=fy2), maxlen=OUT_MAX, approximate=True)
+                            emitted += 1
 
                 except Exception as e:
                     log.error(f"Face error: {e}")
                 finally:
+                    if time.monotonic()-last_health>=2.0:
+                        r.setex(health_key,HEALTH_TTL,json.dumps({'status':'processing','processed':processed,'emitted':emitted,'stream':IN_STREAM}))
+                        last_health=time.monotonic()
                     r.xack(IN_STREAM, GROUP, msg_id)
