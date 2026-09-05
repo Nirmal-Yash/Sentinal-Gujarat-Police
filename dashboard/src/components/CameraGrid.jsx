@@ -5,6 +5,9 @@ import { useCameraPlayerSlot } from './cameraPlayerManager'
 
 const MAX_PLAYERS = 12
 
+const BufferIndicator=({buffering})=>buffering?<div style={{position:'absolute',inset:0,display:'grid',placeItems:'center',zIndex:4,background:'rgba(0,0,0,.18)',color:'rgba(255,255,255,.7)',fontSize:11}}>Connecting…</div>:null
+
+
 const CCTV_SOURCE_BASE=(import.meta.env.VITE_CCTV_BASE_URL||'https://cctv.corp8.cloud').replace(/\/$/,'')
 const paddedId = cam => String(cam?.stream_id || cam?.id || '?').replace(/^cam/i, '').padStart(2, '0')
 const streamAspect = cam => { const w=Number(cam?.effective_width ?? cam?.width), h=Number(cam?.effective_height ?? cam?.height); return w>0&&h>0?w/h:16/9 }
