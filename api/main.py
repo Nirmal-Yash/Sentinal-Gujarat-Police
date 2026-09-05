@@ -21,41 +21,24 @@ BOOTSTRAP_ADMIN_USERNAME=os.getenv("BOOTSTRAP_ADMIN_USERNAME","").strip(); BOOTS
 STARTUP_RETRIES=max(1,int(os.getenv("STARTUP_RETRIES","30"))); STARTUP_RETRY_DELAY=max(1.0,float(os.getenv("STARTUP_RETRY_DELAY","2")))
 INSECURE_SECRET_VALUES={"","change-me","changeme","sentinel-change-in-production","replace-me","replace-with-long-random-secret","ci-only-sentinel-signing-secret","ci-only-snapshot-signing-secret"}
 async def bootstrap_admin(db:AsyncSession)->None:
-    await db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),{"lock_key":"sentinel:bootstrap-admin:v1"})
-    active=await db.scalar(text("SELECT 1 FROM users WHERE role IN ('ADMIN','SUPERADMIN') AND is_active=TRUE LIMIT 1"))
-    if active:return
-    if not BOOTSTRAP_ADMIN_USERNAME or not BOOTSTRAP_ADMIN_PASSWORD:
-        if AUTH_REQUIRED:raise RuntimeError("No active ADMIN/SUPERADMIN exists and bootstrap admin credentials are not configured")
+    username=BOOTSTRAP_ADMIN_USERNAME.strip()
+    password=BOOTSTRAP_ADMIN_PASSWORD
+    role=BOOTSTRAP_ADMIN_ROLE or 'SUPERADMIN'
+    if username and password:
+        if role not in {'ADMIN','SUPERADMIN'}:
+            raise RuntimeError('BOOTSTRAP_ADMIN_ROLE must be ADMIN or SUPERADMIN')
+        password_hash=hash_password(password)
+        existing=await db.execute(text('SELECT id FROM users WHERE username=:username LIMIT 1'), {'username':username})
+        if existing.scalar():
+            await db.execute(text('UPDATE users SET password_hash=:password_hash,role=:role,is_active=TRUE WHERE username=:username'), {'username':username,'password_hash':password_hash,'role':role})
+        else:
+            await db.execute(text('INSERT INTO users(username,password_hash,role,is_active) VALUES(:username,:password_hash,:role,TRUE)'), {'username':username,'password_hash':password_hash,'role':role})
+        await db.commit()
         return
-    if BOOTSTRAP_ADMIN_ROLE not in {"ADMIN","SUPERADMIN"}:raise RuntimeError("BOOTSTRAP_ADMIN_ROLE must be ADMIN or SUPERADMIN")
-    password_hash=hash_password(BOOTSTRAP_ADMIN_PASSWORD)
-    existing=await db.scalar(text("SELECT 1 FROM users WHERE username=:username LIMIT 1"),{"username":BOOTSTRAP_ADMIN_USERNAME})
-    if existing: await db.execute(text("UPDATE users SET password_hash=:password_hash,role=:role,is_active=TRUE WHERE username=:username"),{"username":BOOTSTRAP_ADMIN_USERNAME,"password_hash":password_hash,"role":BOOTSTRAP_ADMIN_ROLE})
-    else: await db.execute(text("INSERT INTO users(username,password_hash,role,is_active) VALUES(:username,:password_hash,:role,TRUE)"),{"username":BOOTSTRAP_ADMIN_USERNAME,"password_hash":password_hash,"role":BOOTSTRAP_ADMIN_ROLE})
-    await db.commit()
-runtime_ready=asyncio.Event()
-runtime_error=None
-
-async def initialize_runtime()->None:
-    last=None
-    for attempt in range(1,STARTUP_RETRIES+1):
-        try:
-            apply_migrations()
-            if AUTH_REQUIRED and (SECRET_KEY or "").strip().lower() in INSECURE_SECRET_VALUES: raise RuntimeError("AUTH_REQUIRED=true requires a strong non-placeholder SECRET_KEY")
-            if AUTH_REQUIRED and ((not REFRESH_SECRET) or REFRESH_SECRET.lower() in INSECURE_SECRET_VALUES or REFRESH_SECRET==SECRET_KEY): raise RuntimeError("AUTH_REQUIRED=true requires JWT_REFRESH_SECRET_KEY distinct from SECRET_KEY")
-            snap=(os.getenv("SNAPSHOT_TOKEN_SECRET","") or "").strip()
-            if not snap or snap.lower() in INSECURE_SECRET_VALUES: raise RuntimeError("SNAPSHOT_TOKEN_SECRET must be supplied and must not be a placeholder")
-            if os.getenv("ENVIRONMENT","development").lower()=="production":
-                if not os.getenv("FIELD_ENCRYPTION_KEY","").strip(): raise RuntimeError("FIELD_ENCRYPTION_KEY must be configured in production")
-                if os.getenv("DB_SSL","0").lower() not in {"1","true","require"}: raise RuntimeError("DB_SSL must be enabled in production")
-                if os.getenv("AUTH_COOKIE_SECURE","false").lower()!="true": raise RuntimeError("AUTH_COOKIE_SECURE=true is required in production")
-            async with Session() as db: await bootstrap_admin(db)
-            return
-        except Exception as exc:
-            last=exc
-            if attempt>=STARTUP_RETRIES: raise
-            log.warning("Startup dependency check failed (%s/%s): %s; retrying in %.1fs",attempt,STARTUP_RETRIES,exc,STARTUP_RETRY_DELAY); await asyncio.sleep(STARTUP_RETRY_DELAY)
-    raise last or RuntimeError("API startup initialization failed")
+    if AUTH_REQUIRED:
+        active=await db.scalar(text("SELECT 1 FROM users WHERE role IN ('ADMIN','SUPERADMIN') AND is_active=TRUE LIMIT 1"))
+        if not active:
+            raise RuntimeError('No active ADMIN/SUPERADMIN exists and bootstrap admin credentials are not configured')
 
 async def runtime_initializer():
     global runtime_error
