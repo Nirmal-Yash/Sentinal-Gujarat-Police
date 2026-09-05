@@ -39,7 +39,7 @@ def main():
  check("VALID_TRANSITIONS" in alerts and 'has_permission(principal, "alert:operate")' in alerts,"alert lifecycle is explicit and capability protected")
  check("mergeCanonicalAlerts" in panel and "ALERT_OPERATE_ROLES" in panel and "mergeCanonicalAlerts" in workspace,"alert UI is canonicalized and role aware")
  search=read("api/routes/search.py")
-    check("X-Test-Session-Id" in search and "prefix = 'test:' if test_mode else ''" in search and "person:investigations" in search,"person investigation Test routing is isolated")
+check("X-Test-Session-Id" in search and "prefix = 'test:' if test_mode else ''" in search and "person:investigations" in search,"person investigation Test routing is isolated")
  model=read("api/models.py"); registry=read("dashboard/src/components/CameraRegistryModal.jsx")
  check('pattern="^(highway|pedestrian|static)$"' in model and 'name="processing_fps_category"' in registry,"camera processing category is consistent")
  compose=read("docker-compose.yml"); env=read(".env.example")
