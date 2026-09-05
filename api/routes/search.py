@@ -47,7 +47,10 @@ async def search_plate(q: str = Query(..., min_length=1, max_length=100), x_test
         result = await db.execute(text('''SELECT s.id,s.camera_id AS cam_id,s.source_timestamp AS timestamp,s.normalized_plate AS plate_text,s.confidence,c.name AS cam_name,c.location,c.lat,c.lng,s.track_id,s.global_vehicle_id,s.journey_id
             FROM vehicle_sightings s JOIN cameras c ON c.id=s.camera_id WHERE s.normalized_plate=:plate ORDER BY s.source_timestamp DESC LIMIT :limit'''), {'plate': normalized, 'limit': limit})
         rows = [dict(r) for r in result.mappings().all()]
-    wl = await db.execute(text("SELECT id,name,description,alert_priority FROM watchlist WHERE regexp_replace(upper(COALESCE(plate_number,'')),'[^A-Z0-9]','','g')=:plate AND is_active=TRUE"), {'plate': normalized})
+    if x_test_session_id:
+        wl = await db.execute(text("SELECT id,name,description,alert_priority FROM test_watchlist WHERE session_id=CAST(:session AS uuid) AND regexp_replace(upper(COALESCE(plate_number,'')),'[^A-Z0-9]','','g')=:plate AND is_active=TRUE"), {'plate': normalized, 'session': session_uuid})
+    else:
+        wl = await db.execute(text("SELECT id,name,description,alert_priority FROM watchlist WHERE regexp_replace(upper(COALESCE(plate_number,'')),'[^A-Z0-9]','','g')=:plate AND is_active=TRUE"), {'plate': normalized})
     journeys = [] if x_test_session_id else [dict(r) for r in (await db.execute(text('SELECT j.id,j.started_at,j.ended_at,j.sighting_count,j.journey_confidence,j.status FROM vehicle_journeys j JOIN vehicle_identities v ON v.id=j.vehicle_identity_id WHERE v.normalized_plate=:plate ORDER BY j.started_at DESC LIMIT 20'), {'plate': normalized})).mappings().all()]
     return {'query': q, 'detections': rows, 'watchlist_hits': [dict(r) for r in wl.mappings().all()], 'journeys': journeys, 'session_id': x_test_session_id}
 

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import engine, Session, get_db
 from auth import AUTH_REQUIRED, SECRET_KEY, REFRESH_SECRET, principal_from_token, hash_password
 from websocket_manager import manager, redis_alert_consumer
-from routes import cameras, camera_snapshot, camera_imports, alerts, watchlist, search, auth, reports, test, vendors, evidence, evidence_assets, operations, test_alerts, cctv
+from routes import cameras, camera_snapshot, camera_imports, alerts, watchlist, search, auth, reports, test, test_watchlist, vendors, evidence, evidence_assets, operations, test_alerts, cctv
 from migrations import apply_migrations
 from security_hardening import SecurityHeadersMiddleware, RequestSizeLimitMiddleware, verify_cookie_csrf
 from security_audit import SecurityAuditMiddleware
@@ -68,7 +68,7 @@ async def csrf_boundary(request:Request,call_next):
     if request.method.upper() not in {"GET","HEAD","OPTIONS"} and request.url.path not in {"/auth/login","/auth/refresh"}:
         if not request.headers.get("Authorization","").startswith("Bearer ") and request.cookies.get("sentinel_session"): verify_cookie_csrf(request,request.cookies.get("sentinel_csrf"))
     response=await call_next(request); response.headers.setdefault("X-Request-Id",str(uuid.uuid4())); return response
-app.include_router(camera_snapshot.router); app.include_router(cameras.router); app.include_router(camera_imports.router); app.include_router(cctv.router); app.include_router(alerts.router); app.include_router(watchlist.router); app.include_router(search.router); app.include_router(auth.router); app.include_router(reports.router); app.include_router(test.router); app.include_router(test_alerts.router); app.include_router(vendors.router); app.include_router(evidence_assets.router); app.include_router(evidence.router); app.include_router(operations.router)
+app.include_router(camera_snapshot.router); app.include_router(cameras.router); app.include_router(camera_imports.router); app.include_router(cctv.router); app.include_router(alerts.router); app.include_router(watchlist.router); app.include_router(search.router); app.include_router(auth.router); app.include_router(reports.router); app.include_router(test.router); app.include_router(test_watchlist.router); app.include_router(test_alerts.router); app.include_router(vendors.router); app.include_router(evidence_assets.router); app.include_router(evidence.router); app.include_router(operations.router)
 @app.websocket("/ws/alerts")
 async def ws_alerts(ws:WebSocket):
     if AUTH_REQUIRED:

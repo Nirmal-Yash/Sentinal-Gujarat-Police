@@ -5,10 +5,11 @@ const overlay={position:'fixed',inset:0,background:'rgba(0,0,0,.7)',display:'fle
 const modal={background:'var(--surface)',borderRadius:10,border:'1px solid var(--border)',width:'min(600px,95vw)',maxHeight:'84vh',display:'flex',flexDirection:'column',overflow:'hidden'}
 const EMPTY={name:'',entity_type:'person',description:'',plate_number:'',alert_priority:'HIGH'}
 
-export default function WatchlistModal({onClose}){
+export default function WatchlistModal({onClose,testMode=false,testSession=null}){
  const[entries,setEntries]=useState([]),[form,setForm]=useState(EMPTY),[loading,setLoading]=useState(false),[tab,setTab]=useState('list'),[personFile,setPersonFile]=useState(null),[personCheck,setPersonCheck]=useState(null),[checking,setChecking]=useState(false),[error,setError]=useState('')
- useEffect(()=>{load()},[])
- const load=async()=>{try{setEntries(await api.getWatchlist())}catch(e){setError(e.message)}}
+ useEffect(()=>{load()},[testMode,testSession?.id])
+ const opts=testMode&&testSession?.id?{testSessionId:testSession.id}:{};
+ const load=async()=>{try{setEntries(await api.getWatchlist(opts))}catch(e){setError(e.message)}}
  const change=(field,value)=>{setForm(f=>({...f,[field]:value}));setError('')}
  const choosePerson=async e=>{const file=e.target.files?.[0];e.target.value='';if(!file)return;if(!file.type.startsWith('image/')){setError('Select an image file.');return}setPersonFile(file);setPersonCheck(null);setChecking(true);setError('');try{setPersonCheck(await api.validatePersonPhoto(file))}catch(err){setError(err.message)}finally{setChecking(false)}}
  const submit=async()=>{
@@ -19,12 +20,12 @@ export default function WatchlistModal({onClose}){
    }
    setLoading(true);setError('')
    try{
-     if(form.entity_type==='person') await api.addWatchlistPersonPhoto(form,personFile)
-     else await api.addWatchlist({...form,plate_number:form.plate_number?.trim()||null})
+     if(form.entity_type==='person') await api.addWatchlistPersonPhoto(form,personFile,opts)
+     else await api.addWatchlist({...form,plate_number:form.plate_number?.trim()||null},opts)
      setForm(EMPTY);setPersonFile(null);setPersonCheck(null);await load();setTab('list')
    }catch(e){setError(e.message)}finally{setLoading(false)}
  }
- const remove=async id=>{if(!confirm('Deactivate this entry?'))return;try{await api.removeWatchlist(id);await load()}catch(e){setError(e.message)}}
+ const remove=async id=>{if(!confirm('Deactivate this entry?'))return;try{await api.removeWatchlist(id,opts);await load()}catch(e){setError(e.message)}}
  const inp=(field,placeholder,type='text')=><input type={type} placeholder={placeholder} value={form[field]} onChange={e=>change(field,e.target.value)} style={{width:'100%',padding:'8px 10px',borderRadius:6,marginBottom:8,border:'1px solid var(--border)',background:'var(--surface2)',color:'var(--text)',fontSize:13}}/>
  return <div style={overlay} onClick={e=>e.target===e.currentTarget&&onClose()}><div style={modal}>
   <div style={{padding:'14px 18px',borderBottom:'1px solid var(--border)',display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontWeight:700,fontSize:15}}>Watchlist</span><button onClick={onClose} aria-label="Close" style={{background:'none',border:'none',color:'var(--text2)',cursor:'pointer',fontSize:20}}>×</button></div>
