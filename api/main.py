@@ -33,6 +33,9 @@ async def bootstrap_admin(db:AsyncSession)->None:
     if existing: await db.execute(text("UPDATE users SET password_hash=:password_hash,role=:role,is_active=TRUE WHERE username=:username"),{"username":BOOTSTRAP_ADMIN_USERNAME,"password_hash":password_hash,"role":BOOTSTRAP_ADMIN_ROLE})
     else: await db.execute(text("INSERT INTO users(username,password_hash,role,is_active) VALUES(:username,:password_hash,:role,TRUE)"),{"username":BOOTSTRAP_ADMIN_USERNAME,"password_hash":password_hash,"role":BOOTSTRAP_ADMIN_ROLE})
     await db.commit()
+runtime_ready=asyncio.Event()
+runtime_error=None
+
 async def initialize_runtime()->None:
     last=None
     for attempt in range(1,STARTUP_RETRIES+1):
@@ -53,12 +56,30 @@ async def initialize_runtime()->None:
             if attempt>=STARTUP_RETRIES: raise
             log.warning("Startup dependency check failed (%s/%s): %s; retrying in %.1fs",attempt,STARTUP_RETRIES,exc,STARTUP_RETRY_DELAY); await asyncio.sleep(STARTUP_RETRY_DELAY)
     raise last or RuntimeError("API startup initialization failed")
+
+async def runtime_initializer():
+    global runtime_error
+    while not runtime_ready.is_set():
+        try:
+            await initialize_runtime()
+            runtime_error=None
+            runtime_ready.set()
+            log.info("Runtime initialization complete; API is ready.")
+        except Exception as exc:
+            runtime_error=str(exc)
+            log.error("Runtime initialization failed; retrying in %ss: %s",STARTUP_RETRY_DELAY,exc,exc_info=True)
+            await asyncio.sleep(STARTUP_RETRY_DELAY)
+
 @asynccontextmanager
 async def lifespan(app:FastAPI):
-    await initialize_runtime(); task=asyncio.create_task(redis_alert_consumer()); yield
-    task.cancel()
-    try: await task
-    except asyncio.CancelledError: pass
+    init_task=asyncio.create_task(runtime_initializer())
+    alerts_task=asyncio.create_task(redis_alert_consumer())
+    yield
+    for task in (init_task,alerts_task):
+        task.cancel()
+    for task in (init_task,alerts_task):
+        try: await task
+        except asyncio.CancelledError: pass
     await engine.dispose()
 app=FastAPI(title="Sentinel AI — Gujarat Police Innovation Challenge",version="1.0.0",description="AI-powered multi-camera surveillance platform",lifespan=lifespan)
 app.add_middleware(RequestSizeLimitMiddleware); app.add_middleware(SecurityHeadersMiddleware); app.add_middleware(SecurityAuditMiddleware)
@@ -82,7 +103,8 @@ async def ws_alerts(ws:WebSocket):
         while True: await ws.receive_text()
     except WebSocketDisconnect: manager.disconnect(ws)
 @app.get("/health")
-async def health(): return {"status":"ok","service":"sentinel-ai"}
+async def health():
+    return {"status":"ok","service":"sentinel-ai","runtime_ready":runtime_ready.is_set()}
 @app.get("/ready")
 async def ready(db:AsyncSession=Depends(get_db)):
     checks={"database":False,"redis":False,"authentication":False,"snapshot_signing":False,"field_encryption":False}
@@ -102,7 +124,8 @@ async def ready(db:AsyncSession=Depends(get_db)):
     except Exception: pass
     snap=(os.getenv("SNAPSHOT_TOKEN_SECRET","") or "").strip(); checks["snapshot_signing"]=bool(snap) and snap.lower() not in INSECURE_SECRET_VALUES
     checks["field_encryption"]=bool(os.getenv("FIELD_ENCRYPTION_KEY","").strip()) or os.getenv("ENVIRONMENT","development").lower()!="production"
-    if not all(checks.values()): raise HTTPException(503,detail={"status":"not_ready","checks":checks})
+    checks["runtime_initialization"]=runtime_ready.is_set()
+    if not all(checks.values()): raise HTTPException(503,detail={"status":"not_ready","checks":checks,"runtime_error":runtime_error})
     return {"status":"ready","checks":checks}
 @app.get("/")
 async def root(): return {"service":"Sentinel AI API","docs":"/docs","ws":"/ws/alerts","version":"1.0.0"}
