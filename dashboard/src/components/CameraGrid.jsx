@@ -13,10 +13,9 @@ const playbackSources = cam => {
     const match=String(cam.stream_url).match(/\/api\/test\/sessions\/([^/]+)\/feeds\/([^/]+)\/video/)
     if(match) return {hls:`/test-hls/test/${match[1]}/cam${match[2]}/index.m3u8`}
   }
-  const configured=String(cam?.hls_url||'').split('?')[0]
-  const hls=configured.startsWith('/api/cctv/') || configured.startsWith('/test-hls/')
-    ? configured
-    : `/api/cctv/cam${id}/index.m3u8`
+  const configured=String(cam?.source_hls_url||cam?.hls_url||'').split('?')[0]
+  const external=configured.startsWith('http://') || configured.startsWith('https://')
+  const hls=external ? configured : (configured.startsWith('/test-hls/') ? configured : `https://cctv.corp8.cloud/cam${id}/index.m3u8`)
   return {hls}
 }
 
@@ -26,7 +25,7 @@ const HLS_CONFIG={
   manifestLoadingTimeOut:10000,manifestLoadingMaxRetry:3,
   levelLoadingTimeOut:10000,fragLoadingTimeOut:20000,
   enableWorker:true,startFragPrefetch:true,testBandwidth:false,
-  xhrSetup:xhr=>{xhr.withCredentials=true},
+  xhrSetup:(xhr,url)=>{xhr.withCredentials=!/^https:\/\/cctv\.corp8\.cloud\//i.test(String(url||''))},
 }
 
 function LivePlayer({cam,muted=true,onLiveStatus,onAspectChange,fit='contain'}){
