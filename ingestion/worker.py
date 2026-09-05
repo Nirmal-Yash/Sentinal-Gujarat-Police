@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 DB_URL = os.getenv("DATABASE_URL", "")
 FRAME_FPS = max(0.5, float(os.getenv("FRAME_FPS", "3")))
+CATEGORY_INTERVALS = {"highway": 0.300, "pedestrian": 0.500, "static": 0.800}
 JPEG_Q = int(os.getenv("JPEG_QUALITY", "70"))
 SNAPSHOT_TTL = max(10, int(os.getenv("SNAPSHOT_TTL_SECS", "30")))
 MAX_CAMS = max(1, int(os.getenv("MAX_CONCURRENT_CAMERAS", "50")))
@@ -34,7 +35,7 @@ def get_cameras():
     conn = psycopg2.connect(DB_URL)
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT id,name,stream_id,rtsp_url,codec FROM cameras WHERE status='active' AND rtsp_url IS NOT NULL AND rtsp_url<>'' ORDER BY stream_id LIMIT %s", (MAX_CAMS,))
+            cur.execute("SELECT id,name,stream_id,rtsp_url,codec,COALESCE(processing_fps_category,'pedestrian') AS processing_fps_category FROM cameras WHERE status='active' AND rtsp_url IS NOT NULL AND rtsp_url<>'' ORDER BY stream_id LIMIT %s", (MAX_CAMS,))
             return [dict(r) for r in cur.fetchall()]
     finally:
         conn.close()
@@ -95,7 +96,9 @@ class CameraWorker:
         self.codec = cam.get("codec") or "unknown"
         self.adapter = adapter_for(cam)
         self.r = r
-        self.interval = 1.0 / FRAME_FPS
+        category = str(cam.get("processing_fps_category") or "pedestrian").lower()
+        self.processing_category = category if category in CATEGORY_INTERVALS else "pedestrian"
+        self.interval = CATEGORY_INTERVALS[self.processing_category]
 
     def _open(self):
         log.info("Opening RTSP/TCP source for %s: %s", self.name, self.url)

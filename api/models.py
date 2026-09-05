@@ -20,7 +20,7 @@ class Camera(Base):
     observed_codec=Column(String(64)); observed_width=Column(Integer); observed_height=Column(Integer); observed_fps=Column(Float); observed_source_fps=Column(Float); observed_decode_fps=Column(Float); observed_published_fps=Column(Float); observed_at=Column(DateTime(timezone=True))
     health_status=Column(String(50),default="unknown"); last_frame_at=Column(DateTime(timezone=True)); reconnect_count=Column(Integer,default=0); decode_failure_count=Column(Integer,default=0); updated_at=Column(DateTime(timezone=True),default=datetime.utcnow)
     external_id=Column(String(255)); installation_date=Column(Date); ptz_capable=Column(Boolean,default=False); night_vision_capable=Column(Boolean,default=False); coord_source=Column(String(32),default="unknown"); coord_confidence=Column(Float)
-    department_source=Column(String(32),default="unknown"); department_confidence=Column(Float); vendor_id=Column(UUID(as_uuid=True)); model_id=Column(UUID(as_uuid=True))
+    department_source=Column(String(32),default="unknown"); department_confidence=Column(Float); vendor_id=Column(UUID(as_uuid=True)); model_id=Column(UUID(as_uuid=True)); processing_fps_category=Column(String(32),default="pedestrian",nullable=False)
     @property
     def effective_codec(self): return self.observed_codec or self.codec
     @property
@@ -62,7 +62,7 @@ class CameraOut(BaseModel):
     codec:Optional[str]; width:Optional[int]; height:Optional[int]; fps:Optional[float]; effective_codec:Optional[str]; effective_width:Optional[int]; effective_height:Optional[int]; effective_fps:Optional[float]
     status:str; health_status:str; connectivity_status:str; department:str; owner_organization:str; camera_type:str; protocol:str; source_system:str; storage_type:str; retention_days:Optional[int]
     analytics_capabilities:Any; maintenance_status:str; observed_at:Optional[datetime]; last_frame_at:Optional[datetime]; observed_source_fps:Optional[float]; observed_decode_fps:Optional[float]; observed_published_fps:Optional[float]
-    external_id:Optional[str]; installation_date:Optional[date]; ptz_capable:bool; night_vision_capable:bool; coord_source:str; coord_confidence:Optional[float]; department_source:str; department_confidence:Optional[float]; vendor_id:Optional[uuid.UUID]; model_id:Optional[uuid.UUID]; created_at:datetime; updated_at:datetime
+    external_id:Optional[str]; installation_date:Optional[date]; ptz_capable:bool; night_vision_capable:bool; coord_source:str; coord_confidence:Optional[float]; department_source:str; department_confidence:Optional[float]; vendor_id:Optional[uuid.UUID]; model_id:Optional[uuid.UUID]; processing_fps_category:str; created_at:datetime; updated_at:datetime
 
     @model_validator(mode="before")
     @classmethod
@@ -91,7 +91,7 @@ class CameraOut(BaseModel):
         return value
 
 class CameraCreate(BaseModel):
-    stream_id:Optional[int]=Field(None,ge=0); name:str=Field(min_length=1,max_length=255); location:str=""; lat:Optional[float]=Field(None,ge=-90,le=90); lng:Optional[float]=Field(None,ge=-180,le=180); rtsp_url:Optional[str]=Field(None,max_length=512); hls_url:str=""; whep_url:str=""; department:str="Unassigned"; owner_organization:str="Unassigned"; camera_type:str="fixed"; protocol:str="rtsp"; source_system:str=""; external_id:Optional[str]=Field(None,max_length=255); storage_type:str=""; retention_days:Optional[int]=Field(None,ge=0); analytics_capabilities:list[str]=Field(default_factory=list); installation_date:Optional[date]=None; ptz_capable:bool=False; night_vision_capable:bool=False; coord_source:str="manual"; coord_confidence:Optional[float]=Field(1.0,ge=0,le=1); vendor_id:Optional[uuid.UUID]=None; model_id:Optional[uuid.UUID]=None
+    stream_id:Optional[int]=Field(None,ge=0); name:str=Field(min_length=1,max_length=255); location:str=""; lat:Optional[float]=Field(None,ge=-90,le=90); lng:Optional[float]=Field(None,ge=-180,le=180); rtsp_url:Optional[str]=Field(None,max_length=512); hls_url:str=""; whep_url:str=""; department:str="Unassigned"; owner_organization:str="Unassigned"; camera_type:str="fixed"; protocol:str="rtsp"; source_system:str=""; external_id:Optional[str]=Field(None,max_length=255); storage_type:str=""; retention_days:Optional[int]=Field(None,ge=0); analytics_capabilities:list[str]=Field(default_factory=list); installation_date:Optional[date]=None; ptz_capable:bool=False; night_vision_capable:bool=False; coord_source:str="manual"; coord_confidence:Optional[float]=Field(1.0,ge=0,le=1); vendor_id:Optional[uuid.UUID]=None; model_id:Optional[uuid.UUID]=None; processing_fps_category:str="pedestrian"
 
 class AlertOut(BaseModel):
     model_config=ConfigDict(from_attributes=True)

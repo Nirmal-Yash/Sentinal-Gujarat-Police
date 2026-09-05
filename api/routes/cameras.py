@@ -44,7 +44,7 @@ async def _validate_vendor_model(body: CameraCreate, db: AsyncSession):
 CSV_ALIASES = {
     "camera_id": "external_id", "id": "external_id", "camera_name": "name", "camera": "name",
     "latitude": "lat", "longitude": "lng", "lon": "lng", "owner": "owner_organization",
-    "ownership": "owner_organization", "rtsp": "rtsp_url", "hls": "hls_url", "source": "source_system",
+    "ownership": "owner_organization", "rtsp": "rtsp_url", "hls": "hls_url", "source": "source_system", "processing_category": "processing_fps_category", "fps_category": "processing_fps_category",
 }
 
 def _coordinate(value: str) -> float:
@@ -237,13 +237,13 @@ async def export_cameras(profile: str = Query("registry", pattern="^(registry|he
         headers, values_rows = "camera_id,actor,action,before_value,after_value,correlation_id,created_at\n", result.mappings().all()
         rows = [headers] + [",".join('"' + str(value or '').replace('"', '""') + '"' for value in row.values()) + "\n" for row in values_rows]
         return Response("".join(rows), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=camera-audit.csv"})
-    headers = ("id,stream_id,name,location,latitude,longitude,coord_source,coord_confidence,department,owner,camera_type,status,health_status,maintenance_status,retention_days,analytics_capabilities,vendor_id,model_id\n"
+    headers = ("id,stream_id,name,location,latitude,longitude,coord_source,coord_confidence,department,owner,camera_type,status,health_status,maintenance_status,retention_days,analytics_capabilities,vendor_id,model_id,processing_fps_category\n"
                if profile == "registry" else "id,stream_id,name,status,health_status,connectivity_status,last_frame_at,observed_at,source_fps,decode_fps,published_fps,reconnect_count,decode_failure_count\n")
     rows = [headers]
     for c in result.scalars():
         values = ([c.id, c.stream_id, c.name, c.location, c.lat, c.lng, c.coord_source, c.coord_confidence, c.department,
                    c.owner_organization, c.camera_type, c.status, c.health_status, c.maintenance_status, c.retention_days,
-                   c.analytics_capabilities, c.vendor_id, c.model_id] if profile == "registry" else
+                   c.analytics_capabilities, c.vendor_id, c.model_id, c.processing_fps_category] if profile == "registry" else
                   [c.id, c.stream_id, c.name, c.status, c.health_status, c.connectivity_status, c.last_frame_at, c.observed_at,
                    c.observed_source_fps, c.observed_decode_fps, c.observed_published_fps, c.reconnect_count, c.decode_failure_count])
         rows.append(",".join('"' + str(v or '').replace('"', '""') + '"' for v in values) + "\n")
