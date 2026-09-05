@@ -9,11 +9,6 @@ export default function LoginModal({ onLogin, error: externalError = '' }) {
     setError('')
     try {
       await onLogin({ username, password })
-      const target = '/feeds'
-      if (window.location.pathname !== target) {
-        window.history.replaceState({ ...window.history.state, sentinelRoute: target }, '', target)
-        window.dispatchEvent(new PopStateEvent('popstate'))
-      }
     } catch (err) {
       setError(err?.message || 'Invalid username or password')
     } finally {
