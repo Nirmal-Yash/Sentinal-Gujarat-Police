@@ -14,8 +14,9 @@ const playbackSources = cam => {
     if(match) return {hls:`/test-hls/test/${match[1]}/cam${match[2]}/index.m3u8`}
   }
   const configured=String(cam?.source_hls_url||cam?.hls_url||'').split('?')[0]
-  const external=configured.startsWith('http://') || configured.startsWith('https://')
-  const hls=external ? configured : (configured.startsWith('/test-hls/') ? configured : `https://cctv.corp8.cloud/cam${id}/index.m3u8`)
+  const hls=(configured.startsWith('http://')||configured.startsWith('https://'))
+    ? configured
+    : (configured.startsWith('/test-hls/') ? configured : `https://cctv.corp8.cloud/cam${id}/index.m3u8`)
   return {hls}
 }
 
