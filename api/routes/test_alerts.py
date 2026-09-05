@@ -4,11 +4,93 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from auth import Principal, require_role
+from auth import Principal, require_permission
 from database import get_db
 
 router = APIRouter(prefix="/test/sessions", tags=["test-alerts"])
 VALID = {"NEW": {"ACKNOWLEDGED"}, "ACKNOWLEDGED": {"INVESTIGATING", "RESOLVED"}, "INVESTIGATING": {"RESOLVED"}, "RESOLVED": {"CLOSED"}, "CLOSED": set()}
+
+async def _test_alert_public(row):
+    details = dict(row.get("details") or {})
+    camera = None
+    stream_id = row.get("stream_id")
+    if stream_id is not None:
+        camera = {
+            "id": f"test-{row['session_id']}-{stream_id}",
+            "name": row.get("cam_name") or f"Test Camera {stream_id}",
+            "location": "Isolated video test",
+            "coordinates": {"lat": None, "lng": None},
+            "department": "Test Mode",
+        }
+    return {
+        "id": row["id"],
+        "alert_id": row["id"],
+        "session_id": row["session_id"],
+        "cam_id": camera["id"] if camera else None,
+        "cam_name": camera["name"] if camera else None,
+        "camera_label": camera["name"] if camera else None,
+        "alert_type": row["alert_type"],
+        "priority": row["priority"],
+        "severity": row["priority"],
+        "entity_type": row.get("entity_type"),
+        "details": details,
+        "acknowledged": bool(row["acknowledged"]),
+        "status": row["status"] or ("ACKNOWLEDGED" if row["acknowledged"] else "NEW"),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "acknowledged_at": row["acknowledged_at"],
+        "acknowledged_by": row["acknowledged_by"],
+        "resolved_at": row["resolved_at"],
+        "resolved_by": row["resolved_by"],
+        "closed_at": row["closed_at"],
+        "closed_by": row["closed_by"],
+        "human_summary": details.get("human_summary") or "Test Mode alert",
+        "camera": camera,
+        "detected_at": row["created_at"],
+        "detection_detail": details.get("detection_detail") or {},
+        "evidence": details.get("evidence") or {"available": False, "description": "Test evidence unavailable."},
+    }
+
+
+@router.get("/{session_id}/alerts")
+async def list_test_alerts(
+    session_id: uuid.UUID,
+    priority: str | None = Query(None, max_length=16),
+    alert_type: str | None = Query(None, max_length=64),
+    status: str | None = Query(None, max_length=24),
+    limit: int = Query(300, ge=1, le=300),
+    _: Principal = Depends(require_permission("alert:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    rows = await db.execute(text("""SELECT id,session_id,alert_type,priority,entity_type,details,acknowledged,status,
+        created_at,updated_at,acknowledged_at,acknowledged_by,resolved_at,resolved_by,closed_at,closed_by,stream_id
+        FROM test_alerts
+        WHERE session_id=CAST(:session_id AS uuid)
+          AND (:priority IS NULL OR priority=upper(:priority))
+          AND (:alert_type IS NULL OR alert_type ILIKE '%' || :alert_type || '%')
+          AND (:status IS NULL OR COALESCE(status, CASE WHEN acknowledged THEN 'ACKNOWLEDGED' ELSE 'NEW' END)=upper(:status))
+        ORDER BY created_at DESC LIMIT :limit"""),
+        {"session_id": str(session_id), "priority": priority, "alert_type": alert_type, "status": status, "limit": limit})
+    return [await _test_alert_public(row) for row in rows.mappings().all()]
+
+
+@router.get("/{session_id}/alerts/counts")
+async def test_alert_counts(
+    session_id: uuid.UUID,
+    _: Principal = Depends(require_permission("alert:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(text("""SELECT COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE priority='HIGH') AS high,
+        COUNT(*) FILTER (WHERE priority='MEDIUM') AS medium,
+        COUNT(*) FILTER (WHERE priority='LOW') AS low,
+        COUNT(*) FILTER (WHERE COALESCE(status, CASE WHEN acknowledged THEN 'ACKNOWLEDGED' ELSE 'NEW' END)='NEW') AS unacknowledged,
+        COUNT(*) FILTER (WHERE COALESCE(status, CASE WHEN acknowledged THEN 'ACKNOWLEDGED' ELSE 'NEW' END)='ACKNOWLEDGED') AS acknowledged,
+        COUNT(*) FILTER (WHERE COALESCE(status, CASE WHEN acknowledged THEN 'ACKNOWLEDGED' ELSE 'NEW' END)='INVESTIGATING') AS investigating,
+        COUNT(*) FILTER (WHERE COALESCE(status, CASE WHEN acknowledged THEN 'ACKNOWLEDGED' ELSE 'NEW' END)='RESOLVED') AS resolved,
+        COUNT(*) FILTER (WHERE COALESCE(status, CASE WHEN acknowledged THEN 'ACKNOWLEDGED' ELSE 'NEW' END)='CLOSED') AS closed
+        FROM test_alerts WHERE session_id=CAST(:session_id AS uuid)"""), {"session_id": str(session_id)})
+    return dict(result.mappings().one())
 
 @router.post("/{session_id}/alerts/{alert_id}/transition")
 async def transition_test_alert(
@@ -16,7 +98,7 @@ async def transition_test_alert(
     alert_id: uuid.UUID,
     target_status: str = Query(..., min_length=3, max_length=24),
     reason: str | None = Query(None, max_length=1000),
-    principal: Principal = Depends(require_role("ADMIN")),
+    principal: Principal = Depends(require_permission("alert:operate")),
     db: AsyncSession = Depends(get_db),
 ):
     target_status = target_status.upper()
