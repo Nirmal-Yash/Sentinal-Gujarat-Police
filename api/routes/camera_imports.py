@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 from pydantic import ValidationError
 from models import Camera, CameraCreate
-from auth import require_role, Principal
+from auth import require_permission, Principal
 from database import get_db
 from routes.cameras import _audit_state, _validate_coordinates, _validate_vendor_model
 from services.camera_import_intelligence import normalize_headers, analyze_row, summarize
@@ -63,7 +63,7 @@ def _public_analysis(data: dict) -> dict:
 
 
 @router.post("/validate")
-async def validate_camera_import(file: UploadFile = File(...), _: Principal = Depends(require_role("ADMIN"))):
+async def validate_camera_import(file: UploadFile = File(...), _: Principal = Depends(require_permission("registry:admin"))):
     data = await _analyze(file)
     return _public_analysis(data)
 
@@ -72,7 +72,7 @@ async def validate_camera_import(file: UploadFile = File(...), _: Principal = De
 async def import_camera_registry(
     file: UploadFile = File(...),
     acknowledge_warnings: bool = Query(False),
-    principal: Principal = Depends(require_role("ADMIN")),
+    principal: Principal = Depends(require_permission("registry:admin")),
     db: AsyncSession = Depends(get_db),
 ):
     data = await _analyze(file)

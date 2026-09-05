@@ -4,7 +4,7 @@ from sqlalchemy import select, text, or_, String
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from models import Camera, CameraOut, CameraCreate
-from auth import require_authenticated, require_role, Principal
+from auth import require_authenticated, require_permission, require_role, Principal
 from database import get_db
 import uuid, os, base64, csv, io, json
 from openpyxl import load_workbook
@@ -107,7 +107,7 @@ async def list_cameras(
 
 @router.post("/", response_model=CameraOut, status_code=201)
 @router.post("/onboard", response_model=CameraOut, status_code=201)
-async def onboard_camera(body: CameraCreate, principal: Principal = Depends(require_role("ADMIN")), db: AsyncSession = Depends(get_db)):
+async def onboard_camera(body: CameraCreate, principal: Principal = Depends(require_permission("camera:write")), db: AsyncSession = Depends(get_db)):
     """Manual/API Model-1 onboarding; catalogue sync remains the same owner for external sources."""
     _validate_coordinates(body)
     await _validate_vendor_model(body, db)
@@ -223,13 +223,13 @@ async def import_cameras_csv(
 
 
 @router.get("/imports")
-async def list_camera_imports(limit: int = Query(20, ge=1, le=100), _: Principal = Depends(require_role("ADMIN")), db: AsyncSession = Depends(get_db)):
+async def list_camera_imports(limit: int = Query(20, ge=1, le=100), _: Principal = Depends(require_permission("registry:admin")), db: AsyncSession = Depends(get_db)):
     result = await db.execute(text("SELECT * FROM camera_imports ORDER BY created_at DESC LIMIT :limit"), {"limit": limit})
     return [dict(row) for row in result.mappings()]
 
 
 @router.get("/export")
-async def export_cameras(profile: str = Query("registry", pattern="^(registry|health|audit)$"), db: AsyncSession = Depends(get_db)):
+async def export_cameras(profile: str = Query("registry", pattern="^(registry|health|audit)$"), _: Principal = Depends(require_permission("camera:read")), db: AsyncSession = Depends(get_db)):
     """Export public registry metadata only; URLs/credentials are never exported."""
     result = await db.execute(select(Camera).where(Camera.status != 'deleted').order_by(Camera.stream_id))
     if profile == "audit":

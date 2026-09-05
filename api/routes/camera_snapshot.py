@@ -10,11 +10,11 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
-from auth import COOKIE_NAME, Principal, current_principal, require_authenticated, principal_from_token
+from auth import COOKIE_NAME, Principal, current_principal, require_authenticated, principal_from_token, require_permission
 from database import get_db
 from signed_asset_tokens import issue_asset_token, verify_asset_token
 
-router = APIRouter(prefix="/cameras", tags=["camera-assets"])
+router = APIRouter(prefix="/cameras", tags=["camera-assets"], dependencies=[Depends(require_permission("camera:read"))])
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 SNAPSHOT_TOKEN_SECRET_ENV = "SNAPSHOT_TOKEN_SECRET"
 
