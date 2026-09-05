@@ -58,3 +58,11 @@ def test_processing_fps_categories_are_environment_configurable():
     assert "PROCESSING_FPS_HIGHWAY" in source
     assert "PROCESSING_FPS_PEDESTRIAN" in source
     assert "PROCESSING_FPS_STATIC" in source
+
+def test_behavior_worker_validates_crowd_candidates_with_person_count():
+    source = (ROOT / "ai_engine" / "behavior_worker.py").read_text(encoding="utf-8")
+    assert "from shared_models import get_yolo_model" in source
+    assert "def _person_count(model, frame):" in source
+    assert "CROWD_MIN_PERSONS" in source
+    assert "person_count < CROWD_MIN_PERSONS" in source
+    assert "test:" in source

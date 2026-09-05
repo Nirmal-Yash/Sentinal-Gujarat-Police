@@ -5,6 +5,8 @@ import cv2, numpy as np
 import redis
 from event_schema import detection_event
 from behavior_policy import AdaptiveBaseline
+from shared_models import get_yolo_model
+from ultralytics import YOLO
 
 log = logging.getLogger("behavior_worker")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
@@ -27,6 +29,9 @@ WARMUP_SECS = max(5.0, float(os.getenv("CROWD_BASELINE_WARMUP_SECS", "30")))
 PERSISTENCE_SECS = max(1.0, float(os.getenv("CROWD_PERSISTENCE_SECS", "5")))
 COOLDOWN_SECS = max(5.0, float(os.getenv("CROWD_COOLDOWN_SECS", "300")))
 RUNNING_DELTA = max(1.0, float(os.getenv("RUNNING_FLOW_DELTA", "6.0")))
+CROWD_MIN_PERSONS = max(2, int(os.getenv("CROWD_MIN_PERSONS", "3")))
+PERSON_DET_CONF = float(os.getenv("CROWD_PERSON_DET_CONF", "0.45"))
+PERSON_INFER_SIZE = int(os.getenv("CROWD_PERSON_INFER_SIZE", "416"))
 
 
 def _ensure_group(r, stream, group):
@@ -39,6 +44,21 @@ def _ensure_group(r, stream, group):
 def _decode(data):
     buf = base64.b64decode(data[b"frame"])
     return cv2.imdecode(np.frombuffer(buf, np.uint8), cv2.IMREAD_COLOR)
+
+
+def _person_count(model, frame):
+    """Return person count for a candidate crowd anomaly using the shared YOLO model."""
+    if model is None:
+        return 0
+    h, w = frame.shape[:2]
+    scale = PERSON_INFER_SIZE / max(h, w)
+    image = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_LINEAR) if scale < 1 else frame
+    try:
+        result = model(image, conf=PERSON_DET_CONF, verbose=False)[0]
+        return sum(1 for box in result.boxes if int(box.cls[0]) == 0)
+    except Exception:
+        log.warning("Person validation failed for crowd candidate", exc_info=True)
+        return 0
 
 
 class CameraState:
@@ -95,6 +115,11 @@ def run():
     consumer = f"bhv-{uuid.uuid4().hex[:8]}"
     states = {}
     last_reset_id = "$"
+    shared_model = None
+    try:
+        shared_model = get_yolo_model()
+    except Exception:
+        shared_model = None
     log.info("Behavior worker ready: baseline_alpha=%s sigma=%s warmup=%ss persistence=%ss", BASELINE_ALPHA, BASELINE_SIGMA, WARMUP_SECS, PERSISTENCE_SECS)
     while True:
         try:
@@ -120,9 +145,17 @@ def run():
                     state = states.setdefault(cam_id, CameraState())
                     anomaly, score, details = state.analyse(frame)
                     if anomaly and score > 0.2:
-                        r.xadd(OUT_STREAM, detection_event(data, "anomaly", anomaly_type=anomaly, anomaly_score=score,
-                                                           conf=score, **details), maxlen=OUT_MAX, approximate=True)
-                        log.info("Anomaly camera=%s type=%s score=%.3f details=%s", cam_id, anomaly, score, details)
+                        if anomaly in {"running_crowd", "crowd_formation"}:
+                            person_count = _person_count(shared_model, frame)
+                            details["person_count"] = person_count
+                            details["crowd_gate_min_persons"] = CROWD_MIN_PERSONS
+                            if person_count < CROWD_MIN_PERSONS:
+                                log.info("Suppressed crowd candidate camera=%s type=%s score=%.3f person_count=%s min=%s", cam_id, anomaly, score, person_count, CROWD_MIN_PERSONS)
+                                anomaly = None
+                        if anomaly:
+                            r.xadd(OUT_STREAM, detection_event(data, "anomaly", anomaly_type=anomaly, anomaly_score=score,
+                                                               conf=score, **details), maxlen=OUT_MAX, approximate=True)
+                            log.info("Anomaly camera=%s type=%s score=%.3f details=%s", cam_id, anomaly, score, details)
                 except Exception:
                     log.error("Behavior error", exc_info=True)
                 finally:
