@@ -65,7 +65,8 @@ services:
       - SNAPSHOT_TTL_SECS=${SNAPSHOT_TTL_SECS:-30}
       - TEST_FRAME_FPS=${TEST_FRAME_FPS:-3}
       - TEST_RTSP_BASE=rtsp://mediamtx:8554
-      - TEST_SESSION_POLL_SECS=${TEST_SESSION_POLL_SECS:-2}
+      - TEST_SESSION_POLL_SECS=${TEST_SESSION_POLL_SECS:-1}
+      - TEST_FEED_POLL_SECS=${TEST_FEED_POLL_SECS:-0.5}
     volumes:
       - ./videos:/videos
       - test_videos:/test_videos
@@ -283,6 +284,7 @@ services:
       - FORCE_SECURITY_HEADERS=${FORCE_SECURITY_HEADERS:-false}
       - DB_SSL=${DB_SSL:-0}
       - TEST_ENDPOINT_ENABLED=${TEST_ENDPOINT_ENABLED:-true}
+      - TEST_ASSET_CACHE_TTL=${TEST_ASSET_CACHE_TTL:-10}
       - TEST_MAX_UPLOAD_BYTES=${TEST_MAX_UPLOAD_BYTES:-209715200}
       - TEST_VIDEO_DIR=/videos
       - TEST_UPLOAD_DIR=/test_videos
@@ -298,6 +300,12 @@ services:
       - MIGRATION_CONNECT_RETRY_DELAY=${MIGRATION_CONNECT_RETRY_DELAY:-2}
       - AI_HEALTH_PREFIX=${AI_HEALTH_PREFIX:-sentinel:ai:health:}
       - AI_HEALTH_STALE_SECS=${AI_HEALTH_STALE_SECS:-45}
+      - DB_POOL_SIZE=${DB_POOL_SIZE:-20}
+      - DB_MAX_OVERFLOW=${DB_MAX_OVERFLOW:-40}
+      - DB_POOL_TIMEOUT=${DB_POOL_TIMEOUT:-15}
+      - DB_POOL_RECYCLE=${DB_POOL_RECYCLE:-1800}
+      - DB_STATEMENT_TIMEOUT_MS=${DB_STATEMENT_TIMEOUT_MS:-15000}
+      - DB_LOCK_TIMEOUT_MS=${DB_LOCK_TIMEOUT_MS:-5000}
     ports:
       - "8000:8000"
     healthcheck:
@@ -334,3 +342,4 @@ volumes:
   postgres_data:
   test_videos:
   evidence_data:
+  test_evidence_data:
