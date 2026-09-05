@@ -140,8 +140,8 @@ def persist(data: dict):
 
             if kind == "plate" and plate and _truthy(data, "plate_validated") and _truthy(data, "anpr_consensus"):
                 cur.execute("""SELECT id,name,description,alert_priority FROM test_watchlists
-                    WHERE is_active=TRUE AND plate_number IS NOT NULL
-                    AND regexp_replace(upper(plate_number),'[^A-Z0-9]','','g')=%s LIMIT 1""", (plate,))
+                    WHERE session_id=%s::uuid AND is_active=TRUE AND plate_number IS NOT NULL
+                    AND regexp_replace(upper(plate_number),'[^A-Z0-9]','','g')=%s LIMIT 1""", (session_id, plate))
                 watchlist_match = cur.fetchone()
                 if watchlist_match:
                     wl_id, wl_name, wl_description, wl_priority = watchlist_match
