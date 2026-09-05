@@ -40,3 +40,21 @@ def test_anpr_worker_bounds_ocr_work_and_preprocesses_plate_candidates():
     assert "_preprocess_for_ocr" in worker
     assert "TRACK_MIN_AGE" in worker
     assert "VOTE_WINDOW_SECS" in worker
+
+def test_ingestion_runtime_implements_motion_gate_and_camera_alive_contract():
+    source = (ROOT / "ingestion" / "worker.py").read_text(encoding="utf-8")
+    assert "FRAME_GATE_ENABLED" in source
+    assert "FRAME_GATE_MOTION_THRESHOLD" in source
+    assert "IDLE_MAX_SECS" in source
+    assert "THUMBNAIL_SIZE" in source
+    assert "ALIVE_KEY" in source
+    assert "ALIVE_INTERVAL" in source
+    assert "RAW_STREAM_MAX" in source
+    assert "processing_interval_ms" in source
+    assert "np.mean(cv2.absdiff" in source
+
+def test_processing_fps_categories_are_environment_configurable():
+    source = (ROOT / "ingestion" / "worker.py").read_text(encoding="utf-8")
+    assert "PROCESSING_FPS_HIGHWAY" in source
+    assert "PROCESSING_FPS_PEDESTRIAN" in source
+    assert "PROCESSING_FPS_STATIC" in source

@@ -7,6 +7,7 @@ from multiprocessing import Process
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 
 import cv2
+import numpy as np
 import redis
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -16,11 +17,35 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [INGEST][%(levelname
 log = logging.getLogger(__name__)
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 DB_URL = os.getenv("DATABASE_URL", "")
-FRAME_FPS = max(0.5, float(os.getenv("FRAME_FPS", "3")))
-CATEGORY_INTERVALS = {"highway": 0.300, "pedestrian": 0.500, "static": 0.800}
+SOURCE_MAX_FPS = max(1.0, float(os.getenv("SOURCE_MAX_FPS", "15")))
+FRAME_GATE_ENABLED = os.getenv("FRAME_GATE_ENABLED", "true").lower() == "true"
+MOTION_THRESHOLD = max(0.0, float(os.getenv("FRAME_GATE_MOTION_THRESHOLD", "4.0")))
+IDLE_MAX_SECS = max(1.0, float(os.getenv("FRAME_GATE_IDLE_SECS", "10")))
+THUMBNAIL_SIZE = max(16, int(os.getenv("FRAME_GATE_THUMBNAIL_SIZE", "160")))
+ALIVE_KEY = os.getenv("CAMERA_ALIVE_KEY", "camera_alive")
+ALIVE_INTERVAL = max(0.5, float(os.getenv("CAMERA_ALIVE_INTERVAL_SECS", "1")))
+RAW_STREAM_MAX = max(100, int(os.getenv("RAW_FRAME_STREAM_MAXLEN", "500")))
+def _category_interval(name: str, default_fps: float) -> float:
+    env_name = {
+        "highway": "PROCESSING_FPS_HIGHWAY",
+        "pedestrian": "PROCESSING_FPS_PEDESTRIAN",
+        "static": "PROCESSING_FPS_STATIC",
+    }.get(name)
+    try:
+        fps = float(os.getenv(env_name, str(default_fps))) if env_name else default_fps
+    except (TypeError, ValueError):
+        fps = default_fps
+    return 1.0 / max(0.25, fps)
+
+CATEGORY_INTERVALS = {
+    "highway": _category_interval("highway", 3.33),
+    "pedestrian": _category_interval("pedestrian", 2.0),
+    "static": _category_interval("static", 1.25),
+}
 JPEG_Q = int(os.getenv("JPEG_QUALITY", "70"))
 SNAPSHOT_TTL = max(10, int(os.getenv("SNAPSHOT_TTL_SECS", "30")))
 MAX_CAMS = max(1, int(os.getenv("MAX_CONCURRENT_CAMERAS", "50")))
+TEST_SESSION_POLL_SECS = max(1.0, float(os.getenv("TEST_SESSION_POLL_SECS", "2")))
 CATALOGUE_SYNC_INTERVAL = max(30, int(os.getenv("CATALOGUE_SYNC_INTERVAL", "300")))
 RECONNECT_MAX_DELAY = max(5, int(os.getenv("RECONNECT_MAX_DELAY", "30")))
 STREAM_KEY = "raw_frames"
@@ -29,6 +54,28 @@ RESET_STREAM = "cam_resets"
 RESET_MAX = 500
 ENCODE_PARAMS = [cv2.IMWRITE_JPEG_QUALITY, JPEG_Q]
 SCENE_DISCONTINUITY_MS = max(1000, int(os.getenv("SCENE_DISCONTINUITY_MS", "5000")))
+
+
+def test_mode_active():
+    try:
+        with psycopg2.connect(DB_URL) as conn, conn.cursor() as cur:
+            cur.execute("SELECT EXISTS(SELECT 1 FROM test_sessions WHERE status IN ('starting','active'))")
+            return bool(cur.fetchone()[0])
+    except Exception as exc:
+        log.warning("Test-mode status check failed: %s", exc)
+        return False
+
+
+def stop_production_workers(procs):
+    for key, (_, proc) in list(procs.items()):
+        if proc.is_alive():
+            log.info("Test mode active; stopping production ingestion worker %s", key[:8])
+            proc.terminate()
+            proc.join(timeout=3)
+            if proc.is_alive():
+                proc.kill()
+                proc.join(timeout=1)
+    procs.clear()
 
 
 def get_cameras():
@@ -99,9 +146,12 @@ class CameraWorker:
         category = str(cam.get("processing_fps_category") or "pedestrian").lower()
         self.processing_category = category if category in CATEGORY_INTERVALS else "pedestrian"
         self.interval = CATEGORY_INTERVALS[self.processing_category]
+        self.prev_thumb = None
+        self.last_alive = 0.0
+        self.last_forwarded = 0.0
 
     def _open(self):
-        log.info("Opening RTSP/TCP source for %s: %s", self.name, self.url)
+        log.info("Opening RTSP/TCP source for %s", self.name)
         return self.adapter.open()
 
     def _reconnect(self):
@@ -127,6 +177,28 @@ class CameraWorker:
             raise RuntimeError("JPEG encoding failed")
         return base64.b64encode(buf).decode()
 
+    def _scene_activity(self, frame):
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        thumb = cv2.resize(gray, (THUMBNAIL_SIZE, max(1, round(THUMBNAIL_SIZE*0.5625))), interpolation=cv2.INTER_AREA)
+        activity = 255.0 if self.prev_thumb is None else float(np.mean(cv2.absdiff(thumb, self.prev_thumb)))
+        self.prev_thumb = thumb
+        return activity
+
+    def _camera_alive(self):
+        if time.monotonic() - self.last_alive >= ALIVE_INTERVAL:
+            self.r.hset(ALIVE_KEY, self.cam_id, str(time.time()))
+            self.last_alive = time.monotonic()
+
+    def _should_forward(self, frame):
+        activity = self._scene_activity(frame) if FRAME_GATE_ENABLED else 255.0
+        elapsed = time.monotonic() - self.last_forwarded
+        if elapsed < self.interval:
+            return False
+        if not FRAME_GATE_ENABLED or activity >= MOTION_THRESHOLD or elapsed >= IDLE_MAX_SECS:
+            self.last_forwarded = time.monotonic()
+            return True
+        return False
+
     def _publish(self, frame_b64, pts_ms, w, h):
         now = datetime.now(timezone.utc).isoformat().encode()
         fields = {
@@ -142,8 +214,10 @@ class CameraWorker:
             b"width": str(w).encode(),
             b"height": str(h).encode(),
             b"codec": self.codec.encode(),
+            b"processing_fps_category": self.processing_category.encode(),
+            b"processing_interval_ms": str(int(self.interval*1000)).encode(),
         }
-        self.r.xadd(STREAM_KEY, fields, maxlen=STREAM_MAX, approximate=True)
+        self.r.xadd(STREAM_KEY, fields, maxlen=RAW_STREAM_MAX, approximate=True)
         # Keep both canonical registry and provider keys.  The UUID is the API
         # identity; the provider alias is a cheap recovery path for streams
         # that were restarted while a registry row was being refreshed.
@@ -207,14 +281,15 @@ class CameraWorker:
 
                 fail_streak = 0
                 observed_frames += 1
+                self._camera_alive()
                 pts_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
                 if not pts_ms or pts_ms < 0:
                     pts_ms = 0.0
 
                 now = time.monotonic()
-                if last_publish and now - last_publish < self.interval:
+                self._camera_alive()
+                if not self._should_forward(frame):
                     continue
-
                 last_publish = now
 
                 if prev_pts is not None:
@@ -311,12 +386,7 @@ def main():
     log.info("Ingestion service starting …")
 
     from test_runner import supervise as supervise_test_sessions
-    threading.Thread(
-        target=supervise_test_sessions,
-        name="test-session-supervisor",
-        daemon=True,
-    ).start()
-
+    threading.Thread(target=supervise_test_sessions, name="test-session-supervisor", daemon=True).start()
     from catalogue_sync import sync as catalogue_sync
 
     for attempt in range(20):
@@ -324,46 +394,55 @@ def main():
             psycopg2.connect(DB_URL).close()
             break
         except Exception as exc:
-            log.info(
-                "Waiting for DB (%s/20): %s",
-                attempt + 1,
-                exc,
-            )
+            log.info("Waiting for DB (%s/20): %s", attempt + 1, exc)
             time.sleep(3)
 
-    n = catalogue_sync()
-
-    if n == 0:
-        log.critical("Current CCTV catalogue unavailable; no retired-source fallback is permitted")
-        time.sleep(10)
-        n = catalogue_sync()
-
-    cams = get_cameras()
-
-    if not cams:
-        log.critical(
-            "No active cameras in DB after current CCTV catalogue sync. Exiting."
-        )
-        sys.exit(1)
-
-    log.info(
-        "Starting %s camera workers …",
-        len(cams),
-    )
-
     procs = {}
-
-    for cam in cams:
-        procs[str(cam["id"])] = (
-            cam,
-            start_camera_worker(cam),
-        )
-        time.sleep(0.3)
-
-    last_catalogue_sync = time.monotonic()
+    last_catalogue_sync = 0.0
+    test_was_active = False
 
     while True:
-        time.sleep(30)
+        active_test = test_mode_active()
+        if active_test:
+            if not test_was_active:
+                log.info("ISOLATED TEST MODE ACTIVE — production CCTV ingestion paused")
+                stop_production_workers(procs)
+                test_was_active = True
+            time.sleep(TEST_SESSION_POLL_SECS)
+            continue
+
+        if test_was_active:
+            log.info("ISOLATED TEST MODE ENDED — resuming production CCTV ingestion")
+            test_was_active = False
+            last_catalogue_sync = 0.0
+
+        if not procs:
+            try:
+                n = catalogue_sync()
+                if n == 0:
+                    log.critical("Current CCTV catalogue unavailable; no retired-source fallback is permitted")
+                    time.sleep(10)
+                    continue
+            except Exception as exc:
+                log.error("CCTV catalogue sync failed: %s", exc, exc_info=True)
+                time.sleep(5)
+                continue
+
+            cams = get_cameras()
+            if not cams:
+                log.critical("No active cameras in DB after current CCTV catalogue sync. Retrying.")
+                time.sleep(5)
+                continue
+
+            log.info("Starting %s production camera workers …", len(cams))
+            for cam in cams:
+                procs[str(cam["id"])] = (cam, start_camera_worker(cam))
+                time.sleep(0.3)
+            last_catalogue_sync = time.monotonic()
+
+        time.sleep(2)
+        if test_mode_active():
+            continue
 
         if time.monotonic() - last_catalogue_sync >= CATALOGUE_SYNC_INTERVAL:
             try:
@@ -372,19 +451,12 @@ def main():
             except Exception as exc:
                 log.warning("Periodic CCTV catalogue sync failed: %s", exc)
 
-        dead = []
-        for key, (cam, proc) in procs.items():
+        for key, (cam, proc) in list(procs.items()):
             if not proc.is_alive():
-                dead.append(key)
-
-        for key in dead:
-            cam, _ = procs.pop(key)
-            set_status(str(cam["id"]), "reconnecting")
-            procs[key] = (
-                cam,
-                start_camera_worker(cam),
-            )
-
+                procs.pop(key, None)
+                set_status(str(cam["id"]), "reconnecting")
+                if not test_mode_active():
+                    procs[key] = (cam, start_camera_worker(cam))
 
 if __name__ == "__main__":
     main()
