@@ -50,7 +50,7 @@ def seed(reset=False):
             for n,cam in enumerate(manifest["test_cameras"],1):
                 asset=assets[cam["video_file"]]
                 label=cam["display_name"]
-                cur.execute("""INSERT INTO test_session_feeds(session_id,asset_id,stream_id,camera_label,rtsp_path,hls_path,loop)
+                cur.execute("""INSERT INTO test_session_feeds(session_id,asset_id,stream_id,camera_label,rtsp_path,hls_path,loop,location,lat,lng)
                     VALUES(%s::uuid,%s::uuid,%s,%s,%s,%s,TRUE)""",(session,asset,n,f"rtsp://mediamtx:8554/test/{session}/cam{n}",f"/test-hls/test/{session}/cam{n}/index.m3u8"))
             plates=[
               ("GJ01AB1234","Vehicle Alpha – Test Target","Demonstration: triggers watchlist hit and vehicle journey","HIGH"),
