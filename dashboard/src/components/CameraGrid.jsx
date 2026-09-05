@@ -35,12 +35,13 @@ function LivePlayer({cam,muted=true,managed=false,active=true,onLiveStatus,onAsp
   const sources=playbackSources(cam)
   const replaceSnapshot=useCallback(url=>{setSnapshot(prev=>{if(prev && prev!==url && prev.startsWith('blob:'))URL.revokeObjectURL(prev);snapshotRef.current=url;return url})},[])
   const cleanup=useCallback(()=>{clearTimeout(retryRef.current);hlsRef.current?.destroy();hlsRef.current=null},[])
-  const loadSnapshot=useCallback(async()=>{try{const r=await fetch(`/api/cameras/${cam.id}/snapshot?t=${Date.now()}`,{credentials:'include',cache:'no-store'});if(r.ok)replaceSnapshot(URL.createObjectURL(await r.blob()))}catch{}},[cam.id,replaceSnapshot])
+  const loadSnapshot=useCallback(async()=>{if(cam?.is_test||live)return;try{const r=await fetch(`/api/cameras/${cam.id}/snapshot?t=${Date.now()}`,{credentials:'include',cache:'no-store'});if(r.ok)replaceSnapshot(URL.createObjectURL(await r.blob()))}catch{}},[cam.id,cam?.is_test,live,replaceSnapshot])
   const start=useCallback(()=>{
     cleanup(); const video=videoRef.current; if(!video || !sources.hls)return
     setState('LOADING'); setLive(false)
     const fail=()=>{
       cleanup(); setLive(false);
+      if(!cam?.is_test){ loadSnapshot(); }
       if(cam?.is_test && cam?.stream_url){
         setState('FALLBACK');
         video.src=cam.stream_url;
@@ -60,20 +61,20 @@ function LivePlayer({cam,muted=true,managed=false,active=true,onLiveStatus,onAsp
       hlsRef.current=hls
     }else if(video.canPlayType('application/vnd.apple.mpegurl')){video.src=sources.hls}else{fail();return}
     clearTimeout(retryRef.current);retryRef.current=setTimeout(()=>{if(!wasLiveRef.current)fail()},14000)
-  },[cleanup,sources.hls])
+  },[cleanup,sources.hls,cam?.is_test,cam?.stream_url,loadSnapshot])
   useEffect(()=>{
     if(managed && !active){const frozen=captureFrozenFrame(videoRef.current);if(frozen)replaceSnapshot(frozen);cleanup();setLive(false);setState(wasLiveRef.current?'SUSPENDED':'IDLE');return ()=>cleanup()}
     start(); return ()=>cleanup()
   },[managed,active,start,cleanup,replaceSnapshot])
-  useEffect(()=>{loadSnapshot();const t=setInterval(()=>{if(!live)loadSnapshot()},15000);return()=>clearInterval(t)},[loadSnapshot,live])
+  useEffect(()=>{return ()=>{const current=snapshotRef.current;if(current?.startsWith('blob:'))URL.revokeObjectURL(current)}},[])
   useEffect(()=>{onLiveStatus?.(live)},[live,onLiveStatus])
   const markPlaying=()=>{wasLiveRef.current=true;setLive(true);setState('ACTIVE')}
   const metadata=e=>{const v=e.currentTarget;if(v.videoWidth&&v.videoHeight)onAspectChange?.(v.videoWidth/v.videoHeight)}
-  const visibleImage=!live && snapshot
+  const visibleImage=!live && snapshot && state==='ERROR'
   return <div style={{position:'absolute',inset:0,background:'#000'}}>
     {visibleImage&&<img src={snapshot} alt="Latest camera frame" onLoad={metadata} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:fit,zIndex:1}}/>}
     <video ref={videoRef} autoPlay muted={muted} playsInline loop={cam?.is_test} onPlaying={markPlaying} onLoadedMetadata={metadata} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:fit,display:state==='ACTIVE'||state==='LOADING'?'block':'none',zIndex:2}}/>
-    {state==='ERROR'&&<div style={{position:'absolute',inset:0,zIndex:3,display:'grid',placeItems:'center',background:'rgba(0,0,0,.28)',color:'rgba(255,255,255,.75)',fontSize:11}}>{cam?.is_test?'Test video unavailable':'Camera unavailable'}</div>}
+    {state==='ERROR'&&<div style={{position:'absolute',inset:0,zIndex:3,display:'grid',placeItems:'center',background:'rgba(0,0,0,.58)',color:'#fff',fontSize:11}}>{cam?.is_test?'Test video unavailable':'Live HLS feed unavailable'}</div>}
     {state==='LOADING'&&!snapshot&&<div style={{position:'absolute',inset:0,zIndex:3,display:'grid',placeItems:'center',color:'rgba(255,255,255,.65)',fontSize:11}}>Connecting…</div>}
     {live&&<span style={{position:'absolute',right:8,bottom:6,zIndex:5,color:'#fff',fontSize:9,fontWeight:800,letterSpacing:.5}}>● LIVE</span>}
   </div>

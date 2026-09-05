@@ -78,7 +78,7 @@ class CameraOut(BaseModel):
             rtsp_host=os.getenv("RTSP_HOST_IP","103.250.160.189")
             if isinstance(value,dict): value=dict(value)
             else: value={name:getattr(value,name) for name in cls.model_fields if hasattr(value,name)}
-            # Production HLS is consumed directly from the provider CDN.\n            value["hls_url"]=f"https://cctv.corp8.cloud/{provider_id}/index.m3u8"
+            # Browser playback must use the authenticated same-origin CCTV HLS proxy.\n            value["hls_url"]=f"/api/cctv/{provider_id}/index.m3u8"
             if not value.get("rtsp_url"): value["rtsp_url"]=f"rtsp://{rtsp_host}:8554/stream/{provider_id}"
             value["stream_url"]=value["rtsp_url"]
             if not value.get("whep_url"): value["whep_url"]=f"http://{rtsp_host}:8889/stream/{provider_id}/whep"
