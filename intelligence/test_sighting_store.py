@@ -72,6 +72,41 @@ def persist(data: dict):
             if embedding and kind == "face":
                 cur.execute("UPDATE test_tracks SET embedding=CAST(%s AS vector) WHERE session_id=%s::uuid AND global_track_id=%s", (_vector_literal(embedding), session_id, global_track))
             alert = None; watchlist_match = None
+            if kind == "face" and embedding:
+                threshold = float(os.getenv("TEST_FACE_SIM_THRESHOLD", os.getenv("FACE_SIM_THRESHOLD", "0.65")))
+                vector = _vector_literal(embedding)
+                cur.execute("""SELECT id,name,description,alert_priority,
+                    1-(embedding <=> CAST(%s AS vector)) AS similarity
+                    FROM test_watchlist
+                    WHERE session_id=%s::uuid AND entity_type='person'
+                      AND is_active=TRUE AND embedding IS NOT NULL
+                      AND 1-(embedding <=> CAST(%s AS vector)) >= %s
+                    ORDER BY embedding <=> CAST(%s AS vector) LIMIT 1""",
+                    (vector, session_id, vector, threshold, vector))
+                watchlist_match = cur.fetchone()
+                if watchlist_match:
+                    wl_id, wl_name, wl_description, wl_priority, similarity = watchlist_match
+                    cur.execute("""SELECT id FROM test_alerts
+                        WHERE session_id=%s::uuid AND alert_type='watchlist_match'
+                          AND details->>'watchlist_id'=%s
+                          AND details->>'track_id'=COALESCE(%s,'')
+                          AND event_at >= %s - (%s * INTERVAL '1 second')
+                        ORDER BY event_at DESC LIMIT 1""",
+                        (session_id, str(wl_id), track_id or "", timestamp, ALERT_COOLDOWN))
+                    if not cur.fetchone():
+                        cur.execute("""INSERT INTO test_alerts(session_id,detection_id,alert_type,priority,event_at,details)
+                            VALUES(%s::uuid,%s::uuid,'watchlist_match',%s,%s,%s::jsonb) RETURNING id""",
+                            (session_id, detection_id, wl_priority or "HIGH", timestamp,
+                             json.dumps({"watchlist_id": str(wl_id), "watchlist_name": wl_name,
+                                         "description": wl_description or "", "camera_label": camera_label,
+                                         "match_type": "face", "similarity": float(similarity or 0),
+                                         "track_id": track_id, "test": True})))
+                        alert = cur.fetchone()[0]
+                        cur.execute("UPDATE test_alerts SET details=details || CAST(%s AS jsonb) WHERE id=%s",
+                            (json.dumps({"human_summary": "Person matched the Test Mode watchlist at " + camera_label + ".",
+                                         "detection_detail": {"type": "face_match", "similarity": float(similarity or 0)},
+                                         "evidence": {"available": False, "description": "Test-mode evidence capture is unavailable for this event."}}), alert))
+
             if kind == "plate" and plate and _truthy(data, "plate_validated") and _truthy(data, "anpr_consensus"):
                 cur.execute("""SELECT id,name,description,alert_priority FROM test_watchlist
                     WHERE session_id=%s::uuid AND is_active=TRUE AND plate_number IS NOT NULL
