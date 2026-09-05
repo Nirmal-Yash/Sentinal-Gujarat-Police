@@ -91,6 +91,10 @@ def _prepare_face_image(payload: bytes) -> bytes:
         if image.mode != 'RGB': image = image.convert('RGB')
         width, height = image.size; scale = max(1.0, 160.0 / max(1, min(width, height)))
         if scale > 1.0: image = image.resize((max(160, int(width * scale)), max(160, int(height * scale))), Image.Resampling.LANCZOS)
+        max_dim = 1280
+        if max(image.size) > max_dim:
+            scale = max_dim / max(image.size)
+            image = image.resize((int(image.width * scale), int(image.height * scale)), Image.Resampling.LANCZOS)
         output = BytesIO(); image.save(output, format='JPEG', quality=95, optimize=True); return output.getvalue()
 
 

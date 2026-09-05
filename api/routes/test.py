@@ -46,6 +46,25 @@ async def _close_orphaned_sessions(db: AsyncSession) -> None:
       WHERE s.status IN ('starting','active') AND s.runner_pid IS NULL
       AND NOT EXISTS (SELECT 1 FROM test_session_feeds f WHERE f.session_id=s.id)"""))
 
+
+async def _close_empty_session(session_id: uuid.UUID, db: AsyncSession) -> bool:
+    """Stop a runner and release the one-session lock after its last feed is removed."""
+    remaining = await db.scalar(text("SELECT COUNT(*) FROM test_session_feeds WHERE session_id=CAST(:id AS uuid)"), {"id": str(session_id)})
+    if int(remaining or 0):
+        return False
+    row = (await db.execute(text("SELECT runner_pid FROM test_sessions WHERE id=CAST(:id AS uuid) AND status IN ('starting','active') FOR UPDATE"), {"id": str(session_id)})).mappings().first()
+    if not row:
+        return False
+    if row["runner_pid"]:
+        try: os.killpg(int(row["runner_pid"]), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError): pass
+    import redis
+    client = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
+    try: client.setex(f"test:stop:{session_id}", 60, "1")
+    finally: client.close()
+    await db.execute(text("UPDATE test_sessions SET status='closed',closed_at=COALESCE(closed_at,NOW()),runner_pid=NULL,error=COALESCE(error,'Test session closed after its final feed was removed') WHERE id=CAST(:id AS uuid)"), {"id": str(session_id)})
+    return True
+
 class TestFeed(BaseModel):
     asset_id: uuid.UUID
     camera_label: str = Field(default="", max_length=255)
@@ -103,6 +122,8 @@ async def delete_asset(
     client = redis.from_url(os.getenv("REDIS_URL","redis://localhost:6379"), decode_responses=True)
     for ref in refs: client.setex(f"test:remove_feed:{ref['session_id']}:{ref['stream_id']}",60,"1")
     await db.execute(text("DELETE FROM test_session_feeds WHERE asset_id=CAST(:id AS uuid)"), {"id":str(asset_id)})
+    for ref in refs:
+        await _close_empty_session(ref["session_id"], db)
     await db.execute(text("DELETE FROM test_video_assets WHERE id=CAST(:id AS uuid)"), {"id":str(asset_id)})
     await db.commit()
     return {"status":"removed","id":str(asset_id),"display_name":row["display_name"],"production_data_affected":False}
@@ -134,8 +155,9 @@ async def delete_session_feed(
         text("DELETE FROM test_session_feeds WHERE session_id=CAST(:session AS uuid) AND stream_id=:stream"),
         {"session": str(session_id), "stream": stream_id},
     )
+    session_closed = await _close_empty_session(session_id, db)
     await db.commit()
-    return {"status": "removed", "session_id": str(session_id), "stream_id": stream_id}
+    return {"status": "session_closed" if session_closed else "removed", "session_id": str(session_id), "stream_id": stream_id}
 
 
 @router.post("/sessions/{session_id}/feeds", status_code=201)

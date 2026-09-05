@@ -17,10 +17,10 @@ GROUP = f'{PREFIX}person_investigation_workers'
 IMAGE_PREFIX = f'{PREFIX}person:image:'
 RESULT_TTL = int(os.getenv("PERSON_INVESTIGATION_RESULT_TTL", "120"))
 DET_SIZE = max(320, int(os.getenv("PERSON_FACE_DET_SIZE", "640")))
-DET_THRESH = max(0.30, min(0.75, float(os.getenv("PERSON_FACE_DET_THRESHOLD", "0.40"))))
+DET_THRESH = max(0.50, min(0.75, float(os.getenv("PERSON_FACE_DET_THRESHOLD", "0.50"))))
 MAX_IMAGE_BYTES = int(os.getenv("PERSON_MAX_IMAGE_BYTES", str(10 * 1024 * 1024)))
-MIN_FACE_INPUT = max(320, int(os.getenv("PERSON_FACE_MIN_INPUT", "640")))
-MAX_FACE_INPUT = max(MIN_FACE_INPUT, int(os.getenv("PERSON_FACE_MAX_INPUT", "2200")))
+MIN_FACE_INPUT = max(160, int(os.getenv("PERSON_FACE_MIN_INPUT", "160")))
+MAX_FACE_INPUT = max(MIN_FACE_INPUT, int(os.getenv("PERSON_FACE_MAX_INPUT", "1280")))
 
 
 def ensure_group(r):

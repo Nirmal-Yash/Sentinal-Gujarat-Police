@@ -67,8 +67,8 @@ def test_test_feed_asset_lifecycle_is_complete():
     assert '@router.delete("/sessions/{session_id}/feeds/{stream_id}")' in source
     assert "DELETE FROM test_session_feeds WHERE asset_id" in source
     assert "DELETE FROM test_video_assets WHERE id" in source
-    assert "remove_feed:" not in source  # reject accidental alternate Redis command spelling
     assert "test:remove_feed:" in source
+    assert "_close_empty_session" in source
     delete_start = source.find('@router.delete("/assets/{asset_id}")')
     delete_end = source.find('@router.delete("/sessions/{session_id}/feeds/', delete_start)
     block = source[delete_start:delete_end]
@@ -97,7 +97,7 @@ def test_test_feed_state_and_ui_management_are_connected():
 def test_ingestion_runner_supports_per_feed_lifecycle():
     source = read("ingestion/test_runner.py")
     assert "test:remove_feed:" in source
-    assert "publishers = {}" in source
+    assert "publishers" in source and "{}, 0" in source
     assert "publishers.pop(" in source
     assert "os.killpg(process.pid" in source
     assert "if not feeds:" in source
@@ -125,6 +125,19 @@ def test_latest_camera_player_avoids_snapshot_as_the_live_production_source():
     source = read("dashboard/src/components/CameraGrid.jsx")
     assert "const visibleImage=!live && snapshot && state==='ERROR'" in source
     assert "configured.startsWith('/api/cctv/')" in source
+    assert "},[sourceUrl])" in source
+    assert "},[])" in source
+    assert "hls.recoverMediaError()" in source
+    assert "hls.startLoad()" in source
+    assert "hlsRef.current.destroy()" in source
+
+
+def test_test_session_header_and_exit_cleanup_follow_the_current_contract():
+    client = read("dashboard/src/api/client.js")
+    app = read("dashboard/src/App.jsx")
+    assert "'X-Test-Session-Id':testSession" in client
+    assert "sentinel_test_session" in app
+    assert "await api.closeTestSession(sessionId)" in app
 
 
 if __name__ == "__main__":
