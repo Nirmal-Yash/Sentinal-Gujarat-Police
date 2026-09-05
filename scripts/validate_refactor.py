@@ -125,6 +125,7 @@ def main() -> int:
         ("dashboard/src/components/MapView.jsx", "operational GIS UI exists"),
         ("scripts/p0_runtime_e2e.py", "P0 runtime E2E exists"),
         ("scripts/p0_browser_regression.mjs", "P0 browser regression exists"),
+        ("tests/test_latest_refactor_modules.py", "latest refactor regression tests exist"),
         (".github/workflows/p0-release-gate.yml", "consolidated P0 release workflow exists"),
     ]
     for rel, message in required_paths:
