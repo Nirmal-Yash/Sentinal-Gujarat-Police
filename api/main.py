@@ -40,6 +40,38 @@ async def bootstrap_admin(db:AsyncSession)->None:
         if not active:
             raise RuntimeError('No active ADMIN/SUPERADMIN exists and bootstrap admin credentials are not configured')
 
+runtime_ready=asyncio.Event()
+runtime_error=None
+
+async def initialize_runtime()->None:
+    last=None
+    for attempt in range(1,STARTUP_RETRIES+1):
+        try:
+            apply_migrations()
+            if AUTH_REQUIRED and (SECRET_KEY or '').strip().lower() in INSECURE_SECRET_VALUES:
+                raise RuntimeError('AUTH_REQUIRED=true requires a strong non-placeholder SECRET_KEY')
+            if AUTH_REQUIRED and ((not REFRESH_SECRET) or REFRESH_SECRET.lower() in INSECURE_SECRET_VALUES or REFRESH_SECRET==SECRET_KEY):
+                raise RuntimeError('AUTH_REQUIRED=true requires JWT_REFRESH_SECRET_KEY distinct from SECRET_KEY')
+            snap=(os.getenv('SNAPSHOT_TOKEN_SECRET','') or '').strip()
+            if not snap or snap.lower() in INSECURE_SECRET_VALUES:
+                raise RuntimeError('SNAPSHOT_TOKEN_SECRET must be supplied and must not be a placeholder')
+            if os.getenv('ENVIRONMENT','development').lower()=='production':
+                if not os.getenv('FIELD_ENCRYPTION_KEY','').strip():
+                    raise RuntimeError('FIELD_ENCRYPTION_KEY must be configured in production')
+                if os.getenv('DB_SSL','0').lower() not in {'1','true','require'}:
+                    raise RuntimeError('DB_SSL must be enabled in production')
+                if os.getenv('AUTH_COOKIE_SECURE','false').lower()!='true':
+                    raise RuntimeError('AUTH_COOKIE_SECURE=true is required in production')
+            async with Session() as db:
+                await bootstrap_admin(db)
+            return
+        except Exception as exc:
+            last=exc
+            if attempt>=STARTUP_RETRIES:
+                raise
+            log.warning('Startup dependency check failed (%s/%s): %s; retrying in %.1fs',attempt,STARTUP_RETRIES,exc,STARTUP_RETRY_DELAY)
+            await asyncio.sleep(STARTUP_RETRY_DELAY)
+    raise last or RuntimeError('API startup initialization failed')
 async def runtime_initializer():
     global runtime_error
     while not runtime_ready.is_set():
