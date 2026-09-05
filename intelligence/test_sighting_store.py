@@ -26,6 +26,14 @@ def _truthy(data, name):
     return _value(data, name).strip().lower() in {"1", "true", "yes"}
 
 
+def _embedding_array(value):
+    if isinstance(value, str):
+        return np.asarray([float(x) for x in value.strip("[]").split(",") if x.strip()], dtype=np.float32)
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return np.frombuffer(bytes(value), dtype=np.float32).copy()
+    return np.asarray(value, dtype=np.float32).copy()
+
+
 def _vector_literal(encoded):
     raw = base64.b64decode(encoded)
     import numpy as np
@@ -72,6 +80,64 @@ def persist(data: dict):
             if embedding and kind == "face":
                 cur.execute("UPDATE test_tracks SET embedding=CAST(%s AS vector) WHERE session_id=%s::uuid AND global_track_id=%s", (_vector_literal(embedding), session_id, global_track))
             alert = None; watchlist_match = None
+            if embedding and kind == "face":
+                vector_literal = _vector_literal(embedding)
+                cur.execute(
+                    "UPDATE test_tracks SET embedding=CAST(%s AS vector) WHERE session_id=%s::uuid AND global_track_id=%s",
+                    (vector_literal, session_id, global_track),
+                )
+                face_embedding = _embedding_array(base64.b64decode(embedding))
+                norm = np.linalg.norm(face_embedding)
+                if norm > 1e-9:
+                    face_embedding = face_embedding / norm
+                    cur.execute(
+                        """SELECT id,name,description,alert_priority,embedding
+                           FROM test_watchlists
+                           WHERE session_id=%s::uuid AND entity_type='person'
+                             AND is_active=TRUE AND embedding IS NOT NULL""",
+                        (session_id,),
+                    )
+                    best = None
+                    for wl_row in cur.fetchall():
+                        try:
+                            wl_vec = _embedding_array(wl_row[4])
+                            wl_norm = np.linalg.norm(wl_vec)
+                            if wl_norm <= 1e-9:
+                                continue
+                            similarity = float(np.dot(face_embedding, wl_vec / wl_norm))
+                            if similarity >= float(os.getenv("FACE_SIM_THRESHOLD", "0.65")) and (best is None or similarity > best[0]):
+                                best = (similarity, wl_row)
+                        except Exception:
+                            continue
+                    if best:
+                        similarity, wl_row = best
+                        wl_id, wl_name, wl_description, wl_priority, _ = wl_row
+                        cur.execute(
+                            """SELECT id FROM test_alerts
+                               WHERE session_id=%s::uuid AND alert_type='watchlist_match'
+                                 AND details->>'watchlist_id'=%s
+                                 AND details->>'track_id'=COALESCE(%s,'')
+                                 AND event_at >= %s - (%s * INTERVAL '1 second')
+                               LIMIT 1""",
+                            (session_id, str(wl_id), track_id, timestamp, ALERT_COOLDOWN),
+                        )
+                        if not cur.fetchone():
+                            cur.execute(
+                                """INSERT INTO test_alerts(session_id,detection_id,alert_type,priority,event_at,details)
+                                   VALUES(%s::uuid,%s::uuid,'watchlist_match',%s,%s,%s::jsonb)
+                                   RETURNING id""",
+                                (
+                                    session_id, detection_id, wl_priority or "HIGH", timestamp,
+                                    json.dumps({
+                                        "watchlist_id": str(wl_id), "watchlist_name": wl_name,
+                                        "description": wl_description or "", "entity_type": "person",
+                                        "similarity": similarity, "track_id": track_id,
+                                        "camera_label": camera_label, "test": True,
+                                    }),
+                                ),
+                            )
+                            alert = cur.fetchone()[0]
+
             if kind == "plate" and plate and _truthy(data, "plate_validated") and _truthy(data, "anpr_consensus"):
                 cur.execute("""SELECT id,name,description,alert_priority FROM test_watchlists
                     WHERE is_active=TRUE AND plate_number IS NOT NULL

@@ -1,5 +1,6 @@
 """Video-backed test mode. It is deliberately isolated from operational data."""
-import csv, io, mimetypes, os, signal, uuid
+import base64, csv, io, mimetypes, os, signal, uuid
+import numpy as np
 from datetime import datetime
 from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile

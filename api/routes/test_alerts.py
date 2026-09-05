@@ -62,6 +62,8 @@ async def list_test_alerts(
     _: Principal = Depends(require_permission("alert:read")),
     db: AsyncSession = Depends(get_db),
 ):
+    if priority and priority.lower() in {"undefined", "null"}: priority = None
+    if status and status.lower() in {"undefined", "null"}: status = None
     rows = await db.execute(text("""SELECT id,session_id,alert_type,priority,entity_type,details,acknowledged,status,
         created_at,updated_at,acknowledged_at,acknowledged_by,resolved_at,resolved_by,closed_at,closed_by,stream_id
         FROM test_alerts
