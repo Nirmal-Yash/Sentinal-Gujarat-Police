@@ -19,7 +19,9 @@ export default function TestFeedManager({ session, cameras = [], onClose, onChan
 
   const refreshAssets = async () => {
     try {
-      setAssets(await api.getTestAssets())
+      const rows=await api.getTestAssets()
+      setAssets(rows)
+      setSelected(current=>current && rows.some(asset=>String(asset.id)===String(current)) ? current : String(rows.find(asset=>!asset.in_use)?.id||''))
       setError('')
     } catch (err) {
       setError(err?.message || 'Could not load test videos')
@@ -28,7 +30,7 @@ export default function TestFeedManager({ session, cameras = [], onClose, onChan
 
   useEffect(() => { refreshAssets() }, [])
 
-  const available = assets.filter(asset => !activeAssetIds.has(String(asset.id)))
+  const available = assets.filter(asset => !asset.in_use && !activeAssetIds.has(String(asset.id)))
 
   const upload = async event => {
     const files = Array.from(event.target.files || [])

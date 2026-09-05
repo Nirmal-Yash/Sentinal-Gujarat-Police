@@ -5,8 +5,24 @@ health, retry, or Redis behavior.  Adapters may be selected from registry
 metadata only after their credentials and capability contract are approved.
 """
 from abc import ABC, abstractmethod
+import os
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import cv2
+
+
+def _credentialed_rtsp_url(url: str) -> str:
+    parts = urlsplit(str(url or "").strip())
+    if parts.scheme.lower() != "rtsp" or parts.username or parts.password:
+        return str(url)
+    email = os.getenv("CCTV_EMAIL", "").strip()
+    password = os.getenv("CCTV_PASSWORD", "")
+    if not email or password == "":
+        raise RuntimeError("CCTV RTSP credentials are not configured")
+    host = parts.hostname or ""
+    port = ":" + str(parts.port) if parts.port else ""
+    auth = quote(email, safe="") + ":" + quote(password, safe="") + "@" + host + port
+    return urlunsplit((parts.scheme, auth, parts.path, parts.query, parts.fragment))
 
 
 class StreamAdapter(ABC):
@@ -21,7 +37,7 @@ class OpenCVRTSPAdapter(StreamAdapter):
     """Current production behavior preserved behind the adapter boundary."""
 
     def __init__(self, url: str):
-        self.url = url
+        self.url = _credentialed_rtsp_url(url)
 
     def open(self) -> cv2.VideoCapture:
         capture = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
