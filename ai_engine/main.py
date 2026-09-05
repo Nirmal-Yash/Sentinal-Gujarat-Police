@@ -3,6 +3,7 @@
 import os
 import time
 import logging
+import importlib
 import multiprocessing as mp
 from pathlib import Path
 from multiprocessing import Process
@@ -64,40 +65,32 @@ def _preload_models(load_anpr: bool) -> None:
             log.exception("EasyOCR shared preload failed; ANPR worker will use local fallback")
 
 
-def spawn(target, name):
-    p = Process(target=target, name=name, daemon=True)
+def spawn(target, name, args=()):
+    p = Process(target=target, args=args, name=name, daemon=True)
     started = time.time()
     p.start()
     log.info("Spawned %s (pid %s)", name, p.pid)
     return p, started
 
 
+def _worker_entry(module_name):
+    module = importlib.import_module(module_name)
+    module.run()
+
+
 def main():
     log.info("AI Engine starting …")
     time.sleep(6)
 
-    from yolo_worker import run as run_yolo
-    from anpr_worker import run as run_anpr
-    from face_worker import run as run_face
-    from behavior_worker import run as run_behavior
-
     _preload_models(ANPR_ENABLED)
     procs = {}
-
-    for i in range(YOLO_WORKERS):
-        name = f"YOLOv8+DeepSORT-{i+1}"
-        p, started = spawn(run_yolo, name)
-        procs[name] = {"fn": run_yolo, "proc": p, "started": started, "restarts": 0, "next_restart": 0.0}
-
-    if ANPR_ENABLED:
-        p, started = spawn(run_anpr, "ANPR-EasyOCR")
-        procs["ANPR-EasyOCR"] = {"fn": run_anpr, "proc": p, "started": started, "restarts": 0, "next_restart": 0.0}
-    if FACE_ENABLED:
-        p, started = spawn(run_face, "FaceEmbeds")
-        procs["FaceEmbeds"] = {"fn": run_face, "proc": p, "started": started, "restarts": 0, "next_restart": 0.0}
-    if BEHAVIOR_ENABLED:
-        p, started = spawn(run_behavior, "BehaviorAI")
-        procs["BehaviorAI"] = {"fn": run_behavior, "proc": p, "started": started, "restarts": 0, "next_restart": 0.0}
+    workers = [("yolo_worker", f"YOLOv8+DeepSORT-{i+1}") for i in range(YOLO_WORKERS)]
+    if ANPR_ENABLED: workers.append(("anpr_worker", "ANPR-EasyOCR"))
+    if FACE_ENABLED: workers.append(("face_worker", "FaceEmbeds"))
+    if BEHAVIOR_ENABLED: workers.append(("behavior_worker", "BehaviorAI"))
+    for module_name, name in workers:
+        p, started = spawn(_worker_entry, name, (module_name,))
+        procs[name] = {"module": module_name, "proc": p, "started": started, "restarts": 0, "next_restart": 0.0}
 
     publish("supervisor", "RUNNING", os.getpid(), 0, time.time())
 
@@ -120,7 +113,7 @@ def main():
             log.warning("%s died (exit %s). Restarting in %.1fs …", name, exit_code, delay)
             publish(name, "RESTARTING", p.pid, state["restarts"], state["started"], exit_code)
             time.sleep(delay)
-            new_proc, started = spawn(state["fn"], name)
+            new_proc, started = spawn(_worker_entry, name, (state["module"],))
             state["proc"] = new_proc
             state["started"] = started
             state["next_restart"] = time.time() + delay

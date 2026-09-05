@@ -6,9 +6,10 @@ be imported directly. The endpoint returns field/row locations for every issue.
 """
 from __future__ import annotations
 
-import csv, io, json, os, uuid
+import csv, io, json, os, uuid, logging, zipfile
 from typing import Any
 from openpyxl import load_workbook
+from openpyxl.utils.exceptions import InvalidFileException
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +20,7 @@ from auth import require_permission, Principal
 from database import get_db
 from routes.cameras import _audit_state, _validate_coordinates, _validate_vendor_model
 from services.camera_import_intelligence import normalize_headers, analyze_row, summarize
+log = logging.getLogger("camera_imports")
 
 router = APIRouter(prefix="/camera-imports", tags=["camera-imports"])
 MAX_IMPORT_BYTES = 5 * 1024 * 1024
@@ -48,7 +50,7 @@ async def _analyze(file: UploadFile) -> dict:
         raise HTTPException(413, "Registry import exceeds the 5 MiB limit")
     try:
         rows, headers = _parse(raw, suffix)
-    except (UnicodeDecodeError, ValueError, OSError, KeyError, TypeError, IndexError) as exc:
+    except (UnicodeDecodeError, ValueError, OSError, KeyError, TypeError, IndexError, zipfile.BadZipFile, InvalidFileException, csv.Error) as exc:
         raise HTTPException(422, "Registry file could not be parsed or validated; upload a valid CSV/XLSX registry file.") from exc
     if not rows:
         raise HTTPException(422, "Registry file contains no data rows")
@@ -64,8 +66,14 @@ def _public_analysis(data: dict) -> dict:
 
 @router.post("/validate")
 async def validate_camera_import(file: UploadFile = File(...), _: Principal = Depends(require_permission("registry:admin"))):
-    data = await _analyze(file)
-    return _public_analysis(data)
+    try:
+        data = await _analyze(file)
+        return _public_analysis(data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.exception("Unexpected camera registry validation failure")
+        raise HTTPException(422, "Unable to validate this registry file. Check the file format and required headers.") from exc
 
 
 @router.post("/import", status_code=201)

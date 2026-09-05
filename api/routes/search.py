@@ -124,13 +124,18 @@ async def validate_person_photo(file: UploadFile = File(...), x_test_session_id:
     payload = await file.read()
     if not payload or len(payload) > 10 * 1024 * 1024: raise HTTPException(413, 'Image must be between 1 byte and 10 MB')
     try:
-        result = await _run_person_analysis(_prepare_face_image(payload), float(os.getenv('PERSON_INVESTIGATION_TIMEOUT', '20')), 'validate', session_uuid is not None)
+        prepared = _prepare_face_image(payload)
+    except Exception as exc:
+        raise HTTPException(422, 'The uploaded image could not be decoded or normalized') from exc
+    try:
+        result = await _run_person_analysis(prepared, float(os.getenv('PERSON_INVESTIGATION_TIMEOUT', '20')), 'validate', session_uuid is not None)
         if result.get('status') == 'error': raise HTTPException(503, 'Person analysis service unavailable')
         faces = result.get('faces') or []
         return {'valid': bool(faces), 'face_count': int(result.get('face_count', len(faces))), 'faces': faces, 'message': 'Face detected' if faces else 'No visible face detected'}
     except HTTPException: raise
     except TimeoutError as exc: raise HTTPException(503, 'Person analysis service unavailable') from exc
-    except Exception as exc: raise HTTPException(422, 'Unable to validate image') from exc
+    except HTTPException: raise
+    except Exception as exc: raise HTTPException(503, 'Person analysis service unavailable') from exc
 
 
 @router.post('/person/investigate', dependencies=[Depends(rate_limit('person-investigation-run', int(os.getenv('PERSON_SEARCH_RUN_RATE_LIMIT', '10')), int(os.getenv('PERSON_SEARCH_RUN_RATE_WINDOW', '300'))))])

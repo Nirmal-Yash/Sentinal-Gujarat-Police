@@ -20,7 +20,15 @@ CONFIRMED_STREAM = f"{PREFIX}anpr_confirmed" if TEST_MODE else os.getenv("ANPR_C
 RESET_STREAM = f"{PREFIX}cam_resets"
 CONFIRMED_KEY_PREFIX = f"{PREFIX}anpr_confirmed:"
 OUT_MAX = 5000
-_thresholds = yaml.safe_load(open(os.path.join(os.path.dirname(__file__), "thresholds.yaml"), encoding="utf-8"))["anpr"]
+_DEFAULT_THRESHOLDS = {"track_expiry_seconds":3.0,"ocr_cooldown_seconds":1.5,"vote_threshold":4,"vote_window_seconds":8.0,"track_min_age_seconds":1.5,"ocr_workers":4,"max_pending_jobs":20,"preprocessing":{"clahe_clip_limit":2.0,"clahe_grid_size":8,"unsharp_amount":0.35}}
+try:
+    with open(os.path.join(os.path.dirname(__file__), "thresholds.yaml"), encoding="utf-8") as handle:
+        _thresholds=(yaml.safe_load(handle) or {}).get("anpr") or {}
+except (OSError, yaml.YAMLError, TypeError):
+    log.exception("ANPR thresholds.yaml unavailable; using safe built-in defaults")
+    _thresholds={}
+_thresholds={**_DEFAULT_THRESHOLDS,**_thresholds}
+_thresholds["preprocessing"]={**_DEFAULT_THRESHOLDS["preprocessing"],**(_thresholds.get("preprocessing") or {})}
 TRACK_EXPIRY = max(1.0, float(os.getenv("ANPR_TRACK_EXPIRY_SECS", str(_thresholds["track_expiry_seconds"]))))
 OCR_INTERVAL = max(0.2, float(os.getenv("ANPR_OCR_INTERVAL_SECS", str(_thresholds["ocr_cooldown_seconds"]))))
 MIN_W = int(os.getenv("ANPR_MIN_VEHICLE_W", "80"))
