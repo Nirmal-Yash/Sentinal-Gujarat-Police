@@ -22,7 +22,7 @@ def runner(session_id: str):
             if not cap.isOpened(): raise RuntimeError(f"Cannot decode test source: {os.path.basename(source)}")
             width, height, source_fps = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)), cap.get(cv2.CAP_PROP_FPS)
             with conn.cursor() as cur: cur.execute("UPDATE test_session_feeds SET width=%s,height=%s,fps=%s WHERE session_id=%s::uuid AND stream_id=%s", (width or None,height or None,source_fps or None,session_id,stream_id))
-            publishers[stream_id] = subprocess.Popen([imageio_ffmpeg.get_ffmpeg_exe(),"-hide_banner","-loglevel","error","-re","-stream_loop","-1" if loop else "0","-i",source,"-map","0:v:0","-an","-c:v","libx264","-preset","veryfast","-tune","zerolatency","-f","rtsp","-rtsp_transport","tcp",f"{RTSP_BASE}/test/{session_id}/cam{stream_id}"], start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL))
+            publishers[stream_id] = subprocess.Popen([imageio_ffmpeg.get_ffmpeg_exe(),"-hide_banner","-loglevel","error","-re","-stream_loop","-1" if loop else "0","-i",source,"-map","0:v:0","-an","-c:v","libx264","-preset","ultrafast","-tune","zerolatency","-g","30","-keyint_min","30","-sc_threshold","0","-f","rtsp","-rtsp_transport","tcp",f"{RTSP_BASE}/test/{session_id}/cam{stream_id}"], start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
             feeds.append({"stream_id": stream_id,"cap": cap,"loop": loop,"next": 0.0,"pts": 0})
         client = redis.from_url(REDIS_URL, decode_responses=False)
         while running and feeds:
