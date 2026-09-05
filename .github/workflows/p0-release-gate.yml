@@ -60,3 +60,21 @@ jobs:
           SECRET_KEY: ci-signing-secret
           SNAPSHOT_TOKEN_SECRET: ci-snapshot-secret
         run: docker compose config -q
+      - name: Docker API startup smoke test
+        env:
+          POSTGRES_PASSWORD: ci-postgres-password
+          CCTV_EMAIL: ci@example.com
+          CCTV_PASSWORD: ci-cctv-password
+          SECRET_KEY: ci-signing-secret
+          SNAPSHOT_TOKEN_SECRET: ci-snapshot-secret
+        run: |
+          docker compose build api
+          docker compose run --rm --no-deps api python -c "import main"
+      - name: Docker ingestion import smoke test
+        env:
+          POSTGRES_PASSWORD: ci-postgres-password
+          CCTV_EMAIL: ci@example.com
+          CCTV_PASSWORD: ci-cctv-password
+        run: |
+          docker compose build ingestion
+          docker compose run --rm --no-deps ingestion python -c "import worker, catalogue_sync, stream_adapters, test_runner"
