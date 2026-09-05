@@ -140,7 +140,9 @@ services:
     deploy:
       resources:
         limits:
+          cpus: '2.0'
           memory: 2g
+
 
   test_person_investigation:
     build: ./ai_engine

@@ -135,7 +135,6 @@ async def validate_person_photo(file: UploadFile = File(...), x_test_session_id:
         if result.get('status') == 'error': raise HTTPException(503, 'Person analysis service unavailable')
         faces = result.get('faces') or []
         return {'valid': bool(faces), 'face_count': int(result.get('face_count', len(faces))), 'faces': faces, 'message': 'Face detected' if faces else 'No visible face detected'}
-    except HTTPException: raise
     except TimeoutError as exc: raise HTTPException(503, 'Person analysis service unavailable') from exc
     except HTTPException: raise
     except Exception as exc: raise HTTPException(503, 'Person analysis service unavailable') from exc

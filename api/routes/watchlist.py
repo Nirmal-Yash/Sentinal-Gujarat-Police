@@ -68,11 +68,20 @@ async def add_person_photo_to_watchlist(
             if raw:
                 result = json.loads(raw); break
             await asyncio.sleep(0.15)
-        if not result or result.get("status") != "ok":
+        if not result:
+            raise HTTPException(503, "Person analysis worker did not return a result")
+        if result.get("status") == "no_face":
             raise HTTPException(422, "No usable face was detected in the uploaded photo")
+        if result.get("status") != "ok":
+            raise HTTPException(503, "Person analysis worker failed to analyze the uploaded photo")
         if int(result.get("face_count", 0)) != 1 or len(result.get("embeddings", [])) != 1:
             raise HTTPException(422, "Exactly one visible face is required for a person watchlist entry")
-        embedding = np.frombuffer(base64.b64decode(result["embeddings"][0]), dtype=np.float32).copy()
+        try:
+            embedding = np.frombuffer(base64.b64decode(result["embeddings"][0]), dtype=np.float32).copy()
+        except (ValueError, TypeError, base64.binascii.Error) as exc:
+            raise HTTPException(503, "Person analysis worker returned an invalid embedding") from exc
+        if embedding.size != 512:
+            raise HTTPException(503, "Person analysis worker returned an incompatible face embedding")
         embedding /= np.linalg.norm(embedding) + 1e-9
         entry = WatchlistEntry(name=name.strip(), entity_type="person", description=description.strip(), plate_number=None, alert_priority=alert_priority.upper())
         db.add(entry); await db.flush()

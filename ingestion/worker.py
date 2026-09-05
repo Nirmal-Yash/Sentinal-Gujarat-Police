@@ -67,9 +67,9 @@ def test_mode_active():
 
 
 def stop_production_workers(procs):
+    """Stop only when the production service itself is shutting down."""
     for key, (_, proc) in list(procs.items()):
         if proc.is_alive():
-            log.info("Test mode active; stopping production ingestion worker %s", key[:8])
             proc.terminate()
             proc.join(timeout=3)
             if proc.is_alive():
