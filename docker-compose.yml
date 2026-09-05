@@ -242,7 +242,7 @@ services:
       - ALERT_COOLDOWN=${ALERT_COOLDOWN:-60}
       - CROSS_CAM_WINDOW=${CROSS_CAM_WINDOW:-300}
     volumes:
-      - evidence_data:/evidence
+      - test_evidence_data:/evidence
 
   api:
     build:
@@ -300,6 +300,8 @@ services:
       - MIGRATION_CONNECT_RETRY_DELAY=${MIGRATION_CONNECT_RETRY_DELAY:-2}
       - AI_HEALTH_PREFIX=${AI_HEALTH_PREFIX:-sentinel:ai:health:}
       - AI_HEALTH_STALE_SECS=${AI_HEALTH_STALE_SECS:-45}
+      - STARTUP_RETRIES=${STARTUP_RETRIES:-60}
+      - STARTUP_RETRY_DELAY=${STARTUP_RETRY_DELAY:-1}
       - DB_POOL_SIZE=${DB_POOL_SIZE:-20}
       - DB_MAX_OVERFLOW=${DB_MAX_OVERFLOW:-40}
       - DB_POOL_TIMEOUT=${DB_POOL_TIMEOUT:-15}
@@ -311,9 +313,9 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()\""]
       interval: 5s
-      timeout: 4s
-      retries: 20
-      start_period: 15s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
     volumes:
       - ./videos:/videos
       - test_videos:/test_videos
