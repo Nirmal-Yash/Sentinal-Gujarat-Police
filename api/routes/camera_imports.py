@@ -9,10 +9,10 @@ from __future__ import annotations
 import csv, io, json, os, uuid
 from typing import Any
 from openpyxl import load_workbook
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from pydantic import ValidationError
 from models import Camera, CameraCreate
 from auth import require_role, Principal
@@ -67,7 +67,9 @@ def _public_analysis(data: dict) -> dict:
 
 
 @router.post("/validate")
-async def validate_camera_import(file: UploadFile = File(...), _: Principal = Depends(require_role("ADMIN"))):
+async def validate_camera_import(file: UploadFile = File(...), _: Principal = Depends(require_role("ADMIN")), x_test_session_id: str | None = Header(None, alias="X-Test-Session-Id")):
+    if x_test_session_id:
+        raise HTTPException(409, "Camera Registry is production-only; use Test Feed management in Test Mode")
     data = await _analyze(file)
     return _public_analysis(data)
 
@@ -78,7 +80,10 @@ async def import_camera_registry(
     acknowledge_warnings: bool = Query(False),
     principal: Principal = Depends(require_role("ADMIN")),
     db: AsyncSession = Depends(get_db),
+    x_test_session_id: str | None = Header(None, alias="X-Test-Session-Id"),
 ):
+    if x_test_session_id:
+        raise HTTPException(409, "Camera Registry is production-only; use Test Feed management in Test Mode")
     data = await _analyze(file)
     summary = data["summary"]
     if not summary["allow_upload"]:
@@ -123,7 +128,7 @@ async def import_camera_registry(
                     "id": str(camera.id), "actor": principal.username, "action": action, "before": json.dumps(before),
                     "after": json.dumps({**_audit_state(camera), "import_id": str(import_id), "quality": analysis_row["status"]}), "correlation": str(import_id)})
             accepted += 1
-        except (ValidationError, ValueError, TypeError, IntegrityError) as exc:
+        except (ValidationError, ValueError, TypeError, IntegrityError, SQLAlchemyError) as exc:
             errors.append({"row": analysis_row["row"], "severity": "error", "field": "row", "message": str(exc)})
     rejected = summary["total_rows"] - accepted
     await db.execute(text("""UPDATE camera_imports SET accepted_rows=:accepted, rejected_rows=:rejected, errors=CAST(:errors AS jsonb), column_map=CAST(:column_map AS jsonb), status='completed', completed_at=NOW() WHERE id=CAST(:id AS uuid)"""), {"id": str(import_id), "accepted": accepted, "rejected": rejected, "errors": json.dumps(errors[:100]), "column_map": json.dumps(data["header_mapping"])})

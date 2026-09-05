@@ -1,5 +1,5 @@
 """Video-backed test mode. It is deliberately isolated from operational data."""
-import csv, io, mimetypes, os, signal, uuid
+import csv, io, mimetypes, os, signal, time, uuid
 from datetime import datetime
 from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -13,6 +13,15 @@ from database import get_db
 router = APIRouter(prefix="/test", tags=["test"])
 VIDEO_DIR, UPLOAD_DIR = Path(os.getenv("TEST_VIDEO_DIR", "/videos")), Path(os.getenv("TEST_UPLOAD_DIR", "/test_videos"))
 MAX_UPLOAD_BYTES = int(os.getenv("TEST_MAX_UPLOAD_BYTES", str(2 * 1024 * 1024 * 1024)))
+ASSET_CACHE_TTL = max(1.0, float(os.getenv("TEST_ASSET_CACHE_TTL", "3")))
+_ASSET_CACHE = None
+_ASSET_CACHE_AT = 0.0
+
+def _invalidate_asset_cache():
+    global _ASSET_CACHE, _ASSET_CACHE_AT
+    _ASSET_CACHE = None
+    _ASSET_CACHE_AT = 0.0
+
 ALLOWED_SUFFIXES = {".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v"}
 
 def enabled():
@@ -76,14 +85,32 @@ class TestSessionCreate(BaseModel):
 
 @router.get("/assets")
 async def list_assets(_: Principal = Depends(require_role("ADMIN")), db: AsyncSession = Depends(get_db)):
-    enabled(); VIDEO_DIR.mkdir(parents=True, exist_ok=True); UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    global _ASSET_CACHE, _ASSET_CACHE_AT
+    enabled()
+    now = time.monotonic()
+    if _ASSET_CACHE is not None and now - _ASSET_CACHE_AT < ASSET_CACHE_TTL:
+        return _ASSET_CACHE
+    VIDEO_DIR.mkdir(parents=True, exist_ok=True)
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     for root, kind in ((VIDEO_DIR, "bundled"), (UPLOAD_DIR, "upload")):
         for path in root.iterdir():
             if path.is_file() and path.suffix.lower() in ALLOWED_SUFFIXES:
-                try: await _register_asset(db, path, kind)
-                except HTTPException: continue
-    await db.commit(); rows = await db.execute(text("SELECT a.id,a.display_name,a.source_kind,a.width,a.height,a.fps,a.duration_seconds,a.size_bytes, EXISTS(SELECT 1 FROM test_session_feeds f WHERE f.asset_id=a.id) AS in_use FROM test_video_assets a ORDER BY a.source_kind,a.display_name"))
-    return [dict(row) for row in rows.mappings().all()]
+                try:
+                    await _register_asset(db, path, kind)
+                except (HTTPException, OSError):
+                    continue
+    await db.commit()
+    rows = await db.execute(text("""
+        SELECT a.id,a.display_name,a.source_kind,a.width,a.height,a.fps,a.duration_seconds,a.size_bytes,
+               EXISTS(SELECT 1 FROM test_session_feeds f WHERE f.asset_id=a.id) AS in_use
+        FROM test_video_assets a
+        WHERE a.is_test=TRUE
+        ORDER BY a.display_name
+    """))
+    _ASSET_CACHE = [dict(row) for row in rows.mappings().all()]
+    _ASSET_CACHE_AT = now
+    return _ASSET_CACHE
+
 
 @router.post("/feeds/upload", status_code=201)
 async def upload_feed(file: UploadFile = File(...), _: Principal = Depends(require_role("ADMIN")), db: AsyncSession = Depends(get_db)):
@@ -96,7 +123,7 @@ async def upload_feed(file: UploadFile = File(...), _: Principal = Depends(requi
                 written += len(chunk)
                 if written > MAX_UPLOAD_BYTES: raise HTTPException(413, "Video exceeds the configured test-upload limit")
                 output.write(chunk)
-        asset = await _register_asset(db, target, "upload"); await db.commit(); return asset
+        asset = await _register_asset(db, target, "upload"); await db.commit(); _invalidate_asset_cache(); return asset
     except Exception:
         target.unlink(missing_ok=True); raise
 
@@ -126,6 +153,7 @@ async def delete_asset(
         await _close_empty_session(ref["session_id"], db)
     await db.execute(text("DELETE FROM test_video_assets WHERE id=CAST(:id AS uuid)"), {"id":str(asset_id)})
     await db.commit()
+    _invalidate_asset_cache()
     return {"status":"removed","id":str(asset_id),"display_name":row["display_name"],"production_data_affected":False}
 
 
@@ -157,6 +185,7 @@ async def delete_session_feed(
     )
     session_closed = await _close_empty_session(session_id, db)
     await db.commit()
+    _invalidate_asset_cache()
     return {"status": "session_closed" if session_closed else "removed", "session_id": str(session_id), "stream_id": stream_id}
 
 
@@ -187,6 +216,7 @@ async def add_session_feed(
       "hls":f"/test-hls/test/{session_id}/cam{stream_id}/index.m3u8","loop":feed.loop,
       "width":asset["width"],"height":asset["height"],"fps":asset["fps"]})).mappings().one()
     await db.commit()
+    _invalidate_asset_cache()
     return {"id":str(row["id"]),"stream_id":row["stream_id"],"name":row["camera_label"],"hls_url":row["hls_path"],"is_test":True,"status":session["status"],"production_data_affected":False}
 
 
@@ -216,7 +246,65 @@ async def active_session(_: Principal = Depends(require_role("ADMIN")), db: Asyn
     row = (await db.execute(text("SELECT id,name,status,created_at FROM test_sessions WHERE status IN ('starting','active') ORDER BY created_at DESC LIMIT 1"))).mappings().first()
     return {**dict(row), "id": str(row["id"])} if row else None
 
-@router.get("/sessions/{session_id}/status")
+@router.get("/sessions/{session_id}/state")
+async def session_state(session_id: uuid.UUID, _: Principal = Depends(require_role("ADMIN")), db: AsyncSession = Depends(get_db)):
+    enabled()
+    session = (await db.execute(text("""
+        SELECT id,name,status,created_at,started_at,closed_at,frames_processed,error
+        FROM test_sessions WHERE id=CAST(:id AS uuid)
+    """), {"id": str(session_id)})).mappings().first()
+    if not session:
+        raise HTTPException(404, "Test session not found")
+    camera_rows = (await db.execute(text("""
+        SELECT f.id,f.stream_id,f.camera_label,f.hls_path,f.width,f.height,f.fps,s.status
+        FROM test_session_feeds f JOIN test_sessions s ON s.id=f.session_id
+        WHERE f.session_id=CAST(:id AS uuid) ORDER BY f.stream_id
+    """), {"id": str(session_id)})).mappings().all()
+    detection_rows = (await db.execute(text("""
+        SELECT id,stream_id,event_at,detection_type,plate_text,confidence,track_id,bbox
+        FROM test_detections WHERE session_id=CAST(:id AS uuid)
+        ORDER BY event_at DESC LIMIT 200
+    """), {"id": str(session_id)})).mappings().all()
+    alert_rows = (await db.execute(text("""
+        SELECT * FROM test_alerts WHERE session_id=CAST(:id AS uuid)
+        ORDER BY event_at DESC LIMIT 200
+    """), {"id": str(session_id)})).mappings().all()
+    cameras = [{
+        "id": f"test-{row['id']}",
+        "stream_id": row["stream_id"],
+        "name": row["camera_label"],
+        "location": "Isolated video test",
+        "hls_url": row["hls_path"],
+        "whep_url": "",
+        "stream_url": f"/api/test/sessions/{session_id}/feeds/{row['stream_id']}/video",
+        "codec": "H.264 (MediaMTX)",
+        "width": row["width"], "height": row["height"], "fps": row["fps"],
+        "effective_codec": "H.264 (MediaMTX)",
+        "effective_width": row["width"], "effective_height": row["height"],
+        "effective_fps": row["fps"],
+        "status": row["status"], "health_status": row["status"],
+        "connectivity_status": row["status"], "is_test": True
+    } for row in camera_rows]
+    alerts = [dict(row) for row in alert_rows]
+    detections = [dict(row) for row in detection_rows]
+    return {
+        "session": dict(session),
+        "cameras": cameras,
+        "detections": detections,
+        "alerts": alerts,
+        "counts": {
+            "total": len(alerts),
+            "unacknowledged": sum(1 for row in alerts if not row.get("acknowledged", False)),
+            "high": sum(1 for row in alerts if str(row.get("priority", "")).upper() == "HIGH"),
+            "medium": sum(1 for row in alerts if str(row.get("priority", "")).upper() == "MEDIUM"),
+            "low": sum(1 for row in alerts if str(row.get("priority", "")).upper() == "LOW"),
+        },
+        "pipeline": {"raw_frames": int(session["frames_processed"] or 0), "detections": len(detections)},
+        "production_data_affected": False,
+    }
+
+
+
 async def session_status(session_id: uuid.UUID, _: Principal = Depends(require_role("ADMIN")), db: AsyncSession = Depends(get_db)):
     enabled(); row = (await db.execute(text("""SELECT s.id,s.name,s.status,s.created_at,s.started_at,s.closed_at,s.frames_processed,s.error,(SELECT COUNT(*) FROM test_detections d WHERE d.session_id=s.id) detections,(SELECT COUNT(*) FROM test_alerts a WHERE a.session_id=s.id) alerts FROM test_sessions s WHERE s.id=CAST(:id AS uuid)"""), {"id": str(session_id)})).mappings().first()
     if not row: raise HTTPException(404, "Test session not found")

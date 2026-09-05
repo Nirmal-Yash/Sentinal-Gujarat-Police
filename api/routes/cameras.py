@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, UploadFile, File
 from fastapi.responses import Response
 from sqlalchemy import select, text, or_, String
 from sqlalchemy.exc import IntegrityError
@@ -107,8 +107,10 @@ async def list_cameras(
 
 @router.post("/", response_model=CameraOut, status_code=201)
 @router.post("/onboard", response_model=CameraOut, status_code=201)
-async def onboard_camera(body: CameraCreate, principal: Principal = Depends(require_role("ADMIN")), db: AsyncSession = Depends(get_db)):
-    """Manual/API Model-1 onboarding; catalogue sync remains the same owner for external sources."""
+async def onboard_camera(body: CameraCreate, principal: Principal = Depends(require_role("ADMIN")), db: AsyncSession = Depends(get_db), x_test_session_id: str | None = Header(None, alias="X-Test-Session-Id")):
+    """Manual/API Model-1 onboarding; production-only registry writes."""
+    if x_test_session_id:
+        raise HTTPException(409, "Camera Registry is production-only; use Test Feed management in Test Mode")
     _validate_coordinates(body)
     await _validate_vendor_model(body, db)
     if body.stream_id is not None and await db.scalar(select(Camera.id).where(Camera.stream_id == body.stream_id)):
@@ -133,9 +135,11 @@ async def onboard_camera(body: CameraCreate, principal: Principal = Depends(requ
 @router.post("/imports/csv", status_code=201)
 async def import_cameras_csv(
     file: UploadFile = File(...), principal: Principal = Depends(require_role("ADMIN")),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db), x_test_session_id: str | None = Header(None, alias="X-Test-Session-Id"),
 ):
-    """Controlled Model-1 bulk onboarding; invalid rows are reported, never dropped."""
+    """Controlled Model-1 bulk onboarding; production-only registry writes."""
+    if x_test_session_id:
+        raise HTTPException(409, "Camera Registry is production-only; use Test Feed management in Test Mode")
     suffix = os.path.splitext(file.filename or "")[1].lower()
     if suffix not in {".csv", ".xlsx"}:
         raise HTTPException(415, "Upload a CSV or XLSX registry file")

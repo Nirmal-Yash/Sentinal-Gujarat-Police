@@ -3,11 +3,13 @@ import { api } from '../api/client'
 
 const MAX_VIDEO_SIZE_BYTES = 200 * 1024 * 1024
 const TEST_SELECTION_KEY = 'sentinel.test.feed.selection.v1'
+const TEST_ASSETS_KEY = 'sentinel.test.feed.assets.v1'
+const readTestCache = key => { try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : [] } catch { return [] } }
 const bytes = n => n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`
 
 export default function TestDiagnosticsModal({ onClose, onStarted, manageOnly=false, testSessionId=null, onFeedAdded }) {
-  const [assets, setAssets] = useState([]), [selected, setSelected] = useState([]), [loop, setLoop] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState(''), [selectedFiles, setSelectedFiles] = useState([])
-  useEffect(() => { api.getTestAssets().then(rows => { setAssets(rows); try { const saved=JSON.parse(localStorage.getItem(TEST_SELECTION_KEY)||'[]'); const valid=saved.filter(id=>rows.some(asset=>String(asset.id)===String(id))).slice(0,8); setSelected(valid.length?valid:rows.slice(0,8).map(asset=>asset.id)); } catch { setSelected(rows.slice(0,8).map(asset=>asset.id)) } }).catch(error => setError(error.message)) }, [])
+  const [assets, setAssets] = useState(() => readTestCache(TEST_ASSETS_KEY)), [selected, setSelected] = useState([]), [loop, setLoop] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState(''), [selectedFiles, setSelectedFiles] = useState([])
+  useEffect(() => { api.getTestAssets().then(rows => { setAssets(rows); try { localStorage.setItem(TEST_ASSETS_KEY, JSON.stringify(rows)) } catch {} try { const saved=JSON.parse(localStorage.getItem(TEST_SELECTION_KEY)||'[]'); const valid=saved.filter(id=>rows.some(asset=>String(asset.id)===String(id))).slice(0,8); setSelected(valid.length?valid:rows.slice(0,8).map(asset=>asset.id)); } catch { setSelected(rows.slice(0,8).map(asset=>asset.id)) } }).catch(error => setError(error.message)) }, [])
   const upload = async event => {
     const files = Array.from(event.target.files || [])
     event.target.value = ''
@@ -31,7 +33,7 @@ export default function TestDiagnosticsModal({ onClose, onStarted, manageOnly=fa
   const addToLiveFeed = async asset => {
     if (!manageOnly || !testSessionId) return
     setBusy(true); setError('')
-    try { const added = await api.addTestFeed(testSessionId,{asset_id:asset.id,loop}); onFeedAdded?.(added); setAssets(current => current.map(item => item.id===asset.id ? {...item,in_use:true} : item)) }
+    try { const added = await api.addTestFeed(testSessionId,{asset_id:asset.id,loop}); onFeedAdded?.(added); setAssets(current => { const next=current.map(item => item.id===asset.id ? {...item,in_use:true} : item); try { localStorage.setItem(TEST_ASSETS_KEY,JSON.stringify(next)) } catch {} return next }) }
     catch (err) { setError(err.message || 'Could not add video to live Test Feed') }
     finally { setBusy(false) }
   }
@@ -40,7 +42,7 @@ export default function TestDiagnosticsModal({ onClose, onStarted, manageOnly=fa
     setBusy(true); setError('')
     try {
       await api.removeTestVideo(asset.id)
-      setAssets(current => current.filter(item => item.id !== asset.id))
+      setAssets(current => { const next=current.filter(item => item.id !== asset.id); try { localStorage.setItem(TEST_ASSETS_KEY,JSON.stringify(next)) } catch {} return next })
       setSelected(current => { const next=current.filter(id=>id!==asset.id); try { localStorage.setItem(TEST_SELECTION_KEY,JSON.stringify(next)) } catch {} return next })
     } catch (err) { setError(err.message || 'Video could not be removed') } finally { setBusy(false) }
   }

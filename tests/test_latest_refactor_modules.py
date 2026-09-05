@@ -22,6 +22,7 @@ def test_dashboard_api_client_exports_api_and_latest_test_feed_operations():
     assert re.search(r"export\s+const\s+api\s*=", source)
     assert "getAuthConfig:()=>req('/auth/config')" in source
     assert "getTestAssets:()=>req('/test/assets')" in source
+    assert "const testSession=activeTestSessionId()" not in source
     assert "removeTestVideo:" in source
     assert "removeTestFeed:" in source
     assert "addTestFeed:" in source
@@ -137,7 +138,8 @@ def test_latest_camera_player_avoids_snapshot_as_the_live_production_source():
 def test_test_session_header_and_exit_cleanup_follow_the_current_contract():
     client = read("dashboard/src/api/client.js")
     app = read("dashboard/src/App.jsx")
-    assert "'X-Test-Session-Id':testSession" in client
+    assert "'X-Test-Session-Id':testSession" not in client
+    assert "headers:session?{'X-Test-Session-Id':session}:{}" in client
     assert "sentinel_test_session" in app
     assert "await api.closeTestSession(sessionId)" in app
 
@@ -150,3 +152,31 @@ def test_expired_saved_session_does_not_present_as_an_api_outage():
 if __name__ == "__main__":
     import pytest
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+def test_camera_registry_is_production_only_and_xlsx_safe():
+    cameras = read("api/routes/cameras.py")
+    imports = read("api/routes/camera_imports.py")
+    assert "x_test_session_id" in cameras
+    assert "Camera Registry is production-only" in cameras
+    assert "text_value = str(value).strip()" in cameras
+    assert "x_test_session_id" in imports
+
+def test_person_validation_honors_test_session_isolation():
+    source = read("api/routes/search.py")
+    start = source.find("@router.post('/person/validate'")
+    end = source.find("@router.post('/person/investigate'", start)
+    block = source[start:end]
+    assert "X-Test-Session-Id" in block
+    assert "test_sessions" in block
+    assert "session_uuid is not None" in block
+
+def test_fast_test_state_endpoint_and_asset_cache_exist():
+    test = read("api/routes/test.py")
+    client = read("dashboard/src/api/client.js")
+    app = read("dashboard/src/App.jsx")
+    assert '@router.get("/sessions/{session_id}/state")' in test
+    assert "ASSET_CACHE_TTL" in test
+    assert "_invalidate_asset_cache" in test
+    assert "getTestState:id=>req" in client
+    assert "api.getTestState(testSession.id)" in app
+    assert "setInterval(refresh,2000)" in app

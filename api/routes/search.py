@@ -121,15 +121,21 @@ async def _run_person_analysis(payload: bytes, timeout: float, operation: str, t
 
 
 @router.post('/person/validate', dependencies=[Depends(rate_limit('person-investigation', int(os.getenv('PERSON_SEARCH_RATE_LIMIT', '20')), int(os.getenv('PERSON_SEARCH_RATE_WINDOW', '60'))))])
-async def validate_person_photo(file: UploadFile = File(...), principal: Principal = Depends(require_permission('search:read'))):
+async def validate_person_photo(file: UploadFile = File(...), x_test_session_id: str | None = Header(None, alias='X-Test-Session-Id'), principal: Principal = Depends(require_permission('search:read')), db: AsyncSession = Depends(get_db)):
     if not file.content_type or not file.content_type.startswith('image/'): raise HTTPException(415, 'Upload an image file')
     payload = await file.read()
     if not payload or len(payload) > 10 * 1024 * 1024: raise HTTPException(413, 'Image must be between 1 byte and 10 MB')
+    session_uuid = None
+    if x_test_session_id:
+        try: session_uuid = str(uuid.UUID(x_test_session_id))
+        except ValueError as exc: raise HTTPException(400, 'Invalid X-Test-Session-Id') from exc
+        if not await db.scalar(text("SELECT 1 FROM test_sessions WHERE id=CAST(:id AS uuid) AND status IN ('starting','active')"), {'id': session_uuid}):
+            raise HTTPException(404, 'Test session not active')
     try:
-        result = await _run_person_analysis(_prepare_face_image(payload), float(os.getenv('PERSON_INVESTIGATION_TIMEOUT', '20')), 'validate', False)
+        result = await _run_person_analysis(_prepare_face_image(payload), float(os.getenv('PERSON_VALIDATE_TIMEOUT', os.getenv('PERSON_INVESTIGATION_TIMEOUT', '20'))), 'validate', session_uuid is not None)
         if result.get('status') == 'error': raise HTTPException(503, 'Person analysis service unavailable')
         faces = result.get('faces') or []
-        return {'valid': bool(faces), 'face_count': int(result.get('face_count', len(faces))), 'faces': faces, 'message': 'Face detected' if faces else 'No visible face detected'}
+        return {'valid': bool(faces), 'face_count': int(result.get('face_count', len(faces))), 'faces': faces, 'message': 'Face detected' if faces else 'No visible face detected', 'session_id': session_uuid}
     except HTTPException: raise
     except TimeoutError as exc: raise HTTPException(503, 'Person analysis service unavailable') from exc
     except Exception as exc: raise HTTPException(422, 'Unable to validate image') from exc
