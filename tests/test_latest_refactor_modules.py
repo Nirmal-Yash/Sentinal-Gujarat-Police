@@ -56,6 +56,8 @@ def test_cctv_proxy_has_credentialed_cors_contract():
     assert "Access-Control-Allow-Origin" in source
     assert "Access-Control-Allow-Credentials" in source
     assert "Vary" in source
+    assert "await asyncio.to_thread(gateway.proxy_asset, asset_path)" in source
+    assert "await db.close()" in source
     assert '"*"' not in source[source.find("Access-Control-Allow-Origin") - 100: source.find("Access-Control-Allow-Origin") + 250]
 
 
@@ -138,6 +140,11 @@ def test_test_session_header_and_exit_cleanup_follow_the_current_contract():
     assert "'X-Test-Session-Id':testSession" in client
     assert "sentinel_test_session" in app
     assert "await api.closeTestSession(sessionId)" in app
+
+
+def test_expired_saved_session_does_not_present_as_an_api_outage():
+    source = read("dashboard/src/App.jsx")
+    assert "catch{if(active){writeAuthToken(null);setPrincipal(null);setAuthReady(true);setAuthError('')}}" in source
 
 
 if __name__ == "__main__":

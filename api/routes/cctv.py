@@ -1,6 +1,7 @@
 """Authenticated CCTV HLS proxy for cctv.corp8.cloud."""
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import time
@@ -167,12 +168,20 @@ async def proxy_cctv_asset(
         raise HTTPException(400, "Invalid CCTV asset path")
     camera_id = _camera_id(match.group(1))
     token = await _authorize_playback(request, camera_id, access_token, credentials, db)
+    # Authentication is the only database operation in this endpoint. Release
+    # its session before waiting on the external CCTV gateway; otherwise many
+    # slow manifest requests can exhaust the API pool and block unrelated work
+    # such as Test Mode video uploads.
+    await db.close()
 
     gateway = get_cctv_gateway()
     if not gateway.configured:
         raise HTTPException(503, "CCTV_PASSWORD is not configured on the server")
     try:
-        upstream = gateway.proxy_asset(asset_path)
+        # requests.Session is synchronous. Keep upstream CCTV latency out of
+        # FastAPI's event loop so health, authentication and other API routes
+        # stay responsive while a manifest request is in progress.
+        upstream = await asyncio.to_thread(gateway.proxy_asset, asset_path)
     except Exception as exc:
         raise HTTPException(502, f"CCTV upstream request failed: {exc}") from exc
 
