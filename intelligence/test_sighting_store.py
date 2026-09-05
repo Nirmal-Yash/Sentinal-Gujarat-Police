@@ -73,7 +73,7 @@ def persist(data: dict):
                 cur.execute("UPDATE test_tracks SET embedding=CAST(%s AS vector) WHERE session_id=%s::uuid AND global_track_id=%s", (_vector_literal(embedding), session_id, global_track))
             alert = None; watchlist_match = None
             if kind == "plate" and plate and _truthy(data, "plate_validated") and _truthy(data, "anpr_consensus"):
-                cur.execute("""SELECT id,name,description,alert_priority FROM watchlist
+                cur.execute("""SELECT id,name,description,alert_priority FROM test_watchlists
                     WHERE is_active=TRUE AND plate_number IS NOT NULL
                     AND regexp_replace(upper(plate_number),'[^A-Z0-9]','','g')=%s LIMIT 1""", (plate,))
                 watchlist_match = cur.fetchone()

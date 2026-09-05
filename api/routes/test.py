@@ -70,6 +70,13 @@ class TestFeed(BaseModel):
     camera_label: str = Field(default="", max_length=255)
     loop: bool = True
 
+class TestWatchlistCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    entity_type: str = Field(default="vehicle", pattern="^(person|vehicle)$")
+    description: str = ""
+    plate_number: str | None = None
+    alert_priority: str = "HIGH"
+
 class TestSessionCreate(BaseModel):
     name: str = Field(default="Video test session", min_length=1, max_length=255)
     cameras: list[TestFeed] = Field(min_length=1, max_length=8)
@@ -188,6 +195,63 @@ async def add_session_feed(
       "width":asset["width"],"height":asset["height"],"fps":asset["fps"]})).mappings().one()
     await db.commit()
     return {"id":str(row["id"]),"stream_id":row["stream_id"],"name":row["camera_label"],"hls_url":row["hls_path"],"is_test":True,"status":session["status"],"production_data_affected":False}
+
+
+async def _validate_test_session(session_id: uuid.UUID, db: AsyncSession):
+    row=(await db.execute(text("SELECT id,status FROM test_sessions WHERE id=CAST(:id AS uuid)"),{"id":str(session_id)})).mappings().first()
+    if not row: raise HTTPException(404,"Test session not found")
+    if row["status"] not in ("starting","active"): raise HTTPException(409,"Test session is not active")
+
+
+def _public_test_watchlist(row):
+    return {"id":str(row["id"]),"name":row["name"],"entity_type":row["entity_type"],"description":row["description"] or "","plate_number":row["plate_number"],"alert_priority":row["alert_priority"],"is_active":bool(row["is_active"]),"created_at":row["created_at"]}
+
+
+@router.get("/sessions/{session_id}/watchlist")
+async def list_test_watchlist(session_id:uuid.UUID,_:Principal=Depends(require_role("VIEWER")),db:AsyncSession=Depends(get_db)):
+    enabled(); await _validate_test_session(session_id,db)
+    rows=await db.execute(text("SELECT id,name,entity_type,description,plate_number,alert_priority,is_active,created_at FROM test_watchlists WHERE session_id=CAST(:session AS uuid) ORDER BY created_at DESC"),{"session":str(session_id)})
+    return [_public_test_watchlist(row) for row in rows.mappings().all()]
+
+
+@router.post("/sessions/{session_id}/watchlist",status_code=201)
+async def add_test_watchlist(session_id:uuid.UUID,body:TestWatchlistCreate,_:Principal=Depends(require_role("ADMIN")),db:AsyncSession=Depends(get_db)):
+    enabled(); await _validate_test_session(session_id,db)
+    plate=body.plate_number.strip() if body.plate_number else None
+    if body.entity_type=="vehicle" and not plate: raise HTTPException(422,"plate_number is required for a vehicle watchlist entry")
+    row=(await db.execute(text("""INSERT INTO test_watchlists(session_id,name,entity_type,description,plate_number,alert_priority,is_active)
+      VALUES(CAST(:session AS uuid),:name,:entity_type,:description,:plate,:priority,TRUE)
+      RETURNING id,name,entity_type,description,plate_number,alert_priority,is_active,created_at"""),{"session":str(session_id),"name":body.name.strip(),"entity_type":body.entity_type,"description":body.description.strip(),"plate":plate,"priority":body.alert_priority.upper()})).mappings().one()
+    await db.commit(); return {**_public_test_watchlist(row),"production_data_affected":False}
+
+
+@router.post("/sessions/{session_id}/watchlist/person-photo",status_code=201)
+async def add_test_person_watchlist_photo(session_id:uuid.UUID,name:str=Form(...,min_length=1,max_length=255),description:str=Form(""),alert_priority:str=Form("HIGH"),file:UploadFile=File(...),_:Principal=Depends(require_role("ADMIN")),db:AsyncSession=Depends(get_db)):
+    enabled(); await _validate_test_session(session_id,db)
+    if not file.content_type or not file.content_type.startswith("image/"): raise HTTPException(415,"Upload an image file")
+    payload=await file.read()
+    if not payload or len(payload)>10*1024*1024: raise HTTPException(413,"Image must be between 1 byte and 10 MB")
+    try:
+        from routes.search import _prepare_face_image, _run_person_analysis
+        result=await _run_person_analysis(_prepare_face_image(payload),float(os.getenv("PERSON_INVESTIGATION_TIMEOUT","20")),"validate",True)
+    except TimeoutError as exc: raise HTTPException(503,"Person analysis service unavailable") from exc
+    except Exception as exc: raise HTTPException(503,"Person analysis service unavailable") from exc
+    if result.get("status")=="error": raise HTTPException(503,"Person analysis service unavailable")
+    if result.get("face_count",0)!=1 or len(result.get("embeddings",[]))!=1: raise HTTPException(422,"Exactly one visible face is required for a person watchlist entry")
+    raw=base64.b64decode(result["embeddings"][0]); embedding=np.frombuffer(raw,dtype=np.float32).copy(); embedding/=np.linalg.norm(embedding)+1e-9
+    literal="["+",".join(str(float(x)) for x in embedding.tolist())+"]"
+    row=(await db.execute(text("""INSERT INTO test_watchlists(session_id,name,entity_type,description,plate_number,embedding,alert_priority,is_active)
+      VALUES(CAST(:session AS uuid),:name,'person',:description,NULL,CAST(:embedding AS vector),:priority,TRUE)
+      RETURNING id,name,entity_type,description,plate_number,alert_priority,is_active,created_at"""),{"session":str(session_id),"name":name.strip(),"description":description.strip(),"embedding":literal,"priority":alert_priority.upper()})).mappings().one()
+    await db.commit(); return {**_public_test_watchlist(row),"production_data_affected":False}
+
+
+@router.delete("/sessions/{session_id}/watchlist/{entry_id}")
+async def remove_test_watchlist(session_id:uuid.UUID,entry_id:uuid.UUID,_:Principal=Depends(require_role("ADMIN")),db:AsyncSession=Depends(get_db)):
+    enabled(); await _validate_test_session(session_id,db)
+    result=await db.execute(text("UPDATE test_watchlists SET is_active=FALSE WHERE id=CAST(:id AS uuid) AND session_id=CAST(:session AS uuid) RETURNING id"),{"id":str(entry_id),"session":str(session_id)})
+    if not result.mappings().first(): raise HTTPException(404,"Test watchlist entry not found")
+    await db.commit(); return {"status":"deactivated","production_data_affected":False}
 
 
 @router.post("/sessions", status_code=201)

@@ -47,7 +47,10 @@ async def search_plate(q: str = Query(..., min_length=1, max_length=100), x_test
         result = await db.execute(text('''SELECT s.id,s.camera_id AS cam_id,s.source_timestamp AS timestamp,s.normalized_plate AS plate_text,s.confidence,c.name AS cam_name,c.location,c.lat,c.lng,s.track_id,s.global_vehicle_id,s.journey_id
             FROM vehicle_sightings s JOIN cameras c ON c.id=s.camera_id WHERE s.normalized_plate=:plate ORDER BY s.source_timestamp DESC LIMIT :limit'''), {'plate': normalized, 'limit': limit})
         rows = [dict(r) for r in result.mappings().all()]
-    wl = await db.execute(text("SELECT id,name,description,alert_priority FROM watchlist WHERE regexp_replace(upper(COALESCE(plate_number,'')),'[^A-Z0-9]','','g')=:plate AND is_active=TRUE"), {'plate': normalized})
+    if x_test_session_id:
+        wl = await db.execute(text("SELECT id,name,description,alert_priority FROM test_watchlists WHERE session_id=CAST(:session AS uuid) AND regexp_replace(upper(COALESCE(plate_number,'')),'[^A-Z0-9]','','g')=:plate AND is_active=TRUE"), {'plate': normalized, 'session': session_uuid})
+    else:
+        wl = await db.execute(text("SELECT id,name,description,alert_priority FROM watchlist WHERE regexp_replace(upper(COALESCE(plate_number,'')),'[^A-Z0-9]','','g')=:plate AND is_active=TRUE"), {'plate': normalized})
     journeys = [] if x_test_session_id else [dict(r) for r in (await db.execute(text('SELECT j.id,j.started_at,j.ended_at,j.sighting_count,j.journey_confidence,j.status FROM vehicle_journeys j JOIN vehicle_identities v ON v.id=j.vehicle_identity_id WHERE v.normalized_plate=:plate ORDER BY j.started_at DESC LIMIT 20'), {'plate': normalized})).mappings().all()]
     return {'query': q, 'detections': rows, 'watchlist_hits': [dict(r) for r in wl.mappings().all()], 'journeys': journeys, 'session_id': x_test_session_id}
 
@@ -160,6 +163,11 @@ async def investigate_person(files: list[UploadFile] = File(...), x_test_session
     for encoded in all_embeddings:
         vector=np.frombuffer(base64.b64decode(encoded),dtype=np.float32).tolist();literal='['+','.join(str(float(v)) for v in vector)+']'
         if session_uuid:
+            watch_result=await db.execute(text('''SELECT id,name,entity_type,NULL AS first_camera_label,NULL AS last_camera_label,created_at AS first_seen_at,created_at AS last_seen_at,'[]'::jsonb AS sightings,
+                1-(embedding <=> CAST(:vector AS vector)) AS similarity
+                FROM test_watchlists WHERE session_id=CAST(:session AS uuid) AND entity_type='person' AND embedding IS NOT NULL AND is_active=TRUE
+                ORDER BY embedding <=> CAST(:vector AS vector) LIMIT 20'''), {'vector':literal,'session':session_uuid})
+            watch_rows=[dict(row) for row in watch_result.mappings().all()]
             result=await db.execute(text('''SELECT tt.id,tt.entity_type,tt.first_camera_label,tt.last_camera_label,tt.first_seen_at,tt.last_seen_at,tt.sightings,
                 1-(tt.embedding <=> CAST(:vector AS vector)) AS similarity
                 FROM test_tracks tt WHERE tt.session_id=CAST(:session AS uuid) AND tt.entity_type='face' AND tt.embedding IS NOT NULL
@@ -169,6 +177,7 @@ async def investigate_person(files: list[UploadFile] = File(...), x_test_session
                 1-(gt.embedding <=> CAST(:vector AS vector)) AS similarity
                 FROM global_tracks gt WHERE gt.entity_type='person' AND gt.embedding IS NOT NULL
                 ORDER BY gt.embedding <=> CAST(:vector AS vector) LIMIT 20'''), {'vector':literal})
+        matches.extend(watch_rows if session_uuid else [])
         matches.extend(dict(row) for row in result.mappings())
     grouped={}
     for match in matches:
