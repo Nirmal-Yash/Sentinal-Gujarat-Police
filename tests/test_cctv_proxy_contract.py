@@ -37,3 +37,20 @@ def test_catalogue_writes_processing_category_with_canonical_hls():
     catalogue = (ROOT / "ingestion" / "catalogue_sync.py").read_text(encoding="utf-8")
     assert 'processing_fps_category=EXCLUDED.processing_fps_category' in catalogue
     assert 'hls = f"/api/cctv/{canonical}/index.m3u8"' in catalogue
+def test_camera_registry_import_recognizes_processing_category_aliases():
+    source = (ROOT / "api" / "services" / "camera_import_intelligence.py").read_text(encoding="utf-8")
+    assert '"processing_category":"processing_fps_category"' in source
+    assert '"fps_category":"processing_fps_category"' in source
+    assert '"processing_fps":"processing_fps_category"' in source
+    assert '"processing_fps_category" in OPTIONAL_FIELDS' in source
+
+def test_camera_registry_processing_category_is_strictly_validated():
+    source = (ROOT / "api" / "models.py").read_text(encoding="utf-8")
+    assert 'Field(default="pedestrian", pattern="^(highway|pedestrian|static)$")' in source
+
+def test_camera_registry_ui_exposes_processing_category():
+    source = (ROOT / "dashboard" / "src" / "components" / "CameraRegistryModal.jsx").read_text(encoding="utf-8")
+    assert 'name="processing_fps_category"' in source
+    assert 'value="highway"' in source
+    assert 'value="pedestrian"' in source
+    assert 'value="static"' in source

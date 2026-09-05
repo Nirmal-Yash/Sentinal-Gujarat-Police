@@ -3,10 +3,10 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 from urllib.parse import urlparse
-CSV_ALIASES={"camera_id":"external_id","id":"external_id","camera_name":"name","camera":"name","latitude":"lat","longitude":"lng","lon":"lng","owner":"owner_organization","ownership":"owner_organization","rtsp":"rtsp_url","hls":"hls_url","source":"source_system"}
+CSV_ALIASES={"camera_id":"external_id","id":"external_id","camera_name":"name","camera":"name","latitude":"lat","longitude":"lng","lon":"lng","owner":"owner_organization","ownership":"owner_organization","rtsp":"rtsp_url","hls":"hls_url","source":"source_system","processing_category":"processing_fps_category","fps_category":"processing_fps_category","processing_fps":"processing_fps_category"}
 CORE_FIELDS={"name"}
 STREAM_FIELDS={"stream_id","rtsp_url","hls_url"}
-OPTIONAL_FIELDS={"location","department","owner_organization","lat","lng","source_system","external_id","storage_type","retention_days","analytics_capabilities","installation_date","ptz_capable","night_vision_capable","coord_source","coord_confidence","camera_type","protocol","vendor_id","model_id"}
+OPTIONAL_FIELDS={"location","department","owner_organization","lat","lng","source_system","external_id","storage_type","retention_days","analytics_capabilities","installation_date","ptz_capable","night_vision_capable","coord_source","coord_confidence","camera_type","protocol","vendor_id","model_id","processing_fps_category"}
 KNOWN_FIELDS=CORE_FIELDS|STREAM_FIELDS|OPTIONAL_FIELDS
 
 def normalize_header(value:Any)->str:return str(value or "").strip().lower().replace(" ","_").replace("-","_")
@@ -89,6 +89,13 @@ def analyze_row(row:dict[str,Any],row_number:int,header_mapping:dict[str,str])->
         if value:
             try:clean[field]=parse_bool(value)
             except ValueError:issues.append(issue("INVALID_BOOLEAN","warning",field,f"{field} must be true/false and will use the system default.",row_number))
+    category_raw = str(normalized.get("processing_fps_category") or "").strip().lower()
+    if category_raw:
+        aliases = {"highway": "highway", "pedestrian": "pedestrian", "static": "static", "high_way": "highway"}
+        if category_raw in aliases:
+            clean["processing_fps_category"] = aliases[category_raw]
+        else:
+            issues.append(issue("INVALID_PROCESSING_CATEGORY","warning","processing_fps_category","Processing category must be highway, pedestrian, or static; the system default will be used.",row_number))
     capabilities=str(normalized.get("analytics_capabilities") or "").strip()
     if capabilities:clean["analytics_capabilities"]=[x.strip() for x in capabilities.split("|") if x.strip()]
     errors=[i for i in issues if i["severity"]=="error"];status="blocked" if errors else "warning" if issues else "ready"
