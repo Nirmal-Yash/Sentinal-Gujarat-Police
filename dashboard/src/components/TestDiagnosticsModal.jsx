@@ -9,7 +9,7 @@ const bytes = n => n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${M
 
 export default function TestDiagnosticsModal({ onClose, onStarted, manageOnly=false, testSessionId=null, onFeedAdded }) {
   const [assets, setAssets] = useState(() => readTestCache(TEST_ASSETS_KEY)), [selected, setSelected] = useState([]), [loop, setLoop] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState(''), [selectedFiles, setSelectedFiles] = useState([])
-  useEffect(() => { api.getTestAssets().then(rows => { setAssets(rows); try { localStorage.setItem(TEST_ASSETS_KEY, JSON.stringify(rows)) } catch {} try { localStorage.setItem(TEST_ASSETS_KEY, JSON.stringify(rows)) } catch {} try { const saved=JSON.parse(localStorage.getItem(TEST_SELECTION_KEY)||'[]'); const valid=saved.filter(id=>rows.some(asset=>String(asset.id)===String(id))).slice(0,8); setSelected(valid.length?valid:rows.slice(0,8).map(asset=>asset.id)); } catch { setSelected(rows.slice(0,8).map(asset=>asset.id)) } }).catch(error => setError(error.message)) }, [])
+  useEffect(() => { api.getTestAssets().then(rows => { setAssets(rows); try { localStorage.setItem(TEST_ASSETS_KEY, JSON.stringify(rows)) } catch {} try { localStorage.setItem(TEST_ASSETS_KEY, JSON.stringify(rows)) } catch {} try { const saved=JSON.parse(localStorage.getItem(TEST_SELECTION_KEY)||'[]'); const valid=saved.filter(id=>rows.some(asset=>String(asset.id)===String(id))).slice(0,30); setSelected(valid.length?valid:rows.slice(0,8).map(asset=>asset.id)); } catch { setSelected(rows.slice(0,8).map(asset=>asset.id)) } }).catch(error => setError(error.message)) }, [])
   const upload = async event => {
     const files = Array.from(event.target.files || [])
     event.target.value = ''
@@ -25,7 +25,7 @@ export default function TestDiagnosticsModal({ onClose, onStarted, manageOnly=fa
       const uploaded = []
       for (const file of files) uploaded.push(await api.uploadTestVideo(file))
       setAssets(current => { const next=[...uploaded,...current.filter(item=>!uploaded.some(asset=>asset.id===item.id))]; try { localStorage.setItem(TEST_ASSETS_KEY,JSON.stringify(next)) } catch {} return next })
-      setSelected(current => { const next=[...new Set([...current,...uploaded.map(asset=>asset.id)])].slice(0,8); try { localStorage.setItem(TEST_SELECTION_KEY,JSON.stringify(next)) } catch {} return next })
+      setSelected(current => { const next=[...new Set([...current,...uploaded.map(asset=>asset.id)])].slice(0,30); try { localStorage.setItem(TEST_SELECTION_KEY,JSON.stringify(next)) } catch {} return next })
       setSelectedFiles([])
     } catch (err) { setError(err.message || 'Video upload failed') } finally { setBusy(false) }
   }
@@ -46,6 +46,7 @@ export default function TestDiagnosticsModal({ onClose, onStarted, manageOnly=fa
       setSelected(current => { const next=current.filter(id=>id!==asset.id); try { localStorage.setItem(TEST_SELECTION_KEY,JSON.stringify(next)) } catch {} return next })
     } catch (err) { setError(err.message || 'Video could not be removed') } finally { setBusy(false) }
   }
+  const runDemo = async () => { setBusy(true); setError(''); try { const session=await api.seedDemoTestSession(); onStarted(session); onClose() } catch(err){ setError(err.message||'Could not load demo scenario') } finally { setBusy(false) } }
   const run = async () => {
     if (manageOnly || !selected.length) return
     setBusy(true); setError('')
@@ -97,9 +98,9 @@ export default function TestDiagnosticsModal({ onClose, onStarted, manageOnly=fa
           {error && <p style={{color:'var(--red)',fontSize:12}} role="alert">{error}</p>}
         </main>
         <footer style={footer}>
-          <span style={{marginRight:'auto',color:'var(--text2)',fontSize:11}}>{selected.length}/8 feeds selected</span>
+          <span style={{marginRight:'auto',color:'var(--text2)',fontSize:11}}>{selected.length}/30 slots selected</span>
           <button type="button" onClick={onClose} style={secondary} disabled={busy}>Close</button>
-          {!manageOnly && <button type="button" disabled={busy || !selected.length} onClick={run} style={primary}>{busy ? 'Starting…' : 'Run test'}</button>}
+          {!manageOnly && <><button type="button" disabled={busy} onClick={runDemo} style={primary}>{busy ? 'Loading…' : 'Load demo scenario'}</button><button type="button" disabled={busy || !selected.length} onClick={run} style={secondary}>{busy ? 'Starting…' : 'Run selected'}</button></>}
         </footer>
       </section>
     </div>

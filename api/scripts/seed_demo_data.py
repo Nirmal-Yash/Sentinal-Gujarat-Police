@@ -7,8 +7,9 @@ from pathlib import Path
 import psycopg2
 
 ROOT=Path(__file__).resolve().parents[2]
-MANIFEST=ROOT/"test-data/test-camera-manifest.json"
-VIDEO_DIR=ROOT/"test-data/videos"
+DATA_ROOT=Path("/test-data") if Path("/test-data/test-camera-manifest.json").exists() else ROOT/"test-data"
+MANIFEST=DATA_ROOT/"test-camera-manifest.json"
+VIDEO_DIR=DATA_ROOT/"videos"
 SESSION_NAME="DEMO — Sentinel AI Feature Walkthrough"
 DB=os.getenv("DATABASE_URL","postgresql://sentinel:sentinel@localhost:5432/sentinel")
 

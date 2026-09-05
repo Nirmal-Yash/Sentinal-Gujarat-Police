@@ -249,6 +249,21 @@ async def create_session(body: TestSessionCreate, principal: Principal = Depends
     # restarted to run a test.
     await db.commit(); return {**dict(session), "id": session_id, "runner_pid": None, "production_data_affected": False}
 
+@router.post("/demo/seed", status_code=201)
+async def seed_demo(principal: Principal = Depends(require_role("ADMIN")), db: AsyncSession = Depends(get_db)):
+    enabled()
+    import subprocess, sys
+    command=[sys.executable, "/app/scripts/seed_demo_data.py"]
+    try:
+        result=await asyncio.to_thread(subprocess.run, command, check=True, capture_output=True, text=True, timeout=90)
+    except subprocess.CalledProcessError as exc:
+        raise HTTPException(500, f"Demo scenario seeding failed: {((exc.stderr or exc.stdout or 'unknown error').strip())[-1000:]}") from exc
+    except Exception as exc:
+        raise HTTPException(500, "Demo scenario seeding failed") from exc
+    row=(await db.execute(text("SELECT id,name,status,created_at FROM test_sessions WHERE name='DEMO — Sentinel AI Feature Walkthrough' ORDER BY created_at DESC LIMIT 1"))).mappings().first()
+    if not row: raise HTTPException(500, "Demo scenario was seeded but the Test session could not be loaded")
+    return {**dict(row), "id":str(row["id"]), "seeded_by":principal.username, "production_data_affected":False}
+
 @router.get("/sessions/active")
 async def active_session(_: Principal = Depends(require_role("ADMIN")), db: AsyncSession = Depends(get_db)):
     enabled(); await _close_orphaned_sessions(db); await db.commit()
