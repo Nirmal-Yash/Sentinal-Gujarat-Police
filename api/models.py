@@ -81,8 +81,9 @@ class CameraOut(BaseModel):
             safe_defaults={'name':'Camera','location':'','hls_url':'','whep_url':'','status':'unknown','health_status':'unknown','connectivity_status':'unknown','department':'Unassigned','owner_organization':'Unassigned','camera_type':'fixed','protocol':'rtsp','source_system':'','storage_type':'','analytics_capabilities':[],'maintenance_status':'unknown','coord_source':'unknown','department_source':'unknown','ptz_capable':False,'night_vision_capable':False,'processing_fps_category':'pedestrian','created_at':datetime.utcnow(),'updated_at':datetime.utcnow()}
             for field,default in safe_defaults.items():
                 if value.get(field) is None: value[field]=default
-            # Browser playback must use the authenticated same-origin CCTV HLS proxy.\n            value["hls_url"]=f"/api/cctv/{provider_id}/index.m3u8"
-            value["source_hls_url"]=f\"{os.getenv('CCTV_BASE_URL','https://cctv.corp8.cloud').rstrip('/')}/{provider_id}/index.m3u8\"
+            # Browser playback stays on the authenticated same-origin proxy.
+            value["hls_url"]=f"/api/cctv/{provider_id}/index.m3u8"
+            value["source_hls_url"]=f"{os.getenv('CCTV_BASE_URL','https://cctv.corp8.cloud').rstrip('/')}/{provider_id}/index.m3u8"
             if not value.get("rtsp_url"): value["rtsp_url"]=f"rtsp://{rtsp_host}:8554/stream/{provider_id}"
             value["stream_url"]=value["rtsp_url"]
             if not value.get("whep_url"): value["whep_url"]=f"http://{rtsp_host}:8889/stream/{provider_id}/whep"
