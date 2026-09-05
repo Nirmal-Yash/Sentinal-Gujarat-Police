@@ -74,6 +74,12 @@ async def login(body: Login, request: Request, response: Response, db: AsyncSess
                 {"username": username, "password_hash": password_hash, "role": bootstrap_role},
             )
         await db.commit()
+    bootstrap_username = os.getenv("BOOTSTRAP_ADMIN_USERNAME", "").strip()
+    bootstrap_password = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")
+    if bootstrap_username and bootstrap_password and username == bootstrap_username:
+        # The env-configured bootstrap account must never be blocked by stale demo lockout attempts.
+        await db.execute(text("DELETE FROM auth_attempts WHERE username=:username"), {"username": username})
+
     if await is_locked(username, request, db):
         await record_attempt(username, request, False, db)
         await db.commit()

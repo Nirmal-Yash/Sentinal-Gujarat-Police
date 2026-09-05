@@ -13,6 +13,7 @@ from database import get_db
 router = APIRouter(prefix="/test", tags=["test"])
 VIDEO_DIR, UPLOAD_DIR = Path(os.getenv("TEST_VIDEO_DIR", "/videos")), Path(os.getenv("TEST_UPLOAD_DIR", "/test_videos"))
 MAX_UPLOAD_BYTES = int(os.getenv("TEST_MAX_UPLOAD_BYTES", str(2 * 1024 * 1024 * 1024)))
+MAX_TEST_FEEDS = max(8, int(os.getenv("TEST_MAX_FEEDS", "30")))
 ASSET_CACHE_TTL = max(2.0, float(os.getenv("TEST_ASSET_CACHE_TTL", "10")))
 _ASSET_CACHE = None
 _ASSET_CACHE_AT = 0.0
@@ -81,7 +82,7 @@ class TestFeed(BaseModel):
 
 class TestSessionCreate(BaseModel):
     name: str = Field(default="Video test session", min_length=1, max_length=255)
-    cameras: list[TestFeed] = Field(min_length=1, max_length=8)
+    cameras: list[TestFeed] = Field(min_length=1, max_length=30)
 
 @router.get("/assets")
 async def list_assets(_: Principal = Depends(require_role("ADMIN")), db: AsyncSession = Depends(get_db)):
@@ -205,7 +206,7 @@ async def add_session_feed(
     duplicate = await db.scalar(text("SELECT 1 FROM test_session_feeds WHERE session_id=CAST(:session AS uuid) AND asset_id=CAST(:asset AS uuid)"), {"session": str(session_id), "asset": str(feed.asset_id)})
     if duplicate: raise HTTPException(409, "This video is already in the live Test Feed")
     count = await db.scalar(text("SELECT COUNT(*) FROM test_session_feeds WHERE session_id=CAST(:session AS uuid)"), {"session": str(session_id)})
-    if int(count or 0) >= 8: raise HTTPException(409, "A Test Mode session can contain at most 8 live feeds")
+    if int(count or 0) >= MAX_TEST_FEEDS: raise HTTPException(409, f"A Test Mode session can contain at most {MAX_TEST_FEEDS} live feeds")
     stream_id = int(await db.scalar(text("SELECT COALESCE(MAX(stream_id),0)+1 FROM test_session_feeds WHERE session_id=CAST(:session AS uuid)"), {"session": str(session_id)}) or 1)
     label = feed.camera_label.strip() or f"Test Camera {stream_id} — {asset['display_name']}"
     row = (await db.execute(text("""INSERT INTO test_session_feeds(session_id,asset_id,stream_id,camera_label,rtsp_path,hls_path,loop,width,height,fps)

@@ -69,6 +69,7 @@ services:
       - TEST_FEED_POLL_SECS=${TEST_FEED_POLL_SECS:-0.5}
     volumes:
       - ./videos:/videos
+      - ./test-data/videos:/test-data/videos:ro
       - test_videos:/test_videos
 
   ai_worker:
@@ -285,10 +286,11 @@ services:
       - FORCE_SECURITY_HEADERS=${FORCE_SECURITY_HEADERS:-false}
       - DB_SSL=${DB_SSL:-0}
       - TEST_ENDPOINT_ENABLED=true
-      - TEST_WATCHLIST_SEED_PLATES=${TEST_WATCHLIST_SEED_PLATES:-GXIOSGJ}
+      - TEST_WATCHLIST_SEED_PLATES=${TEST_WATCHLIST_SEED_PLATES:-GJ01AB1234,GJ05CD5678,GJ07XX9999}
       - TEST_ASSET_CACHE_TTL=${TEST_ASSET_CACHE_TTL:-10}
       - TEST_MAX_UPLOAD_BYTES=${TEST_MAX_UPLOAD_BYTES:-209715200}
-      - TEST_VIDEO_DIR=/videos
+      - TEST_VIDEO_DIR=/test-data/videos
+      - TEST_MAX_FEEDS=${TEST_MAX_FEEDS:-30}
       - TEST_UPLOAD_DIR=/test_videos
       - TEST_RTSP_BASE=rtsp://mediamtx:8554
       - TEST_HLS_BASE=/test-hls
