@@ -14,7 +14,7 @@ router = APIRouter(prefix="/test", tags=["test"])
 VIDEO_DIR, UPLOAD_DIR = Path(os.getenv("TEST_VIDEO_DIR", "/videos")), Path(os.getenv("TEST_UPLOAD_DIR", "/test_videos"))
 MAX_UPLOAD_BYTES = int(os.getenv("TEST_MAX_UPLOAD_BYTES", str(2 * 1024 * 1024 * 1024)))
 MAX_TEST_FEEDS = max(8, int(os.getenv("TEST_MAX_FEEDS", "30")))
-ASSET_CACHE_TTL = max(2.0, float(os.getenv("TEST_ASSET_CACHE_TTL", "10")))
+ASSET_CACHE_TTL = max(1.0, float(os.getenv("TEST_ASSET_CACHE_TTL", "5")))
 _ASSET_CACHE = None
 _ASSET_CACHE_AT = 0.0
 
@@ -91,24 +91,30 @@ async def list_assets(_: Principal = Depends(require_role("ADMIN")), db: AsyncSe
     now = time.monotonic()
     if _ASSET_CACHE is not None and now - _ASSET_CACHE_AT < ASSET_CACHE_TTL:
         return _ASSET_CACHE
-    VIDEO_DIR.mkdir(parents=True, exist_ok=True)
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    for root, kind in ((VIDEO_DIR, "bundled"), (UPLOAD_DIR, "upload")):
-        for path in root.iterdir():
-            if path.is_file() and path.suffix.lower() in ALLOWED_SUFFIXES:
-                try:
-                    await _register_asset(db, path, kind)
-                except (HTTPException, OSError):
-                    continue
-    await db.commit()
     rows = await db.execute(text("""
-        SELECT a.id,a.display_name,a.source_kind,a.width,a.height,a.fps,a.duration_seconds,a.size_bytes,
+        SELECT a.id,a.display_name,a.source_kind,a.storage_key,a.width,a.height,a.fps,a.duration_seconds,a.size_bytes,
                EXISTS(SELECT 1 FROM test_session_feeds f WHERE f.asset_id=a.id) AS in_use
         FROM test_video_assets a
         WHERE a.is_test=TRUE
         ORDER BY a.display_name
     """))
-    _ASSET_CACHE = [dict(row) for row in rows.mappings().all()]
+    known={str(row['storage_key']) for row in rows.mappings().all()}
+    VIDEO_DIR.mkdir(parents=True, exist_ok=True); UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    changed=False
+    for root,kind in ((VIDEO_DIR,'bundled'),(UPLOAD_DIR,'upload')):
+        for path in root.iterdir():
+            if path.is_file() and path.suffix.lower() in ALLOWED_SUFFIXES and str(path) not in known:
+                try: await _register_asset(db,path,kind); changed=True
+                except (HTTPException,OSError): continue
+    if changed: await db.commit()
+    rows = await db.execute(text("""
+        SELECT a.id,a.display_name,a.source_kind,a.storage_key,a.width,a.height,a.fps,a.duration_seconds,a.size_bytes,
+               EXISTS(SELECT 1 FROM test_session_feeds f WHERE f.asset_id=a.id) AS in_use
+        FROM test_video_assets a
+        WHERE a.is_test=TRUE
+        ORDER BY a.display_name
+    """))
+    _ASSET_CACHE = [{k:v for k,v in dict(row).items() if k != 'storage_key'} for row in rows.mappings().all()]
     _ASSET_CACHE_AT = now
     return _ASSET_CACHE
 

@@ -132,5 +132,9 @@ async def import_camera_registry(
             errors.append({"row": analysis_row["row"], "severity": "error", "field": "row", "message": str(exc)})
     rejected = summary["total_rows"] - accepted
     await db.execute(text("""UPDATE camera_imports SET accepted_rows=:accepted, rejected_rows=:rejected, errors=CAST(:errors AS jsonb), column_map=CAST(:column_map AS jsonb), status='completed', completed_at=NOW() WHERE id=CAST(:id AS uuid)"""), {"id": str(import_id), "accepted": accepted, "rejected": rejected, "errors": json.dumps(errors[:100]), "column_map": json.dumps(data["header_mapping"])})
-    await db.commit()
+    try:
+        await db.commit()
+    except SQLAlchemyError as exc:
+        await db.rollback()
+        raise HTTPException(500, "Camera registry import could not be committed; no partial registry write was accepted.") from exc
     return {"import_id": str(import_id), "total_rows": summary["total_rows"], "accepted_rows": accepted, "rejected_rows": rejected, "errors": errors[:100], "quality": summary}
