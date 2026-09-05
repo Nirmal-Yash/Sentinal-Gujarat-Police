@@ -55,6 +55,25 @@ async def config():
 @router.post('/login', dependencies=[Depends(rate_limit('auth-login', 5, 60))])
 async def login(body: Login, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     username = body.username.strip()
+    # Keep Docker-configured bootstrap credentials authoritative even if the
+    # asynchronous API startup bootstrap has not completed yet.
+    bootstrap_username = os.getenv("BOOTSTRAP_ADMIN_USERNAME", "").strip()
+    bootstrap_password = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")
+    bootstrap_role = os.getenv("BOOTSTRAP_ADMIN_ROLE", "SUPERADMIN").upper()
+    if bootstrap_username and bootstrap_password and username == bootstrap_username and bootstrap_role in {"ADMIN", "SUPERADMIN"}:
+        existing = await db.execute(text("SELECT id FROM users WHERE username=:username LIMIT 1"), {"username": username})
+        password_hash = hash_password(bootstrap_password)
+        if existing.scalar():
+            await db.execute(
+                text("UPDATE users SET password_hash=:password_hash,role=:role,is_active=TRUE WHERE username=:username"),
+                {"username": username, "password_hash": password_hash, "role": bootstrap_role},
+            )
+        else:
+            await db.execute(
+                text("INSERT INTO users(username,password_hash,role,is_active) VALUES(:username,:password_hash,:role,TRUE)"),
+                {"username": username, "password_hash": password_hash, "role": bootstrap_role},
+            )
+        await db.commit()
     if await is_locked(username, request, db):
         await record_attempt(username, request, False, db)
         await db.commit()
