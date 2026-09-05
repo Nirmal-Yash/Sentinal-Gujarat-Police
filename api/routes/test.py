@@ -234,7 +234,7 @@ async def add_test_person_watchlist_photo(session_id:uuid.UUID,name:str=Form(...
     if not payload or len(payload)>10*1024*1024: raise HTTPException(413,"Image must be between 1 byte and 10 MB")
     try:
         from routes.search import _prepare_face_image, _run_person_analysis
-        result=await _run_person_analysis(_prepare_face_image(payload),float(os.getenv("PERSON_INVESTIGATION_TIMEOUT","20")),"validate",True)
+        result=await _run_person_analysis(_prepare_face_image(payload),float(os.getenv("PERSON_INVESTIGATION_TIMEOUT","20")),"investigate",True)
     except TimeoutError as exc: raise HTTPException(503,"Person analysis service unavailable") from exc
     except Exception as exc: raise HTTPException(503,"Person analysis service unavailable") from exc
     if result.get("status")=="error": raise HTTPException(503,"Person analysis service unavailable")
