@@ -3,6 +3,7 @@
 import os, time, base64, uuid, logging
 import cv2, numpy as np, redis, easyocr
 from event_schema import detection_event
+from shared_models import get_ocr_reader
 from anpr_policy import PlateObservation, TrackANPRState, normalize_indian_plate, plate_is_valid, quality_score, should_run_ocr
 
 log = logging.getLogger("anpr_worker")
@@ -16,16 +17,23 @@ CONFIRMED_STREAM = f"{PREFIX}anpr_confirmed" if TEST_MODE else os.getenv("ANPR_C
 RESET_STREAM = f"{PREFIX}cam_resets"
 CONFIRMED_KEY_PREFIX = f"{PREFIX}anpr_confirmed:"
 OUT_MAX = 5000
-TRACK_EXPIRY = float(os.getenv("ANPR_TRACK_EXPIRY_SECS", "30"))
-OCR_INTERVAL = max(0.2, float(os.getenv("ANPR_OCR_INTERVAL_SECS", "0.8")))
+TRACK_EXPIRY = max(1.0, float(os.getenv("ANPR_TRACK_EXPIRY_SECS", str(_anpr_thresholds.get("track_expiry_seconds", 30.0)))))
+OCR_INTERVAL = max(0.2, float(os.getenv("ANPR_OCR_INTERVAL_SECS", str(_anpr_thresholds.get("ocr_cooldown_seconds", 0.8)))))
 MIN_W = int(os.getenv("ANPR_MIN_VEHICLE_W", "80"))
 MIN_H = int(os.getenv("ANPR_MIN_VEHICLE_H", "60"))
 OCR_CONF = float(os.getenv("ANPR_OCR_MIN_CONF", "0.35"))
-MIN_OBS = max(2, int(os.getenv("ANPR_VOTE_THRESHOLD", os.getenv("ANPR_CONFIRM_OBSERVATIONS", "2"))))
-VOTE_WINDOW = max(MIN_OBS, int(os.getenv("ANPR_VOTE_WINDOW_FRAMES", "12")))
+MIN_OBS = max(2, int(os.getenv("ANPR_VOTE_THRESHOLD", str(_anpr_thresholds.get("vote_threshold", 2)))))
+VOTE_WINDOW = max(MIN_OBS, int(os.getenv("ANPR_VOTE_WINDOW_FRAMES", str(_anpr_thresholds.get("vote_window_frames", 12)))))
 MAX_TRACKS = max(1, int(os.getenv("ANPR_MAX_CONCURRENT_TRACKS", "128")))
 MIN_PLATE_W = int(os.getenv("ANPR_MIN_PLATE_WIDTH", "45"))
 MIN_PLATE_H = int(os.getenv("ANPR_MIN_PLATE_HEIGHT", "15"))
+try:
+    import yaml
+    with open(os.path.join(os.path.dirname(__file__), "thresholds.yaml"), encoding="utf-8") as _threshold_file:
+        _thresholds = yaml.safe_load(_threshold_file) or {}
+    _anpr_thresholds = _thresholds.get("anpr", {})
+except Exception:
+    _anpr_thresholds = {}
 
 
 def _ensure_group(r):
@@ -98,7 +106,7 @@ def _bytes(data, key):
 def run():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [ANPR][%(levelname)s] %(message)s")
     gpu = os.getenv("ANPR_OCR_GPU", "false").lower() == "true"
-    reader = easyocr.Reader(["en"], gpu=gpu, verbose=False)
+    reader = get_ocr_reader() or easyocr.Reader(["en"], gpu=gpu, verbose=False)
     r = redis.from_url(REDIS_URL, decode_responses=False)
     _ensure_group(r)
     consumer = f"anpr-{uuid.uuid4().hex[:8]}"

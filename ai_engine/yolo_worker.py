@@ -6,6 +6,7 @@ import redis
 from ultralytics import YOLO
 from deep_sort_realtime.deepsort_tracker import DeepSort
 from event_schema import detection_event
+from shared_models import get_yolo_model
 
 log = logging.getLogger("yolo_worker")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
@@ -72,7 +73,7 @@ class WorkerState:
 def run():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [YOLO][%(levelname)s] %(message)s")
     log.info("Loading %s (infer_size=%s, skip=%s)", YOLO_MODEL, INFER_SIZE, FRAME_SKIP)
-    model = YOLO(YOLO_MODEL)
+    model = get_yolo_model() or YOLO(YOLO_MODEL)
     r = redis.from_url(REDIS_URL, decode_responses=False)
     consumer = f"yolo-{uuid.uuid4().hex[:8]}"
     _ensure_group(r, IN_STREAM, GROUP)

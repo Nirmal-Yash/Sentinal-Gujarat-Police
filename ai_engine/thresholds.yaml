@@ -1,0 +1,20 @@
+anpr:
+  vote_threshold: 4
+  vote_window_seconds: 8.0
+  track_min_age_seconds: 1.5
+  ocr_cooldown_seconds: 1.5
+  track_expiry_seconds: 3.0
+  min_plate_width: 40
+  min_plate_height: 12
+  max_pending_jobs: 20
+  ocr_workers: 4
+  preprocessing:
+    clahe_clip_limit: 2.0
+    clahe_grid_size: 8
+    unsharp_amount: 0.35
+
+face:
+  detection_confidence: 0.40
+
+vehicle:
+  detection_confidence: 0.40
