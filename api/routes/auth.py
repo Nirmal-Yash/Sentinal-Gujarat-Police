@@ -35,10 +35,21 @@ def set_auth_cookies(response: Response, access_token: str, access_expires, refr
 
 
 @router.get('/config')
-async def config(db: AsyncSession = Depends(get_db)):
-    admin_exists = bool(await db.scalar(text("SELECT 1 FROM users WHERE role IN ('ADMIN','SUPERADMIN') AND is_active=TRUE LIMIT 1")))
-    bootstrap_configured = bool(os.getenv('BOOTSTRAP_ADMIN_USERNAME','').strip() and os.getenv('BOOTSTRAP_ADMIN_PASSWORD',''))
-    return {'auth_required': AUTH_REQUIRED, 'test_enabled': os.getenv('TEST_ENDPOINT_ENABLED','true').lower() == 'true', 'session_persistent': True, 'access_token_minutes': int(os.getenv('ACCESS_TOKEN_EXPIRE_MINUTES','15')), 'refresh_token_hours': REFRESH_TOKEN_HOURS, 'bootstrap_admin_configured': bootstrap_configured, 'admin_available': admin_exists, 'login_available': (not AUTH_REQUIRED) or admin_exists}
+async def config():
+    """Unauthenticated bootstrap configuration; no database dependency."""
+    bootstrap_configured = bool(
+        os.getenv("BOOTSTRAP_ADMIN_USERNAME", "").strip()
+        and os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")
+    )
+    return {
+        "auth_required": AUTH_REQUIRED,
+        "test_enabled": os.getenv("TEST_ENDPOINT_ENABLED", "true").lower() == "true",
+        "session_persistent": True,
+        "access_token_minutes": int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15")),
+        "refresh_token_hours": REFRESH_TOKEN_HOURS,
+        "bootstrap_admin_configured": bootstrap_configured,
+        "login_available": True,
+    }
 
 @router.post('/login', dependencies=[Depends(rate_limit('auth-login', 5, 60))])
 async def login(body: Login, request: Request, response: Response, db: AsyncSession = Depends(get_db)):

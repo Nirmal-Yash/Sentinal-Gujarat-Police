@@ -5,7 +5,7 @@ const MAX_VIDEO_SIZE_BYTES = 200 * 1024 * 1024
 const TEST_SELECTION_KEY = 'sentinel.test.feed.selection.v1'
 const bytes = n => n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`
 
-export default function TestDiagnosticsModal({ onClose, onStarted, manageOnly=false }) {
+export default function TestDiagnosticsModal({ onClose, onStarted, manageOnly=false, testSessionId=null, onFeedAdded }) {
   const [assets, setAssets] = useState([]), [selected, setSelected] = useState([]), [loop, setLoop] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState(''), [selectedFiles, setSelectedFiles] = useState([])
   useEffect(() => { api.getTestAssets().then(rows => { setAssets(rows); try { const saved=JSON.parse(localStorage.getItem(TEST_SELECTION_KEY)||'[]'); const valid=saved.filter(id=>rows.some(asset=>String(asset.id)===String(id))).slice(0,8); setSelected(valid.length?valid:rows.slice(0,8).map(asset=>asset.id)); } catch { setSelected(rows.slice(0,8).map(asset=>asset.id)) } }).catch(error => setError(error.message)) }, [])
   const upload = async event => {
@@ -28,6 +28,13 @@ export default function TestDiagnosticsModal({ onClose, onStarted, manageOnly=fa
     } catch (err) { setError(err.message || 'Video upload failed') } finally { setBusy(false) }
   }
   const toggle = id => setSelected(current => { const next=current.includes(id)?current.filter(value=>value!==id):[...current,id].slice(0,8); try { localStorage.setItem(TEST_SELECTION_KEY,JSON.stringify(next)) } catch {} return next })
+  const addToLiveFeed = async asset => {
+    if (!manageOnly || !testSessionId) return
+    setBusy(true); setError('')
+    try { const added = await api.addTestFeed(testSessionId,{asset_id:asset.id,loop}); onFeedAdded?.(added); setAssets(current => current.map(item => item.id===asset.id ? {...item,in_use:true} : item)) }
+    catch (err) { setError(err.message || 'Could not add video to live Test Feed') }
+    finally { setBusy(false) }
+  }
   const removeAsset = async asset => {
         if (!window.confirm('Remove \u201c' + asset.display_name + '\u201d from Test Mode? This deletes the uploaded video permanently.')) return
     setBusy(true); setError('')
@@ -80,9 +87,7 @@ export default function TestDiagnosticsModal({ onClose, onStarted, manageOnly=fa
                   <b style={{display:'block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{asset.display_name}</b>
                   <small>Test Feed {asset.in_use ? '· In use by a test session' : ''} · {asset.width || '?'}×{asset.height || '?'} · {asset.fps ? `${Number(asset.fps).toFixed(1)} FPS` : 'FPS N/A'} · {bytes(asset.size_bytes || 0)}</small>
                 </span>
-                <button type="button" onClick={() => removeAsset(asset)} disabled={busy} style={removeButton} aria-label={`Remove ${asset.display_name}`}>
-                  {asset.in_use ? 'Remove (live)' : 'Remove'}
-                </button>
+                <span style={{display:'flex',gap:5,alignItems:'center',flex:'0 0 auto'}}>{manageOnly && testSessionId && !asset.in_use && <button type="button" onClick={() => addToLiveFeed(asset)} disabled={busy} style={addButton} aria-label={`Add ${asset.display_name} to live Test Feed`}>Add</button>}<button type="button" onClick={() => removeAsset(asset)} disabled={busy} style={removeButton} aria-label={`Remove ${asset.display_name}`}>{asset.in_use ? 'Remove (live)' : 'Remove'}</button></span>
               </div>
             ))}
           </div>
@@ -115,3 +120,5 @@ const primary = { ...secondary, border: 0, background: 'var(--accent)', color: '
 
 const removeButton = { flex:'0 0 auto', alignSelf:'center', padding:'6px 8px', borderRadius:5, border:'1px solid var(--border-strong)', background:'var(--surface)', color:'var(--text)', cursor:'pointer', fontSize:9, fontWeight:800 }
 const protectedBadge = { flex:'0 0 auto', alignSelf:'center', padding:'4px 7px', borderRadius:5, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text2)', fontSize:9, fontWeight:700 }
+
+const addButton = { flex:'0 0 auto', padding:'6px 8px', borderRadius:5, border:'1px solid var(--accent)', background:'var(--accent-soft)', color:'var(--text)', cursor:'pointer', fontSize:9, fontWeight:800 }

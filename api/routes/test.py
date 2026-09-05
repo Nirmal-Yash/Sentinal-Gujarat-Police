@@ -88,45 +88,26 @@ async def delete_asset(
     db: AsyncSession = Depends(get_db),
 ):
     enabled()
-    row = (await db.execute(text("""
-        SELECT id, storage_key, display_name
-        FROM test_video_assets
-        WHERE id=CAST(:id AS uuid)
-        FOR UPDATE
-    """), {"id": str(asset_id)})).mappings().first()
-    if not row:
-        raise HTTPException(404, "Test video not found")
-
-    refs = (await db.execute(text("""
-        SELECT f.session_id, f.stream_id
-        FROM test_session_feeds f
-        JOIN test_sessions s ON s.id=f.session_id
-        WHERE f.asset_id=CAST(:id AS uuid)
-          AND s.status IN ('starting','active')
-    """), {"id": str(asset_id)})).mappings().all()
-
-    import redis
-    client = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
-    for ref in refs:
-        client.setex(f"test:remove_feed:{ref['session_id']}:{ref['stream_id']}", 60, "1")
-
-    await db.execute(
-        text("DELETE FROM test_session_feeds WHERE asset_id=CAST(:id AS uuid)"),
-        {"id": str(asset_id)},
-    )
-    await db.execute(
-        text("DELETE FROM test_video_assets WHERE id=CAST(:id AS uuid)"),
-        {"id": str(asset_id)},
-    )
-    await db.commit()
-
+    row = (await db.execute(text("SELECT id,storage_key,display_name FROM test_video_assets WHERE id=CAST(:id AS uuid) FOR UPDATE"), {"id": str(asset_id)})).mappings().first()
+    if not row: raise HTTPException(404, "Test video not found")
     path = Path(row["storage_key"])
+    # Missing files are treated as already deleted; existing files must be removable before DB state changes.
     try:
         path.unlink(missing_ok=True)
     except OSError as exc:
-        raise HTTPException(500, "Test video metadata was removed but the video file could not be deleted") from exc
+        raise HTTPException(409, f"Test video cannot be permanently removed: {exc}") from exc
+    refs = (await db.execute(text("""SELECT f.session_id,f.stream_id FROM test_session_feeds f
+      JOIN test_sessions s ON s.id=f.session_id
+      WHERE f.asset_id=CAST(:id AS uuid) AND s.status IN ('starting','active')"""), {"id": str(asset_id)})).mappings().all()
+    import redis
+    client = redis.from_url(os.getenv("REDIS_URL","redis://localhost:6379"), decode_responses=True)
+    for ref in refs: client.setex(f"test:remove_feed:{ref['session_id']}:{ref['stream_id']}",60,"1")
+    await db.execute(text("DELETE FROM test_session_feeds WHERE asset_id=CAST(:id AS uuid)"), {"id":str(asset_id)})
+    await db.execute(text("DELETE FROM test_video_assets WHERE id=CAST(:id AS uuid)"), {"id":str(asset_id)})
+    await db.commit()
+    return {"status":"removed","id":str(asset_id),"display_name":row["display_name"],"production_data_affected":False}
 
-    return {"status": "removed", "id": str(asset_id), "display_name": row["display_name"]}
+
 
 
 @router.delete("/sessions/{session_id}/feeds/{stream_id}")
@@ -155,6 +136,36 @@ async def delete_session_feed(
     )
     await db.commit()
     return {"status": "removed", "session_id": str(session_id), "stream_id": stream_id}
+
+
+@router.post("/sessions/{session_id}/feeds", status_code=201)
+async def add_session_feed(
+    session_id: uuid.UUID,
+    feed: TestFeed,
+    _: Principal = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    enabled()
+    session = (await db.execute(text("SELECT id,status FROM test_sessions WHERE id=CAST(:id AS uuid) FOR UPDATE"), {"id": str(session_id)})).mappings().first()
+    if not session: raise HTTPException(404, "Test session not found")
+    if session["status"] not in ("starting", "active"): raise HTTPException(409, "Test session is not active")
+    asset = (await db.execute(text("SELECT * FROM test_video_assets WHERE id=CAST(:id AS uuid)"), {"id": str(feed.asset_id)})).mappings().first()
+    if not asset or not Path(asset["storage_key"]).is_file(): raise HTTPException(422, "Selected test video is unavailable")
+    duplicate = await db.scalar(text("SELECT 1 FROM test_session_feeds WHERE session_id=CAST(:session AS uuid) AND asset_id=CAST(:asset AS uuid)"), {"session": str(session_id), "asset": str(feed.asset_id)})
+    if duplicate: raise HTTPException(409, "This video is already in the live Test Feed")
+    count = await db.scalar(text("SELECT COUNT(*) FROM test_session_feeds WHERE session_id=CAST(:session AS uuid)"), {"session": str(session_id)})
+    if int(count or 0) >= 8: raise HTTPException(409, "A Test Mode session can contain at most 8 live feeds")
+    stream_id = int(await db.scalar(text("SELECT COALESCE(MAX(stream_id),0)+1 FROM test_session_feeds WHERE session_id=CAST(:session AS uuid)"), {"session": str(session_id)}) or 1)
+    label = feed.camera_label.strip() or f"Test Camera {stream_id} — {asset['display_name']}"
+    row = (await db.execute(text("""INSERT INTO test_session_feeds(session_id,asset_id,stream_id,camera_label,rtsp_path,hls_path,loop,width,height,fps)
+      VALUES(CAST(:session AS uuid),CAST(:asset AS uuid),:stream,:label,:rtsp,:hls,:loop,:width,:height,:fps)
+      RETURNING id,stream_id,camera_label,hls_path,width,height,fps"""), {
+      "session":str(session_id),"asset":str(feed.asset_id),"stream":stream_id,"label":label,
+      "rtsp":f"rtsp://mediamtx:8554/test/{session_id}/cam{stream_id}",
+      "hls":f"/test-hls/test/{session_id}/cam{stream_id}/index.m3u8","loop":feed.loop,
+      "width":asset["width"],"height":asset["height"],"fps":asset["fps"]})).mappings().one()
+    await db.commit()
+    return {"id":str(row["id"]),"stream_id":row["stream_id"],"name":row["camera_label"],"hls_url":row["hls_path"],"is_test":True,"status":session["status"],"production_data_affected":False}
 
 
 @router.post("/sessions", status_code=201)

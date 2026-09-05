@@ -307,7 +307,7 @@ services:
       retries: 20
       start_period: 15s
     volumes:
-      - ./videos:/videos:ro
+      - ./videos:/videos
       - test_videos:/test_videos
       - evidence_data:/evidence:ro
 
