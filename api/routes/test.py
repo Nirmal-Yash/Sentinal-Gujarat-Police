@@ -252,7 +252,18 @@ async def create_session(body: TestSessionCreate, principal: Principal = Depends
 async def active_session(_: Principal = Depends(require_role("ADMIN")), db: AsyncSession = Depends(get_db)):
     enabled(); await _close_orphaned_sessions(db); await db.commit()
     row = (await db.execute(text("SELECT id,name,status,created_at FROM test_sessions WHERE status IN ('starting','active') ORDER BY created_at DESC LIMIT 1"))).mappings().first()
-    return {**dict(row), "id": str(row["id"])} if row else None
+    if not row:
+        return None
+    seed_plates = [p.strip().upper() for p in os.getenv("TEST_WATCHLIST_SEED_PLATES", "GXIOSGJ").split(",") if p.strip()]
+    for seed_plate in seed_plates:
+        await db.execute(text("""INSERT INTO test_watchlist(session_id,name,entity_type,description,plate_number,alert_priority)
+          SELECT CAST(:session AS uuid),:name,'vehicle',:description,:plate,'HIGH'
+          WHERE NOT EXISTS (
+            SELECT 1 FROM test_watchlist WHERE session_id=CAST(:session AS uuid)
+              AND UPPER(COALESCE(plate_number,''))=UPPER(:plate) AND is_active=TRUE
+          )"""), {"session": str(row["id"]), "name": f"Test Watchlist — {seed_plate}", "description": "Seeded Test Mode plate watchlist entry", "plate": seed_plate})
+    await db.commit()
+    return {**dict(row), "id": str(row["id"])}
 
 @router.get("/sessions/{session_id}/state")
 async def session_state(session_id: uuid.UUID, _: Principal = Depends(require_role("ADMIN")), db: AsyncSession = Depends(get_db)):
