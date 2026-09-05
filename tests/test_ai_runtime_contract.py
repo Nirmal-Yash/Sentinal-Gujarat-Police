@@ -24,3 +24,19 @@ def test_ai_threshold_contract_and_dependency_are_present():
     assert "vote_threshold:" in thresholds
     assert "ocr_cooldown_seconds:" in thresholds
     assert "preprocessing:" in thresholds
+
+def test_anpr_policy_uses_time_window_and_track_age():
+    policy = (ROOT / "ai_engine" / "anpr_policy.py").read_text(encoding="utf-8")
+    assert "window_seconds" in policy
+    assert "first_seen_at" in policy
+    assert "min_track_age" in policy
+    assert "observed_at >= current - self.window_seconds" in policy
+
+def test_anpr_worker_bounds_ocr_work_and_preprocesses_plate_candidates():
+    worker = (ROOT / "ai_engine" / "anpr_worker.py").read_text(encoding="utf-8")
+    assert "ProcessPoolExecutor" in worker
+    assert "MAX_PENDING_JOBS" in worker
+    assert "pool.submit(_ocr_job, image_bytes)" in worker
+    assert "_preprocess_for_ocr" in worker
+    assert "TRACK_MIN_AGE" in worker
+    assert "VOTE_WINDOW_SECS" in worker
