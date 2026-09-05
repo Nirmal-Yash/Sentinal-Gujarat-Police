@@ -23,6 +23,7 @@ manager=read(Path("dashboard/src/components/cameraPlayerManager.js"))
 gateway=read(Path("api/services/cctv_gateway.py"))
 catalogue=read(Path("ingestion/catalogue_sync.py"))
 compose=read(Path("docker-compose.yml"))
+env_example=read(Path(".env.example"))
 
 check("FRAME_GATE_ENABLED" in ing and "np.mean(cv2.absdiff" in ing,"motion gating is implemented")
 check("ALIVE_KEY" in ing and "ALIVE_INTERVAL" in ing,"camera-alive telemetry is independent")
@@ -46,3 +47,9 @@ if fail:
     print(f"\n{len(fail)} gate(s) failed.")
     sys.exit(1)
 print("\nAll performance regression gates passed.")
+
+check("SOURCE_MAX_FPS" in ing and "CAMERA_ALIVE_KEY" in ing,"ingestion source and heartbeat controls are configurable")
+check("CCTV_EMAIL" in compose and "CCTV_PASSWORD" in compose,"API receives complete CCTV credentials")
+check("ANPR_VOTE_WINDOW_SECS" in compose and "ANPR_TRACK_MIN_AGE_SECS" in compose and "ANPR_OCR_WORKERS" in compose and "ANPR_MAX_PENDING_JOBS" in compose,"production ANPR runtime controls are exposed")
+check("ANPR_TEST_OCR_WORKERS" in compose and "ANPR_TEST_MAX_PENDING_JOBS" in compose,"test ANPR runtime controls are exposed")
+check("SOURCE_MAX_FPS=" in env_example and "CAMERA_ALIVE_KEY=" in env_example and "ANPR_OCR_WORKERS=" in env_example,".env.example documents runtime variables")
