@@ -1,0 +1,62 @@
+name: Sentinel Release Gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  repository-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Python test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+          pip install -r ai_engine/requirements.txt
+          pip install -r api/requirements.txt
+          pip install -r ingestion/requirements.txt
+          pip install -r intelligence/requirements.txt
+      - name: Run release contracts
+        run: |
+          python scripts/final_ci_gate.py
+          python scripts/final_integration_gate.py
+          python scripts/validate_refactor.py
+          python scripts/performance_regression.py
+          pytest -q tests/test_*_contract.py
+
+  dashboard-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dashboard dependencies
+        run: npm install --no-audit --no-fund
+      - name: Build dashboard
+        run: npm run build
+
+  compose-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Docker Compose configuration
+        env:
+          POSTGRES_PASSWORD: ci-postgres-password
+          CCTV_EMAIL: ci@example.com
+          CCTV_PASSWORD: ci-cctv-password
+          SECRET_KEY: ci-signing-secret
+          SNAPSHOT_TOKEN_SECRET: ci-snapshot-secret
+        run: docker compose config -q
