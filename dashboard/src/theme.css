@@ -522,3 +522,5 @@ html[data-theme="light"] .ui-button-default:hover { color: #140b04 !important; }
   margin:0 !important;
   transform:none !important;
 }
+
+.test-feed-add-button{position:absolute;right:18px;bottom:18px;z-index:20;width:46px;height:46px;display:grid;place-items:center;border:1px solid var(--accent-border);border-radius:12px;background:var(--accent);color:var(--on-accent);font-size:27px;font-weight:500;line-height:1;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.35)}.test-feed-add-button:hover,.test-feed-add-button:focus-visible{background:var(--accent-strong);color:var(--on-accent);border-color:var(--accent-strong);outline:none;box-shadow:0 0 0 3px var(--accent-soft),0 10px 28px rgba(0,0,0,.4)}

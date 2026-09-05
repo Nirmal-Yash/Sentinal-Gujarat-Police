@@ -67,7 +67,7 @@ services:
       - TEST_RTSP_BASE=rtsp://mediamtx:8554
       - TEST_SESSION_POLL_SECS=${TEST_SESSION_POLL_SECS:-2}
     volumes:
-      - ./videos:/videos:ro
+      - ./videos:/videos
       - test_videos:/test_videos
 
   ai_worker:

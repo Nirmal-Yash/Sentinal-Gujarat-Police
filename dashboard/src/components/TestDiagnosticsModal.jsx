@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react'
 import { api } from '../api/client'
 
 const MAX_VIDEO_SIZE_BYTES = 200 * 1024 * 1024
+const TEST_SELECTION_KEY = 'sentinel.test.feed.selection.v1'
 const bytes = n => n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`
 
 export default function TestDiagnosticsModal({ onClose, onStarted, manageOnly=false }) {
   const [assets, setAssets] = useState([]), [selected, setSelected] = useState([]), [loop, setLoop] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState(''), [selectedFiles, setSelectedFiles] = useState([])
-  useEffect(() => { api.getTestAssets().then(rows => { setAssets(rows); setSelected(rows.slice(0, 8).map(asset => asset.id)) }).catch(error => setError(error.message)) }, [])
+  useEffect(() => { api.getTestAssets().then(rows => { setAssets(rows); try { const saved=JSON.parse(localStorage.getItem(TEST_SELECTION_KEY)||'[]'); const valid=saved.filter(id=>rows.some(asset=>String(asset.id)===String(id))).slice(0,8); setSelected(valid.length?valid:rows.slice(0,8).map(asset=>asset.id)); } catch { setSelected(rows.slice(0,8).map(asset=>asset.id)) } }).catch(error => setError(error.message)) }, [])
   const upload = async event => {
     const files = Array.from(event.target.files || [])
     event.target.value = ''
@@ -22,20 +23,18 @@ export default function TestDiagnosticsModal({ onClose, onStarted, manageOnly=fa
       const uploaded = []
       for (const file of files) uploaded.push(await api.uploadTestVideo(file))
       setAssets(current => [...uploaded, ...current.filter(item => !uploaded.some(asset => asset.id === item.id))])
-      setSelected(current => [...new Set([...current, ...uploaded.map(asset => asset.id)])].slice(0, 8))
+      setSelected(current => { const next=[...new Set([...current,...uploaded.map(asset=>asset.id)])].slice(0,8); try { localStorage.setItem(TEST_SELECTION_KEY,JSON.stringify(next)) } catch {} return next })
       setSelectedFiles([])
     } catch (err) { setError(err.message || 'Video upload failed') } finally { setBusy(false) }
   }
-  const toggle = id => setSelected(current => current.includes(id) ? current.filter(value => value !== id) : [...current, id].slice(0, 8))
+  const toggle = id => setSelected(current => { const next=current.includes(id)?current.filter(value=>value!==id):[...current,id].slice(0,8); try { localStorage.setItem(TEST_SELECTION_KEY,JSON.stringify(next)) } catch {} return next })
   const removeAsset = async asset => {
-    if (asset.source_kind !== 'upload') return
-    if (asset.in_use) { setError('This video is already referenced by a test session and cannot be removed.'); return }
-    if (!window.confirm('Remove \u201c' + asset.display_name + '\u201d from Test Mode? This deletes the uploaded video permanently.')) return
+        if (!window.confirm('Remove \u201c' + asset.display_name + '\u201d from Test Mode? This deletes the uploaded video permanently.')) return
     setBusy(true); setError('')
     try {
       await api.removeTestVideo(asset.id)
       setAssets(current => current.filter(item => item.id !== asset.id))
-      setSelected(current => current.filter(id => id !== asset.id))
+      setSelected(current => { const next=current.filter(id=>id!==asset.id); try { localStorage.setItem(TEST_SELECTION_KEY,JSON.stringify(next)) } catch {} return next })
     } catch (err) { setError(err.message || 'Video could not be removed') } finally { setBusy(false) }
   }
   const run = async () => {
@@ -51,8 +50,8 @@ export default function TestDiagnosticsModal({ onClose, onStarted, manageOnly=fa
       <section style={modal}>
         <header style={header}>
           <div>
-            <b>{manageOnly ? 'Test Video Library' : 'Isolated video test mode'}</b>
-            <small style={sub}>{manageOnly ? 'Add or remove isolated test-feed videos. Production CCTV and data are unaffected.' : 'Uses only test streams, tables, and MediaMTX paths. Production CCTV is never read.'}</small>
+            <b>{manageOnly ? 'Test Feed Videos' : 'Isolated video test mode'}</b>
+            <small style={sub}>{manageOnly ? 'Existing Test Feed videos. Add new videos or remove unused videos.' : 'Select videos to create isolated Test Feeds. Production CCTV and data are unaffected.'}</small>
           </div>
           <button type="button" onClick={onClose} style={close} aria-label="Close">×</button>
         </header>
@@ -76,16 +75,16 @@ export default function TestDiagnosticsModal({ onClose, onStarted, manageOnly=fa
           <div style={assetGrid}>
             {assets.map(asset => (
               <div key={asset.id} style={{...assetCard, borderColor:selected.includes(asset.id)?'var(--accent)':'var(--border)'}}>
-                <input type="checkbox" checked={selected.includes(asset.id)} onChange={() => toggle(asset.id)} disabled={busy}/>
+                {!manageOnly && <input type="checkbox" checked={selected.includes(asset.id)} onChange={() => toggle(asset.id)} disabled={busy}/>} 
                 <span style={{minWidth:0,flex:1}}>
                   <b style={{display:'block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{asset.display_name}</b>
-                  <small>{asset.source_kind === 'upload' ? 'Uploaded' : 'Bundled'} {asset.in_use ? '· In use by a test session' : ''} · {asset.width || '?'}×{asset.height || '?'} · {asset.fps ? `${Number(asset.fps).toFixed(1)} FPS` : 'FPS N/A'} · {bytes(asset.size_bytes || 0)}</small>
+                  <small>Test Feed {asset.in_use ? '· In use by a test session' : ''} · {asset.width || '?'}×{asset.height || '?'} · {asset.fps ? `${Number(asset.fps).toFixed(1)} FPS` : 'FPS N/A'} · {bytes(asset.size_bytes || 0)}</small>
                 </span>
-                {asset.source_kind === 'upload' ? (
+                {true ? (
                   <button type="button" onClick={() => removeAsset(asset)} disabled={busy || asset.in_use} style={removeButton} aria-label={asset.in_use ? 'Video is in use' : `Remove ${asset.display_name}`}>
                     {asset.in_use ? 'In use' : 'Remove'}
                   </button>
-                ) : <span style={protectedBadge}>Bundled</span>}
+                }
               </div>
             ))}
           </div>

@@ -96,8 +96,6 @@ async def delete_asset(
     """), {"id": str(asset_id)})).mappings().first()
     if not row:
         raise HTTPException(404, "Test video not found")
-    if row["source_kind"] != "upload":
-        raise HTTPException(409, "Bundled test videos cannot be removed")
     referenced = await db.scalar(text("""
         SELECT EXISTS(
             SELECT 1 FROM test_session_feeds
