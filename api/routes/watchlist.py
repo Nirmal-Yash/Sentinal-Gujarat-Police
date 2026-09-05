@@ -24,11 +24,19 @@ async def _publish_watchlist_update(action: str, entry_id) -> None:
 
 @router.get("/", response_model=list[WatchlistOut])
 async def list_watchlist(active_only: bool = True, db: AsyncSession = Depends(get_db)):
-    q = select(WatchlistEntry).order_by(WatchlistEntry.created_at.desc())
-    if active_only:
-        q = q.where(WatchlistEntry.is_active == True)
-    result = await db.execute(q)
-    return result.scalars().all()
+    where = "WHERE is_active=TRUE" if active_only else ""
+    result = await db.execute(text(f"""SELECT
+        id,
+        COALESCE(name,'Unnamed') AS name,
+        COALESCE(entity_type,'person') AS entity_type,
+        COALESCE(description,'') AS description,
+        plate_number,
+        COALESCE(alert_priority,'HIGH') AS alert_priority,
+        COALESCE(is_active,TRUE) AS is_active,
+        COALESCE(created_at,NOW()) AS created_at
+      FROM watchlist {where}
+      ORDER BY created_at DESC"""))
+    return [dict(row) for row in result.mappings().all()]
 
 
 @router.post("/", response_model=WatchlistOut)
