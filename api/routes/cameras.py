@@ -21,14 +21,18 @@ def _validate_coordinates(body: CameraCreate):
 
 
 def _audit_state(camera: Camera | None):
+    """Serialize registry state independently of playback response validation."""
     if camera is None:
         return None
-    value = CameraOut.model_validate(camera).model_dump(mode="json")
-    for key in ("rtsp_url", "hls_url", "whep_url", "stream_url"):
-        value.pop(key, None)
-    return value
-
-
+    from sqlalchemy.inspection import inspect
+    excluded={"rtsp_url","hls_url","whep_url"}
+    state={}
+    for attr in inspect(camera).mapper.column_attrs:
+        if attr.key in excluded: continue
+        value=getattr(camera,attr.key,None)
+        if hasattr(value,"isoformat"): value=value.isoformat()
+        state[attr.key]=value
+    return json.loads(json.dumps(state,default=str))
 async def _validate_vendor_model(body: CameraCreate, db: AsyncSession):
     """Prevent a camera from referencing a model owned by another vendor."""
     if body.model_id and not body.vendor_id:

@@ -13,7 +13,7 @@ from database import get_db
 router = APIRouter(prefix="/test", tags=["test"])
 VIDEO_DIR, UPLOAD_DIR = Path(os.getenv("TEST_VIDEO_DIR", "/videos")), Path(os.getenv("TEST_UPLOAD_DIR", "/test_videos"))
 MAX_UPLOAD_BYTES = int(os.getenv("TEST_MAX_UPLOAD_BYTES", str(2 * 1024 * 1024 * 1024)))
-ASSET_CACHE_TTL = max(1.0, float(os.getenv("TEST_ASSET_CACHE_TTL", "3")))
+ASSET_CACHE_TTL = max(2.0, float(os.getenv("TEST_ASSET_CACHE_TTL", "10")))
 _ASSET_CACHE = None
 _ASSET_CACHE_AT = 0.0
 
@@ -263,11 +263,11 @@ async def session_state(session_id: uuid.UUID, _: Principal = Depends(require_ro
     detection_rows = (await db.execute(text("""
         SELECT id,stream_id,event_at,detection_type,plate_text,confidence,track_id,bbox
         FROM test_detections WHERE session_id=CAST(:id AS uuid)
-        ORDER BY event_at DESC LIMIT 200
+        ORDER BY event_at DESC LIMIT 100
     """), {"id": str(session_id)})).mappings().all()
     alert_rows = (await db.execute(text("""
         SELECT * FROM test_alerts WHERE session_id=CAST(:id AS uuid)
-        ORDER BY event_at DESC LIMIT 200
+        ORDER BY event_at DESC LIMIT 100
     """), {"id": str(session_id)})).mappings().all()
     cameras = [{
         "id": f"test-{row['id']}",

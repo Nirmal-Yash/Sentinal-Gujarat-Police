@@ -62,7 +62,7 @@ class CameraOut(BaseModel):
     codec:Optional[str]; width:Optional[int]; height:Optional[int]; fps:Optional[float]; effective_codec:Optional[str]; effective_width:Optional[int]; effective_height:Optional[int]; effective_fps:Optional[float]
     status:str; health_status:str; connectivity_status:str; department:str; owner_organization:str; camera_type:str; protocol:str; source_system:str; storage_type:str; retention_days:Optional[int]
     analytics_capabilities:Any; maintenance_status:str; observed_at:Optional[datetime]; last_frame_at:Optional[datetime]; observed_source_fps:Optional[float]; observed_decode_fps:Optional[float]; observed_published_fps:Optional[float]
-    external_id:Optional[str]; installation_date:Optional[date]; ptz_capable:bool; night_vision_capable:bool; coord_source:str; coord_confidence:Optional[float]; department_source:str; department_confidence:Optional[float]; vendor_id:Optional[uuid.UUID]; model_id:Optional[uuid.UUID]; processing_fps_category:str; created_at:datetime; updated_at:datetime
+    external_id:Optional[str]; installation_date:Optional[date]; ptz_capable:bool; night_vision_capable:bool; coord_source:str; coord_confidence:Optional[float]; department_source:str; department_confidence:Optional[float]; vendor_id:Optional[uuid.UUID]; model_id:Optional[uuid.UUID]; processing_fps_category:str; created_at:datetime; updated_at:datetime; source_hls_url:Optional[str]=None
 
     @model_validator(mode="before")
     @classmethod
@@ -78,7 +78,11 @@ class CameraOut(BaseModel):
             rtsp_host=os.getenv("RTSP_HOST_IP","103.250.160.189")
             if isinstance(value,dict): value=dict(value)
             else: value={name:getattr(value,name) for name in cls.model_fields if hasattr(value,name)}
+            safe_defaults={'name':'Camera','location':'','hls_url':'','whep_url':'','status':'unknown','health_status':'unknown','connectivity_status':'unknown','department':'Unassigned','owner_organization':'Unassigned','camera_type':'fixed','protocol':'rtsp','source_system':'','storage_type':'','analytics_capabilities':[],'maintenance_status':'unknown','coord_source':'unknown','department_source':'unknown','ptz_capable':False,'night_vision_capable':False,'processing_fps_category':'pedestrian','created_at':datetime.utcnow(),'updated_at':datetime.utcnow()}
+            for field,default in safe_defaults.items():
+                if value.get(field) is None: value[field]=default
             # Browser playback must use the authenticated same-origin CCTV HLS proxy.\n            value["hls_url"]=f"/api/cctv/{provider_id}/index.m3u8"
+            value["source_hls_url"]=f\"{os.getenv('CCTV_BASE_URL','https://cctv.corp8.cloud').rstrip('/')}/{provider_id}/index.m3u8\"
             if not value.get("rtsp_url"): value["rtsp_url"]=f"rtsp://{rtsp_host}:8554/stream/{provider_id}"
             value["stream_url"]=value["rtsp_url"]
             if not value.get("whep_url"): value["whep_url"]=f"http://{rtsp_host}:8889/stream/{provider_id}/whep"

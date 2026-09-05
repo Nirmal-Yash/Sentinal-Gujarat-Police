@@ -5,19 +5,19 @@ import { useCameraPlayerSlot } from './cameraPlayerManager'
 
 const MAX_PLAYERS = 12
 
+const CCTV_SOURCE_BASE=(import.meta.env.VITE_CCTV_BASE_URL||'https://cctv.corp8.cloud').replace(/\/$/,'')
 const paddedId = cam => String(cam?.stream_id || cam?.id || '?').replace(/^cam/i, '').padStart(2, '0')
 const streamAspect = cam => { const w=Number(cam?.effective_width ?? cam?.width), h=Number(cam?.effective_height ?? cam?.height); return w>0&&h>0?w/h:16/9 }
 const playbackSources = cam => {
   const id=paddedId(cam)
   if(cam?.is_test && cam?.stream_url){
     const match=String(cam.stream_url).match(/\/api\/test\/sessions\/([^/]+)\/feeds\/([^/]+)\/video/)
-    if(match) return {hls:`/test-hls/test/${match[1]}/cam${match[2]}/index.m3u8`}
+    if(match) return {hls:`/test-hls/test/${match[1]}/cam${match[2]}/index.m3u8`,fallback:cam.stream_url}
   }
-  const configured=String(cam?.hls_url||'').split('?')[0]
-  const hls=configured.startsWith('/api/cctv/') || configured.startsWith('/test-hls/')
-    ? configured
-    : `/api/cctv/cam${id}/index.m3u8`
-  return {hls}
+  const proxy=`/api/cctv/cam${id}/index.m3u8`
+  const configured=String(cam?.source_hls_url||cam?.hls_url||'').split('?')[0]
+  const hls=configured.startsWith('http://')||configured.startsWith('https://') ? configured : CCTV_SOURCE_BASE+`/cam${id}/index.m3u8`
+  return {hls,fallback:hls===proxy?null:proxy}
 }
 
 const HLS_CONFIG={
@@ -30,70 +30,19 @@ const HLS_CONFIG={
 }
 
 function LivePlayer({cam,muted=true,onLiveStatus,onAspectChange,fit='contain'}){
-  const videoRef=useRef(null),hlsRef=useRef(null),snapshotRef=useRef(null),sourceRef=useRef(null),loadSnapshotRef=useRef(null),recoveryRef=useRef({media:false,network:false})
-  const [state,setState]=useState('LOADING'),[snapshot,setSnapshot]=useState(null),[live,setLive]=useState(false)
-  const requestedSourceUrl=playbackSources(cam).hls
-  const [sourceUrl,setSourceUrl]=useState(requestedSourceUrl)
-  const cameraId=cam?.id
-  const replaceSnapshot=useCallback(url=>{setSnapshot(prev=>{if(prev && prev!==url && prev.startsWith('blob:'))URL.revokeObjectURL(prev);snapshotRef.current=url;return url})},[])
-  const loadSnapshot=useCallback(async()=>{if(!cameraId)return;try{const r=await fetch(`/api/cameras/${cameraId}/snapshot?t=${Date.now()}`,{credentials:'include',cache:'no-store'});if(r.ok)replaceSnapshot(URL.createObjectURL(await r.blob()))}catch{}},[cameraId,replaceSnapshot])
-  loadSnapshotRef.current=loadSnapshot
-  useEffect(()=>{sourceRef.current=requestedSourceUrl;setSourceUrl(requestedSourceUrl)},[requestedSourceUrl])
-
-  // HLS is deliberately controlled by the source URL only. Playback state and
-  // UI callbacks must never tear down a live manifest request.
-  useEffect(()=>{
-    const video=videoRef.current
-    if(!video || !sourceUrl)return
-    sourceRef.current=sourceUrl; recoveryRef.current={media:false,network:false}; setState('LOADING')
-    const restartAfterFatalError=()=>{
-      const retrySource=sourceRef.current
-      setLive(false);setState('ERROR')
-      if(!retrySource?.startsWith('/test-hls/'))loadSnapshotRef.current?.()
-      setSourceUrl(null)
-      window.setTimeout(()=>setSourceUrl(retrySource),0)
-    }
-    if(Hls.isSupported()){
-      const hls=new Hls(HLS_CONFIG)
-      hlsRef.current=hls
-      hls.loadSource(sourceUrl);hls.attachMedia(video)
-      hls.on(Hls.Events.MANIFEST_PARSED,()=>{recoveryRef.current={media:false,network:false};video.play().catch(()=>{})})
-      hls.on(Hls.Events.ERROR,(_,data)=>{
-        if(!data.fatal)return
-        if(data.type===Hls.ErrorTypes.MEDIA_ERROR&&!recoveryRef.current.media){try{recoveryRef.current.media=true;hls.recoverMediaError();return}catch{}}
-        if(data.type===Hls.ErrorTypes.NETWORK_ERROR&&!recoveryRef.current.network){try{recoveryRef.current.network=true;hls.startLoad();return}catch{}}
-        restartAfterFatalError()
-      })
-    }else if(video.canPlayType('application/vnd.apple.mpegurl')){
-      video.src=sourceUrl;video.play().catch(()=>{})
-    }else setState('ERROR')
-    return ()=>{
-      if(hlsRef.current){hlsRef.current.destroy();hlsRef.current=null}
-      if(!Hls.isSupported()){video.removeAttribute('src');video.load()}
-    }
-  },[sourceUrl])
-  useEffect(()=>{
-    const video=videoRef.current;if(!video)return undefined
-    const playing=()=>{setLive(true);setState('ACTIVE')}
-    const waiting=()=>setLive(false)
-    const paused=()=>setLive(false)
-    video.addEventListener('playing',playing);video.addEventListener('waiting',waiting);video.addEventListener('pause',paused)
-    return ()=>{video.removeEventListener('playing',playing);video.removeEventListener('waiting',waiting);video.removeEventListener('pause',paused)}
-  },[])
-  useEffect(()=>{return ()=>{const current=snapshotRef.current;if(current?.startsWith('blob:'))URL.revokeObjectURL(current)}},[])
+  const videoRef=useRef(null),hlsRef=useRef(null),fallbackRef=useRef(null),liveRef=useRef(false),sources=playbackSources(cam)
+  const [mode,setMode]=useState('hls'),[snapshot,setSnapshot]=useState(null),[live,setLive]=useState(false),[buffering,setBuffering]=useState(true)
+  const cleanup=useCallback(()=>{clearTimeout(fallbackRef.current);hlsRef.current?.destroy();hlsRef.current=null},[])
+  const markPlaying=useCallback(()=>{clearTimeout(fallbackRef.current);liveRef.current=true;setLive(true);setBuffering(false)},[])
+  const fallbackToSource=useCallback(from=>{clearTimeout(fallbackRef.current);hlsRef.current?.destroy();hlsRef.current=null;if(from==='hls'&&sources.fallback){setMode('stream');setBuffering(true)}else{setMode('snapshot');setBuffering(false);liveRef.current=false;setLive(false)}},[sources.fallback])
+  useEffect(()=>{cleanup();setMode('hls');setLive(false);liveRef.current=false;setBuffering(true)},[cam.id,sources.hls,sources.fallback,cleanup])
+  useEffect(()=>{let cancelled=false,objectUrl=null;const load=async()=>{if(cam.is_test)return;try{const r=await fetch('/api/cameras/'+cam.id+'/snapshot?t='+Date.now(),{credentials:'include',cache:'no-store'});if(!r.ok)return;const b=await r.blob();objectUrl=URL.createObjectURL(b);if(!cancelled)setSnapshot(objectUrl);else URL.revokeObjectURL(objectUrl)}catch{}};load();const timer=setInterval(()=>{if(!liveRef.current)load()},5000);return()=>{cancelled=true;clearInterval(timer);if(objectUrl)URL.revokeObjectURL(objectUrl)}},[cam.id,cam.is_test])
+  useEffect(()=>{if(mode!=='hls'||!sources.hls)return;const v=videoRef.current;fallbackRef.current=setTimeout(()=>fallbackToSource('hls'),9000);if(Hls.isSupported()){const h=new Hls({lowLatencyMode:true,backBufferLength:8,maxBufferLength:8,maxMaxBufferLength:16,liveSyncDurationCount:2,liveMaxLatencyDurationCount:4,manifestLoadingTimeOut:7000,manifestLoadingMaxRetry:2,manifestLoadingRetryDelay:500,levelLoadingTimeOut:7000,levelLoadingMaxRetry:2,levelLoadingRetryDelay:500,fragLoadingTimeOut:12000,fragLoadingMaxRetry:2,fragLoadingRetryDelay:500,enableWorker:true,startFragPrefetch:true,testBandwidth:false,xhrSetup:(x,u)=>{try{x.withCredentials=new URL(u,window.location.href).origin===window.location.origin}catch{x.withCredentials=true}}});h.on(Hls.Events.MANIFEST_PARSED,()=>setBuffering(true));h.on(Hls.Events.ERROR,(_,d)=>{if(!d.fatal)return;if(d.type===Hls.ErrorTypes.MEDIA_ERROR){try{h.recoverMediaError();return}catch{}}if(d.type===Hls.ErrorTypes.NETWORK_ERROR){try{h.startLoad();return}catch{}}fallbackToSource('hls')});h.attachMedia(v);h.loadSource(sources.hls);hlsRef.current=h}else if(v.canPlayType('application/vnd.apple.mpegurl')){v.src=sources.hls;v.play().catch(()=>{})}else fallbackToSource('hls');return()=>{cleanup();v?.removeAttribute('src');v?.load()}},[mode,sources.hls,fallbackToSource,cleanup])
+  useEffect(()=>{if(mode!=='stream'||!sources.fallback)return;const v=videoRef.current;v.preload='auto';v.src=sources.fallback;v.play().catch(()=>{});const fail=()=>fallbackToSource('stream');v.addEventListener('error',fail);v.addEventListener('playing',markPlaying);fallbackRef.current=setTimeout(fail,20000);return()=>{cleanup();v.removeEventListener('error',fail);v.removeEventListener('playing',markPlaying);v.removeAttribute('src');v.load()}},[mode,sources.fallback,fallbackToSource,cleanup,markPlaying])
   useEffect(()=>{onLiveStatus?.(live)},[live,onLiveStatus])
   const metadata=e=>{const v=e.currentTarget;if(v.videoWidth&&v.videoHeight)onAspectChange?.(v.videoWidth/v.videoHeight)}
-  const visibleImage=!live && snapshot && state==='ERROR'
-  return <div style={{position:'absolute',inset:0,background:'#000'}}>
-    {visibleImage&&<img src={snapshot} alt="Latest camera frame" onLoad={metadata} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:fit,zIndex:1}}/>}
-    <video ref={videoRef} autoPlay muted={muted} playsInline loop={cam?.is_test} onLoadedMetadata={metadata} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:fit,display:state==='ACTIVE'||state==='LOADING'?'block':'none',zIndex:2}}/>
-    {state==='ERROR'&&<div style={{position:'absolute',inset:0,zIndex:3,display:'grid',placeItems:'center',background:'rgba(0,0,0,.58)',color:'#fff',fontSize:11}}>{cam?.is_test?'Test video unavailable':'Live HLS feed unavailable'}</div>}
-    {state==='LOADING'&&!snapshot&&<div style={{position:'absolute',inset:0,zIndex:3,display:'grid',placeItems:'center',color:'rgba(255,255,255,.65)',fontSize:11}}>Connecting…</div>}
-    {live&&<span style={{position:'absolute',right:8,bottom:6,zIndex:5,color:'#fff',fontSize:9,fontWeight:800,letterSpacing:.5}}>● LIVE</span>}
-  </div>
-}
-
-const CameraCard=memo(function CameraCard({cam,alertCount=0,onFocus,onLocate,testMode=false,onRemoveTestFeed}){
+  return <div style={{position:'absolute',inset:0,background:'#000'}}>{snapshot&&!live&&<img src={snapshot} alt="Latest camera frame" onLoad={metadata} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:fit}}/>}<video ref={videoRef} autoPlay muted={muted} playsInline loop={cam?.is_test} onPlaying={markPlaying} onLoadedMetadata={metadata} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:fit,display:(mode==='hls'||mode==='stream')?'block':'none'}}/>{!live&&(mode==='hls'||mode==='stream')&&!snapshot&&<BufferIndicator buffering={buffering}/>}</div>
+}const CameraCard=memo(function CameraCard({cam,alertCount=0,onFocus,onLocate,testMode=false,onRemoveTestFeed}){
   const stageRef=useRef(null),active=useCameraPlayerSlot(cam.id,stageRef),[live,setLive]=useState(false),[aspect,setAspect]=useState(()=>streamAspect(cam))
   const health=String(cam.health_status||cam.status||'unknown').toUpperCase()
   return <article ref={stageRef} onClick={()=>onFocus?.(cam)} style={{background:'var(--surface2)',border:`1px solid ${alertCount?'var(--high)':'var(--border)'}`,borderRadius:8,overflow:'hidden',cursor:'pointer'}}>
