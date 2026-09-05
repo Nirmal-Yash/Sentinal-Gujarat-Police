@@ -1,6 +1,7 @@
 """Authenticated CCTV HLS proxy for cctv.corp8.cloud."""
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import time
@@ -12,15 +13,30 @@ from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from auth import COOKIE_NAME, Principal, principal_from_token, require_authenticated
+from auth import COOKIE_NAME, Principal, principal_from_token, require_permission, require_authenticated
 from database import get_db
 from services.cctv_gateway import get_cctv_gateway
 
-router = APIRouter(prefix="/cctv", tags=["cctv"])
+router = APIRouter(prefix="/cctv", tags=["cctv"], dependencies=[Depends(require_permission("camera:read"))])
 security = HTTPBearer(auto_error=False)
 _URI_ATTR = re.compile(r'URI="([^"]+)"')
 _SECRET_PLACEHOLDERS = {"", "change-me", "changeme", "sentinel-change-in-production", "replace-me", "replace-with-long-random-secret"}
 _CAMERA_RE = re.compile(r"cam(\d{2})", re.IGNORECASE)
+
+
+def _cors_headers(request: Request) -> dict[str, str]:
+    """Return CORS headers only for configured credentialed browser origins."""
+    origin = request.headers.get("origin")
+    allowed = {
+        value.strip()
+        for value in os.getenv("ALLOWED_ORIGINS", os.getenv("CORS_ORIGINS", "http://localhost:3000")).split(",")
+        if value.strip()
+    }
+    headers = {"Vary": "Origin"}
+    if origin and origin in allowed:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+    return headers
 
 
 def _secret() -> str:
@@ -86,44 +102,25 @@ def _rewrite_manifest(body: str, manifest_path: str, token: str | None) -> str:
 
 
 @router.get("/token/{camera_ref}")
-async def issue_playback_token(
-    camera_ref: str,
-    _: Principal = Depends(require_authenticated),
-    db: AsyncSession = Depends(get_db),
-):
+async def issue_playback_token(camera_ref: str, _: Principal = Depends(require_authenticated), db: AsyncSession = Depends(get_db)):
     """Issue a short-lived token for one registered camera's HLS assets."""
     camera_id = _camera_id(camera_ref)
     number = int(camera_id[3:])
-    exists = await db.scalar(
-        text("SELECT 1 FROM cameras WHERE stream_id=:stream_id AND status <> 'deleted'"),
-        {"stream_id": number},
-    )
+    exists = await db.scalar(text("SELECT 1 FROM cameras WHERE stream_id=:stream_id AND status <> 'deleted'"), {"stream_id": number})
     if not exists:
         raise HTTPException(404, f"Camera {camera_id} is not registered")
     expires_at = int(time.time()) + 300
-    token = jwt.encode(
-        {"sub": "cctv-hls", "camera": camera_id, "exp": expires_at},
-        _secret(),
-        algorithm="HS256",
-    )
+    token = jwt.encode({"sub": "cctv-hls", "camera": camera_id, "exp": expires_at}, _secret(), algorithm="HS256")
     return {"token": token, "expires_at": expires_at, "ttl_seconds": 300, "camera": camera_id}
 
 
-async def _authorize_playback(
-    request: Request,
-    camera_id: str,
-    access_token: str | None,
-    credentials: HTTPAuthorizationCredentials | None,
-    db: AsyncSession,
-) -> str | None:
+async def _authorize_playback(request: Request, camera_id: str, access_token: str | None, credentials: HTTPAuthorizationCredentials | None, db: AsyncSession) -> str | None:
     """Authorize camera playback with a scoped token, bearer session, or browser session cookie."""
     if access_token:
         try:
             _verify_playback_token(access_token, camera_id)
             return access_token
         except HTTPException:
-            # URL tokens are short-lived; use the authenticated session when one
-            # is present so a healthy feed survives token expiry.
             if not ((credentials and credentials.scheme.lower() == "bearer") or request.cookies.get(COOKIE_NAME)):
                 raise
     if credentials and credentials.scheme.lower() == "bearer":
@@ -137,24 +134,19 @@ async def _authorize_playback(
 
 
 @router.get("/{asset_path:path}")
-async def proxy_cctv_asset(
-    asset_path: str,
-    request: Request,
-    access_token: str | None = Query(default=None, min_length=1),
-    credentials: HTTPAuthorizationCredentials | None = Depends(security),
-    db: AsyncSession = Depends(get_db),
-):
+async def proxy_cctv_asset(asset_path: str, request: Request, access_token: str | None = Query(default=None, min_length=1), credentials: HTTPAuthorizationCredentials | None = Depends(security), db: AsyncSession = Depends(get_db)):
     match = re.fullmatch(r"(cam\d{2})/(.+)", asset_path, re.IGNORECASE)
     if not match:
         raise HTTPException(400, "Invalid CCTV asset path")
     camera_id = _camera_id(match.group(1))
     token = await _authorize_playback(request, camera_id, access_token, credentials, db)
+    await db.close()
 
     gateway = get_cctv_gateway()
     if not gateway.configured:
         raise HTTPException(503, "CCTV_PASSWORD is not configured on the server")
     try:
-        upstream = gateway.proxy_asset(asset_path)
+        upstream = await asyncio.to_thread(gateway.proxy_asset, asset_path)
     except Exception as exc:
         raise HTTPException(502, f"CCTV upstream request failed: {exc}") from exc
 
@@ -173,11 +165,7 @@ async def proxy_cctv_asset(
             upstream.close()
         if not body.lstrip().startswith("#EXTM3U"):
             raise HTTPException(502, "CCTV upstream returned non-HLS content for a manifest")
-        return Response(
-            _rewrite_manifest(body, asset_path, token),
-            media_type="application/vnd.apple.mpegurl",
-            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Access-Control-Allow-Origin": "*", "Vary": "Authorization, Cookie"},
-        )
+        return Response(_rewrite_manifest(body, asset_path, token), media_type="application/vnd.apple.mpegurl", headers={**_cors_headers(request), "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Vary": "Authorization, Cookie, Origin"})
 
     def iterator():
         try:
@@ -188,8 +176,4 @@ async def proxy_cctv_asset(
             upstream.close()
 
     safe_type = content_type.split(";", 1)[0].strip() or "application/octet-stream"
-    return StreamingResponse(
-        iterator(),
-        media_type=safe_type,
-        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Access-Control-Allow-Origin": "*", "Vary": "Authorization, Cookie"},
-    )
+    return StreamingResponse(iterator(), media_type=safe_type, headers={**_cors_headers(request), "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Vary": "Authorization, Cookie, Origin"})
