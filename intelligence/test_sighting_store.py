@@ -2,6 +2,7 @@
 import base64, json, os, unittest
 from datetime import datetime, timezone
 import psycopg2
+import numpy as np
 from plate_normalise import normalize_plate
 
 DB_URL = os.getenv("DATABASE_URL", "")

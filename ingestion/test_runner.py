@@ -34,7 +34,7 @@ def _start_feed(session_id, row, conn, publishers, feeds):
         ],
         start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
-    feeds[stream_id] = {"stream_id": stream_id, "cap": cap, "loop": loop, "next": 0.0, "pts": 0}
+    feeds[stream_id] = {"stream_id": stream_id, "cap": cap, "loop": loop, "next": 0.0, "pts": 0, "publisher_restart": 0}
 
 
 def _stop_feed(stream_id, publishers, feeds):
@@ -127,6 +127,28 @@ def runner(session_id: str):
                     cur.execute("UPDATE test_sessions SET frames_processed=%s WHERE id=%s::uuid", (frames, session_id))
 
             for stream_id, feed in list(feeds.items()):
+                publisher = publishers.get(stream_id)
+                if publisher is None or publisher.poll() is not None:
+                    log_file = f"/tmp/test_publisher_{session_id}_{stream_id}.log"
+                    try:
+                        feed["publisher_restart"] += 1
+                        if publisher is not None:
+                            log_file = f"/tmp/test_publisher_{session_id}_{stream_id}_{feed['publisher_restart']}.log"
+                        publishers[stream_id] = subprocess.Popen(
+                            [
+                                imageio_ffmpeg.get_ffmpeg_exe(), "-hide_banner", "-loglevel", "warning",
+                                "-re", "-stream_loop", "-1" if feed["loop"] else "0", "-i", next(
+                                    (row[1] for row in rows if int(row[0]) == stream_id), ""
+                                ),
+                                "-map", "0:v:0", "-an", "-c:v", "libx264", "-preset", "ultrafast",
+                                "-tune", "zerolatency", "-g", "30", "-keyint_min", "30",
+                                "-sc_threshold", "0", "-f", "rtsp", "-rtsp_transport", "tcp",
+                                f"{RTSP_BASE}/test/{session_id}/cam{stream_id}",
+                            ],
+                            start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        )
+                    except Exception as exc:
+                        log.warning("Test publisher restart failed session=%s stream=%s: %s", session_id, stream_id, exc)
                 if now < feed["next"]:
                     continue
                 ok, frame = feed["cap"].read()
