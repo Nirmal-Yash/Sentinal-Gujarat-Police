@@ -131,7 +131,12 @@ class CctvGateway:
         text = str(camera_id).strip()
         suffix = text[3:] if text.lower().startswith("cam") else text
         if suffix.isdigit():
-            suffix = suffix.zfill(2)
+            number = int(suffix)
+            if number < 1 or number > 30:
+                raise ValueError("camera id must be cam01 through cam30")
+            suffix = str(number).zfill(2)
+        elif not __import__("re").fullmatch(r"cam(0[1-9]|[12][0-9]|30)", "cam"+suffix, __import__("re").IGNORECASE):
+            raise ValueError("camera id must be cam01 through cam30")
         return f"/cam{suffix}/index.m3u8"
 
     def proxy_asset(self, asset_path: str) -> requests.Response:

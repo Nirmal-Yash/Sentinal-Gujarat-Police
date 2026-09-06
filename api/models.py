@@ -58,7 +58,7 @@ class Detection(Base):
 
 class CameraOut(BaseModel):
     model_config=ConfigDict(from_attributes=True)
-    id:uuid.UUID; stream_id:Optional[int]; name:str; location:str; lat:Optional[float]; lng:Optional[float]; hls_url:str; whep_url:str; stream_url:Optional[str]; rtsp_url:Optional[str]
+    id:uuid.UUID; stream_id:Optional[int]; camera_id:Optional[str]=None; name:str; location:str; lat:Optional[float]; lng:Optional[float]; hls_url:str; whep_url:str; stream_url:Optional[str]; rtsp_url:Optional[str]
     codec:Optional[str]; width:Optional[int]; height:Optional[int]; fps:Optional[float]; effective_codec:Optional[str]; effective_width:Optional[int]; effective_height:Optional[int]; effective_fps:Optional[float]
     status:str; health_status:str; connectivity_status:str; department:str; owner_organization:str; camera_type:str; protocol:str; source_system:str; storage_type:str; retention_days:Optional[int]
     analytics_capabilities:Any; maintenance_status:str; observed_at:Optional[datetime]; last_frame_at:Optional[datetime]; observed_source_fps:Optional[float]; observed_decode_fps:Optional[float]; observed_published_fps:Optional[float]
@@ -84,6 +84,7 @@ class CameraOut(BaseModel):
                 import jwt
                 playback_token=jwt.encode({"sub":"cctv-hls","camera":provider_id,"exp":int(time.time())+300},secret,algorithm="HS256")
             token_query=f"?access_token={playback_token}" if playback_token else ""
+            value["camera_id"]=provider_id
             value["hls_url"]=f"/api/cctv/{provider_id}/index.m3u8{token_query}"
             if not value.get("rtsp_url"): value["rtsp_url"]=f"rtsp://{rtsp_host}:8554/stream/{provider_id}"
             value["stream_url"]=value["rtsp_url"]
@@ -91,7 +92,7 @@ class CameraOut(BaseModel):
         return value
 
 class CameraCreate(BaseModel):
-    stream_id:Optional[int]=Field(None,ge=0); name:str=Field(min_length=1,max_length=255); location:str=""; lat:Optional[float]=Field(None,ge=-90,le=90); lng:Optional[float]=Field(None,ge=-180,le=180); rtsp_url:Optional[str]=Field(None,max_length=512); hls_url:str=""; whep_url:str=""; department:str="Unassigned"; owner_organization:str="Unassigned"; camera_type:str="fixed"; protocol:str="rtsp"; source_system:str=""; external_id:Optional[str]=Field(None,max_length=255); storage_type:str=""; retention_days:Optional[int]=Field(None,ge=0); analytics_capabilities:list[str]=Field(default_factory=list); installation_date:Optional[date]=None; ptz_capable:bool=False; night_vision_capable:bool=False; coord_source:str="manual"; coord_confidence:Optional[float]=Field(1.0,ge=0,le=1); vendor_id:Optional[uuid.UUID]=None; model_id:Optional[uuid.UUID]=None; processing_fps_category:str=Field(default="pedestrian", pattern="^(highway|pedestrian|static)$")
+    stream_id:Optional[int]=Field(None,ge=1,le=30); name:str=Field(min_length=1,max_length=255); location:str=""; lat:Optional[float]=Field(None,ge=-90,le=90); lng:Optional[float]=Field(None,ge=-180,le=180); rtsp_url:Optional[str]=Field(None,max_length=512); hls_url:str=""; whep_url:str=""; department:str="Unassigned"; owner_organization:str="Unassigned"; camera_type:str="fixed"; protocol:str="rtsp"; source_system:str=""; external_id:Optional[str]=Field(None,max_length=255); storage_type:str=""; retention_days:Optional[int]=Field(None,ge=0); analytics_capabilities:list[str]=Field(default_factory=list); installation_date:Optional[date]=None; ptz_capable:bool=False; night_vision_capable:bool=False; coord_source:str="manual"; coord_confidence:Optional[float]=Field(1.0,ge=0,le=1); vendor_id:Optional[uuid.UUID]=None; model_id:Optional[uuid.UUID]=None; processing_fps_category:str=Field(default="pedestrian", pattern="^(highway|pedestrian|static)$")
 
 class AlertOut(BaseModel):
     model_config=ConfigDict(from_attributes=True)
