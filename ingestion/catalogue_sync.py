@@ -29,9 +29,9 @@ def _canonical_id(raw_id) -> tuple[int, str]:
     if text.lower().startswith("cam"):
         text = text[3:]
     if not text.isdigit():
-        raise ValueError(f"Invalid CCTV camera id: {raw_id!r}")
+        raise ValueError(f"CCTV camera id must be cam01 through cam30: {raw_id!r}")
     numeric = int(text)
-    if numeric < 0:
+    if numeric < 1 or numeric > 30:
         raise ValueError(f"Invalid CCTV camera id: {raw_id!r}")
     return numeric, f"cam{numeric:02d}"
 
@@ -53,7 +53,7 @@ def _build_urls(cam: dict) -> dict:
     rtsp = cam.get("rtsp_url") or f"rtsp://{RTSP_HOST_IP}:{RTSP_PORT}/stream/{canonical}"
     hls = f"/api/cctv/{canonical}/index.m3u8"
     whep = cam.get("whep_url") or ""
-    return {"stream_id": sid, "canonical_id": canonical, "rtsp": rtsp, "hls": hls, "whep": whep}
+    return {"stream_id": sid, "camera_id": canonical, "canonical_id": canonical, "rtsp": rtsp, "hls": hls, "whep": whep}
 
 
 def _coordinates(cam: dict):

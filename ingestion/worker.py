@@ -420,6 +420,11 @@ def main():
 
             log.info("Starting %s production camera workers …", len(cams))
             for cam in cams:
+                sid = int(cam.get("stream_id") or 0)
+                if sid < 1 or sid > 30:
+                    log.error("Skipping out-of-contract production camera stream_id=%s", sid)
+                    continue
+                cam["camera_id"] = f"cam{sid:02d}"
                 procs[str(cam["id"])] = (cam, start_camera_worker(cam))
                 time.sleep(0.3)
             last_catalogue_sync = time.monotonic()

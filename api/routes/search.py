@@ -13,7 +13,7 @@ router = APIRouter(prefix='/search', tags=['search'], dependencies=[Depends(requ
 
 @router.get('/cameras')
 async def search_cameras(q: str = Query(..., min_length=1, max_length=100), limit: int = Query(20, ge=1, le=100), offset: int = Query(0, ge=0), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(text('''SELECT id, stream_id, name, location, lat, lng, hls_url, whep_url,
+    result = await db.execute(text('''SELECT id, stream_id, ('cam' || LPAD(stream_id::text,2,'0')) AS camera_id, name, location, lat, lng, hls_url, whep_url,
         ('/api/cctv/cam' || LPAD(stream_id::text, 2, '0') || '/index.m3u8') AS stream_url,
         department,owner_organization,camera_type,status,health_status,
         COALESCE(observed_codec,codec) AS effective_codec,COALESCE(observed_width,width) AS effective_width,
