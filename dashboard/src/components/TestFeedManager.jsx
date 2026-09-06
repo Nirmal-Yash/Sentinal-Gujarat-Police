@@ -30,7 +30,7 @@ export default function TestFeedManager({ session, cameras = [], onClose, onChan
 
   useEffect(() => { refreshAssets() }, [])
 
-  const available = assets.filter(asset => !asset.in_use && !activeAssetIds.has(String(asset.id)))
+  const available = assets.filter(asset => !activeAssetIds.has(String(asset.id)))
 
   const upload = async event => {
     const files = Array.from(event.target.files || [])
@@ -114,7 +114,7 @@ export default function TestFeedManager({ session, cameras = [], onClose, onChan
             <input value={label} onChange={event => setLabel(event.target.value)} maxLength={255} placeholder="Optional camera label" disabled={busy} style={input}/>
             <label style={check}><input type="checkbox" checked={loop} onChange={event => setLoop(event.target.checked)} disabled={busy}/> Loop video</label>
           </div>
-          <div style={row}><label style={uploadLabel}>Upload test video <input type="file" accept="video/*,.mkv,.avi,.m4v" multiple disabled={busy} onChange={upload}/></label><button type="button" onClick={add} disabled={busy || !selected || cameras.filter(camera => camera?.is_test).length >= MAX_FEEDS} style={primary}>{busy ? 'Working…' : '+ Add Live Feed'}</button></div>
+          <div style={row}><label style={uploadLabel}>Upload test video <input type="file" accept="video/*,.mkv,.avi,.m4v" multiple disabled={busy} onChange={upload}/></label><button type="button" onClick={add} disabled={busy || cameras.filter(camera => camera?.is_test).length >= MAX_FEEDS} style={primary}>{busy ? 'Working…' : '+ Add Live Feed'}</button></div>
         </section>
         <section>
           <div style={{...row, marginBottom:8}}><b>Test asset library</b><span style={hint}>{assets.length} asset{assets.length===1?'':'s'}</span></div>

@@ -90,7 +90,7 @@ async def list_assets(_: Principal = Depends(require_role("ADMIN")), db: AsyncSe
             if path.is_file() and path.suffix.lower() in ALLOWED_SUFFIXES:
                 try: await _register_asset(db, path, kind)
                 except HTTPException: continue
-    await db.commit(); rows = await db.execute(text("SELECT a.id,a.display_name,a.source_kind,a.width,a.height,a.fps,a.duration_seconds,a.size_bytes, EXISTS(SELECT 1 FROM test_session_feeds f WHERE f.asset_id=a.id) AS in_use FROM test_video_assets a ORDER BY a.source_kind,a.display_name"))
+    await db.commit(); rows = await db.execute(text("SELECT a.id,a.display_name,a.source_kind,a.width,a.height,a.fps,a.duration_seconds,a.size_bytes, EXISTS(SELECT 1 FROM test_session_feeds f JOIN test_sessions s ON s.id=f.session_id WHERE f.asset_id=a.id AND s.status IN ('starting','active')) AS in_use FROM test_video_assets a ORDER BY a.source_kind,a.display_name"))
     return [dict(row) for row in rows.mappings().all()]
 
 @router.post("/feeds/upload", status_code=201)

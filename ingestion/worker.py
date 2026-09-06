@@ -399,23 +399,7 @@ def main():
 
     procs = {}
     last_catalogue_sync = 0.0
-    test_was_active = False
-
     while True:
-        active_test = test_mode_active()
-        if active_test:
-            if not test_was_active:
-                log.info("ISOLATED TEST MODE ACTIVE — production CCTV ingestion paused")
-                stop_production_workers(procs)
-                test_was_active = True
-            time.sleep(TEST_SESSION_POLL_SECS)
-            continue
-
-        if test_was_active:
-            log.info("ISOLATED TEST MODE ENDED — resuming production CCTV ingestion")
-            test_was_active = False
-            last_catalogue_sync = 0.0
-
         if not procs:
             try:
                 n = catalogue_sync()
@@ -441,8 +425,6 @@ def main():
             last_catalogue_sync = time.monotonic()
 
         time.sleep(2)
-        if test_mode_active():
-            continue
 
         if time.monotonic() - last_catalogue_sync >= CATALOGUE_SYNC_INTERVAL:
             try:
@@ -455,8 +437,7 @@ def main():
             if not proc.is_alive():
                 procs.pop(key, None)
                 set_status(str(cam["id"]), "reconnecting")
-                if not test_mode_active():
-                    procs[key] = (cam, start_camera_worker(cam))
+                procs[key] = (cam, start_camera_worker(cam))
 
 if __name__ == "__main__":
     main()
