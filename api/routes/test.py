@@ -12,9 +12,51 @@ from auth import ROLE_ORDER, Principal, current_principal, require_role
 from database import get_db
 
 router = APIRouter(prefix="/test", tags=["test"])
-VIDEO_DIR, UPLOAD_DIR = Path(os.getenv("TEST_VIDEO_DIR", "/videos")), Path(os.getenv("TEST_UPLOAD_DIR", "/test_videos"))
+
+def _find_video_dir() -> Path:
+    env_dir = os.getenv("TEST_VIDEO_DIR")
+    if env_dir and Path(env_dir).exists():
+        return Path(env_dir)
+    candidates = [
+        Path("/videos"),
+        Path("videos"),
+        Path(__file__).resolve().parent.parent.parent / "videos",
+        Path(__file__).resolve().parent.parent / "videos",
+    ]
+    for c in candidates:
+        if c.is_dir():
+            return c
+    return Path(env_dir or "/videos")
+
+def _find_upload_dir() -> Path:
+    env_dir = os.getenv("TEST_UPLOAD_DIR")
+    if env_dir and Path(env_dir).exists():
+        return Path(env_dir)
+    candidates = [
+        Path("/test_videos"),
+        Path("test_videos"),
+        Path(__file__).resolve().parent.parent.parent / "test_videos",
+        Path(__file__).resolve().parent.parent / "test_videos",
+    ]
+    for c in candidates:
+        if c.is_dir():
+            return c
+    return Path(env_dir or "/test_videos")
+
+VIDEO_DIR, UPLOAD_DIR = _find_video_dir(), _find_upload_dir()
 MAX_UPLOAD_BYTES = int(os.getenv("TEST_MAX_UPLOAD_BYTES", str(2 * 1024 * 1024 * 1024)))
 ALLOWED_SUFFIXES = {".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v"}
+
+TEST_CAMERA_GEODATA = [
+    {"lat": 23.2156, "lng": 72.6369, "location": "CH Road Junction, Gandhinagar", "department": "Traffic Control Unit", "camera_type": "fixed", "zone": "North Zone"},
+    {"lat": 23.0338, "lng": 72.5072, "location": "SG Highway Flyover, Ahmedabad", "department": "City Surveillance Division", "camera_type": "anpr", "zone": "West Zone"},
+    {"lat": 21.1702, "lng": 72.8311, "location": "Ring Road Toll Gate, Surat", "department": "Highway Patrol", "camera_type": "anpr", "zone": "South Zone"},
+    {"lat": 22.3072, "lng": 73.1812, "location": "Express Highway Exit, Vadodara", "department": "Traffic Police", "camera_type": "fixed", "zone": "Central Zone"},
+    {"lat": 22.3039, "lng": 70.8022, "location": "Kalawad Road, Rajkot", "department": "Urban Surveillance", "camera_type": "fixed", "zone": "Saurashtra Zone"},
+    {"lat": 21.7645, "lng": 72.1519, "location": "Port Access Road, Bhavnagar", "department": "Port Security", "camera_type": "ptz", "zone": "Coastal Zone"},
+    {"lat": 22.4707, "lng": 70.0577, "location": "Airport Junction, Jamnagar", "department": "City Police", "camera_type": "fixed", "zone": "West Zone"},
+    {"lat": 23.5880, "lng": 72.3693, "location": "State Highway 41, Mehsana", "department": "Highway Division", "camera_type": "anpr", "zone": "North Zone"},
+]
 
 def enabled():
     if os.getenv("TEST_ENDPOINT_ENABLED", "false").lower() != "true": raise HTTPException(404, "Video test mode is disabled")
@@ -39,6 +81,7 @@ async def _register_asset(db: AsyncSession, path: Path, source_kind: str) -> dic
       ON CONFLICT(storage_key) DO UPDATE SET display_name=EXCLUDED.display_name,width=EXCLUDED.width,height=EXCLUDED.height,fps=EXCLUDED.fps,duration_seconds=EXCLUDED.duration_seconds,size_bytes=EXCLUDED.size_bytes
       RETURNING id,display_name,source_kind,width,height,fps,duration_seconds,size_bytes"""), {"key": str(path), "name": path.name, "kind": source_kind, "size": path.stat().st_size, **_probe(path)})).mappings().one()
     return dict(row)
+
 
 async def _close_orphaned_sessions(db: AsyncSession) -> None:
     """Release interrupted test-only sessions that never received a feed/runner."""
@@ -226,7 +269,7 @@ async def add_test_watchlist(session_id:uuid.UUID,body:TestWatchlistCreate,_:Pri
     await db.commit(); return {**_public_test_watchlist(row),"production_data_affected":False}
 
 
-@router.post("/sessions/{session_id}/watchlist/person-photo",status_code=201)
+@router.post("/sessions/{session_id}/watchlist/person-photo")
 async def add_test_person_watchlist_photo(session_id:uuid.UUID,name:str=Form(...,min_length=1,max_length=255),description:str=Form(""),alert_priority:str=Form("HIGH"),file:UploadFile=File(...),_:Principal=Depends(require_role("ADMIN")),db:AsyncSession=Depends(get_db)):
     enabled(); await _validate_test_session(session_id,db)
     if not file.content_type or not file.content_type.startswith("image/"): raise HTTPException(415,"Upload an image file")
@@ -291,18 +334,68 @@ async def session_status(session_id: uuid.UUID, _: Principal = Depends(require_r
 async def session_cameras(session_id: uuid.UUID, _: Principal = Depends(require_role("ADMIN")), db: AsyncSession = Depends(get_db)):
     enabled(); rows = (await db.execute(text("SELECT f.id,f.asset_id,f.stream_id,f.camera_label,f.hls_path,f.width,f.height,f.fps,s.status FROM test_session_feeds f JOIN test_sessions s ON s.id=f.session_id WHERE f.session_id=CAST(:id AS uuid) ORDER BY f.stream_id"), {"id": str(session_id)})).mappings().all()
     if not rows: raise HTTPException(404, "Test session not found")
-    return [{"id": f"test-{row['id']}","stream_id": row["stream_id"],"name": row["camera_label"],"location": "Isolated video test","hls_url": row["hls_path"],"whep_url": "","stream_url": f"/api/test/sessions/{session_id}/feeds/{row['stream_id']}/video","codec": "H.264 (MediaMTX)","width": row["width"],"height": row["height"],"fps": row["fps"],"effective_codec": "H.264 (MediaMTX)","effective_width": row["width"],"effective_height": row["height"],"effective_fps": row["fps"],"status": row["status"],"health_status": row["status"],"connectivity_status": row["status"],"is_test": True} for row in rows]
+    res = []
+    for row in rows:
+        idx = (int(row["stream_id"]) - 1) % len(TEST_CAMERA_GEODATA)
+        geo = TEST_CAMERA_GEODATA[idx]
+        res.append({
+            "id": f"test-{row['id']}",
+            "camera_id": f"cam{int(row['stream_id']):02d}",
+            "stream_id": row["stream_id"],
+            "name": row["camera_label"],
+            "location": geo["location"],
+            "department": geo["department"],
+            "camera_type": geo["camera_type"],
+            "zone": geo["zone"],
+            "lat": geo["lat"],
+            "lng": geo["lng"],
+            "coord_source": "verified",
+            "coord_confidence": 0.98,
+            "hls_url": row["hls_path"],
+            "whep_url": "",
+            "stream_url": f"/api/test/sessions/{session_id}/feeds/{row['stream_id']}/video",
+            "codec": "H.264 (MediaMTX)",
+            "width": row["width"],
+            "height": row["height"],
+            "fps": row["fps"],
+            "effective_codec": "H.264 (MediaMTX)",
+            "effective_width": row["width"],
+            "effective_height": row["height"],
+            "effective_fps": row["fps"],
+            "status": row["status"],
+            "health_status": "healthy" if row["status"] in ("starting", "active") else row["status"],
+            "connectivity_status": "healthy" if row["status"] in ("starting", "active") else row["status"],
+            "is_test": True,
+        })
+    return res
 
 @router.get("/sessions/{session_id}/feeds/{stream_id}/video")
 async def session_video(session_id: uuid.UUID, stream_id: int, _: Principal = Depends(require_test_video_viewer), db: AsyncSession = Depends(get_db)):
-    """Browser fallback for a random, test-only session path while HLS warms.
-
-    Browser playback is viewer-authorized; test uploads are never public.
+    """Browser playback for test session video feeds.
+    Authorized for viewers; streams video directly to browser.
     """
-    enabled(); row = (await db.execute(text("SELECT a.storage_key FROM test_session_feeds f JOIN test_video_assets a ON a.id=f.asset_id WHERE f.session_id=CAST(:id AS uuid) AND f.stream_id=:stream"), {"id": str(session_id),"stream": stream_id})).mappings().first()
-    if not row or not Path(row["storage_key"]).is_file(): raise HTTPException(404, "Test video not found")
+    enabled()
+    row = (await db.execute(text("SELECT a.storage_key, a.display_name FROM test_session_feeds f JOIN test_video_assets a ON a.id=f.asset_id WHERE f.session_id=CAST(:id AS uuid) AND f.stream_id=:stream"), {"id": str(session_id), "stream": stream_id})).mappings().first()
+    if not row:
+        raise HTTPException(404, "Test feed not found")
     path = Path(row["storage_key"])
-    return FileResponse(path, media_type=mimetypes.guess_type(path.name)[0] or "application/octet-stream", filename=path.name)
+    if not path.is_file():
+        name = row.get("display_name") or path.name
+        candidates = [
+            VIDEO_DIR / name,
+            UPLOAD_DIR / name,
+            Path("/videos") / name,
+            Path("videos") / name,
+            Path("test_videos") / name,
+            Path(__file__).resolve().parent.parent.parent / "videos" / name,
+        ]
+        for c in candidates:
+            if c.is_file():
+                path = c
+                break
+        else:
+            raise HTTPException(404, f"Test video file not found: {path.name}")
+    return FileResponse(path, media_type=mimetypes.guess_type(path.name)[0] or "video/mp4", filename=path.name)
 
 @router.get("/sessions/{session_id}/results")
 async def session_results(session_id: uuid.UUID, plate: str | None = Query(None, max_length=100), cam_id: str | None = Query(None, max_length=64), from_dt: datetime | None = Query(None), to_dt: datetime | None = Query(None), detection_type: str | None = Query(None, max_length=64), limit: int = Query(100, ge=1, le=500), format: str = Query("json", pattern="^(json|csv)$"), _: Principal = Depends(require_role("ADMIN")), db: AsyncSession = Depends(get_db)):

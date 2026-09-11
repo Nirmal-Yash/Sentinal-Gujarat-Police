@@ -113,6 +113,7 @@ async def alert_counts(db: AsyncSession = Depends(get_db), _: Principal = Depend
     await _auto_close_resolved(db)
     result = await db.execute(text("""
         SELECT COUNT(*) AS total,
+               COUNT(*) FILTER (WHERE priority = 'CRITICAL') AS critical,
                COUNT(*) FILTER (WHERE priority = 'HIGH') AS high,
                COUNT(*) FILTER (WHERE priority = 'MEDIUM') AS medium,
                COUNT(*) FILTER (WHERE priority = 'LOW') AS low,

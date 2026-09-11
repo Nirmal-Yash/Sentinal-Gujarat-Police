@@ -250,7 +250,7 @@ def run():
                     meta={"track_conf":track_conf,"quality":candidates[0][0],"cam":cam,"track_id":track_id,
                           "x1":x1,"y1":y1,"x2":x2,"y2":y2,"vehicle_type":_bytes(data,"vehicle_type").decode() or "vehicle",
                           "context":{k:data[k] for k in (b"schema_version",b"event_id",b"cam_id",b"stream_id",b"source_ts",b"ingested_at",b"pts_ms",b"session_id") if k in data}}
-                    future=pool.submit(_ocr_job,image_bytes)
+                    future = pool.submit(_ocr_job, image_bytes)
                     def _done(f,key=key,meta=meta):
                         nonlocal pending
                         try: completed.put((key,meta,f.result()))

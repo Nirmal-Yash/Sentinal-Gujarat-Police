@@ -37,8 +37,8 @@ async def config():
     bootstrap_configured = bool(os.getenv('BOOTSTRAP_ADMIN_USERNAME','').strip() and os.getenv('BOOTSTRAP_ADMIN_PASSWORD',''))
     return {'auth_required': AUTH_REQUIRED, 'test_enabled': os.getenv('TEST_ENDPOINT_ENABLED','true').lower() == 'true', 'session_persistent': True, 'access_token_minutes': int(os.getenv('ACCESS_TOKEN_EXPIRE_MINUTES','15')), 'refresh_token_hours': REFRESH_TOKEN_HOURS, 'bootstrap_admin_configured': bootstrap_configured, 'login_available': True}
 
-@router.post('/login', dependencies=[Depends(rate_limit('auth-login', 5, 60))])
-async def login(body: Login, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
+@router.post('/login')
+async def login(body: Login, request: Request, response: Response, db: AsyncSession = Depends(get_db), _lim: None = Depends(rate_limit('auth-login', 5, 60))):
     username = body.username.strip()
     if await is_locked(username, request, db):
         await record_attempt(username, request, False, db)

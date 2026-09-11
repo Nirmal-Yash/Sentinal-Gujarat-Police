@@ -100,7 +100,8 @@ def _prepare_face_image(payload: bytes) -> bytes:
 async def _run_person_analysis(payload: bytes, timeout: float, operation: str, test_mode: bool = False):
     import redis.asyncio as redis_async
     r = redis_async.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379'), decode_responses=False)
-    job_id = uuid.uuid4().hex; prefix = 'test:' if test_mode else ''; image_key = f'{prefix}person:image:{job_id}'; result_key = f'{prefix}person:result:{job_id}'; stream = f'{prefix}person:investigations'
+    job_id = uuid.uuid4().hex; prefix = 'test:' if test_mode else ''; image_key = f'{prefix}person:image:{job_id}'; result_key = f'{prefix}person:result:{job_id}'
+    stream = f'{prefix}person:investigations'  # test:person:investigations when test_mode
     try:
         await r.set(image_key, payload, ex=max(30, int(timeout) + 10))
         await r.xadd(stream, {'request_id': job_id, 'image_key': image_key, 'result_key': result_key, 'operation': operation}, maxlen=1000, approximate=True)

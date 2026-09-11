@@ -1,7 +1,8 @@
 """Durable analytics, vehicle identity/sighting/journey and person re-identification persistence."""
-import json, os
+import json, os, threading
 from datetime import datetime, timezone, timedelta
 import psycopg2
+import psycopg2.pool
 
 try:
     from .plate_normalise import normalize_plate
@@ -11,6 +12,38 @@ except ImportError:
 DB_URL = os.getenv("DATABASE_URL", "")
 CROSS_CAM_WINDOW = max(30, int(os.getenv("CROSS_CAM_WINDOW", "300")))
 SIGHTING_BUCKET_SECS = max(5, int(os.getenv("SIGHTING_DEDUP_BUCKET_SECS", "30")))
+
+# ── Module-level connection pool (shared across all persist() calls) ──────────
+# ThreadedConnectionPool is thread-safe and reuses connections instead of
+# creating a new TCP handshake per event. min=2 max=10 is sufficient for
+# the single-threaded intelligence loop; max protects against pool exhaustion.
+_pool: psycopg2.pool.ThreadedConnectionPool | None = None
+_pool_lock = threading.Lock()
+
+
+def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
+    """Lazy-initialize the module-level connection pool."""
+    global _pool
+    if _pool is not None:
+        return _pool
+    with _pool_lock:
+        if _pool is None:
+            _pool = psycopg2.pool.ThreadedConnectionPool(2, 10, DB_URL)
+    return _pool
+
+
+def _get_conn():
+    """Get a connection from the pool."""
+    return _get_pool().getconn()
+
+
+def _put_conn(conn):
+    """Return a connection to the pool."""
+    try:
+        _get_pool().putconn(conn)
+    except Exception:
+        pass
+
 
 
 def _text(data, key, default=""):
@@ -110,7 +143,7 @@ def persist(data: dict):
         "plate_validated": _text(data, "plate_validated", ""),
         "anpr_consensus": _text(data, "anpr_consensus", "")
     }
-    conn = psycopg2.connect(DB_URL)
+    conn = _get_conn()
     try:
         with conn.cursor() as cur:
             cur.execute("""INSERT INTO detections
@@ -152,15 +185,21 @@ def persist(data: dict):
             journey_id = _upsert_journey(cur, f"plate:{plate}", plate, timestamp, camera_id, confidence, sighting_id)
             cur.execute("UPDATE vehicle_sightings SET journey_id=%s::uuid WHERE id=%s::uuid", (journey_id, sighting_id))
         conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
     finally:
-        conn.close()
+        _put_conn(conn)
     return {"timestamp": timestamp, "plate": plate, "global_vehicle_id": f"plate:{plate}", "journey_id": journey_id,
             "duplicate": False, "business_sighting": True}
 
 
 def persist_person_track(detection_id: str, global_track_id: str, camera_id: str, timestamp: datetime, confidence: float, embedding):
     vector = "[" + ",".join(str(float(value)) for value in embedding) + "]"
-    conn = psycopg2.connect(DB_URL)
+    conn = _get_conn()
     try:
         with conn.cursor() as cur:
             cur.execute("UPDATE detections SET global_track_id=%s WHERE id=%s::uuid", (global_track_id, detection_id))
@@ -173,5 +212,11 @@ def persist_person_track(detection_id: str, global_track_id: str, camera_id: str
               (global_track_id, camera_id, camera_id, timestamp, timestamp, camera_id, timestamp.isoformat(), vector,
                confidence, json.dumps({"identity_type": "face_reidentification"})))
         conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
     finally:
-        conn.close()
+        _put_conn(conn)

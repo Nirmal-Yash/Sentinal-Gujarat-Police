@@ -66,7 +66,12 @@ app.add_middleware(CORSMiddleware,allow_origins=CORS_ORIGINS,allow_credentials=T
 @app.middleware("http")
 async def csrf_boundary(request:Request,call_next):
     if request.method.upper() not in {"GET","HEAD","OPTIONS"} and request.url.path not in {"/auth/login","/auth/refresh"}:
-        if not request.headers.get("Authorization","").startswith("Bearer ") and request.cookies.get("sentinel_session"): verify_cookie_csrf(request,request.cookies.get("sentinel_csrf"))
+        if not request.headers.get("Authorization","").startswith("Bearer ") and request.cookies.get("sentinel_session"):
+            try:
+                verify_cookie_csrf(request,request.cookies.get("sentinel_csrf"))
+            except HTTPException as exc:
+                from fastapi.responses import JSONResponse
+                return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
     response=await call_next(request); response.headers.setdefault("X-Request-Id",str(uuid.uuid4())); return response
 app.include_router(camera_snapshot.router); app.include_router(cameras.router); app.include_router(camera_imports.router); app.include_router(cctv.router); app.include_router(alerts.router); app.include_router(watchlist.router); app.include_router(search.router); app.include_router(auth.router); app.include_router(reports.router); app.include_router(test.router); app.include_router(test_feeds.router); app.include_router(test_alerts.router); app.include_router(vendors.router); app.include_router(evidence_assets.router); app.include_router(evidence.router); app.include_router(operations.router)
 @app.websocket("/ws/alerts")

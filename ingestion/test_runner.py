@@ -8,10 +8,27 @@ FRAME_FPS = max(1, float(os.getenv("TEST_FRAME_FPS", "3"))); RTSP_BASE = os.gete
 def stop(*_):
     global running; running = False
 
+def _resolve_source_path(source: str) -> str:
+    if os.path.isfile(source):
+        return source
+    basename = os.path.basename(source)
+    candidates = [
+        os.path.join("/videos", basename),
+        os.path.join("videos", basename),
+        os.path.join("/test_videos", basename),
+        os.path.join("test_videos", basename),
+        os.path.join(os.path.dirname(__file__), "..", "videos", basename),
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            return os.path.abspath(c)
+    return source
+
 def _start_feed(session_id, row, conn, publishers, feeds):
     stream_id, source, loop = int(row[0]), row[1], bool(row[2])
     if stream_id in feeds:
         return
+    source = _resolve_source_path(source)
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
         raise RuntimeError(f"Cannot decode test source: {os.path.basename(source)}")
@@ -27,8 +44,8 @@ def _start_feed(session_id, row, conn, publishers, feeds):
         [
             imageio_ffmpeg.get_ffmpeg_exe(), "-hide_banner", "-loglevel", "error",
             "-re", "-stream_loop", "-1" if loop else "0", "-i", source,
-            "-map", "0:v:0", "-an", "-c:v", "libx264", "-preset", "ultrafast",
-            "-tune", "zerolatency", "-g", "30", "-keyint_min", "30",
+            "-map", "0:v:0", "-an", "-c:v", "libx264", "-preset","ultrafast",
+            "-tune","zerolatency", "-g","30", "-keyint_min", "30",
             "-sc_threshold", "0", "-f", "rtsp", "-rtsp_transport", "tcp",
             f"{RTSP_BASE}/test/{session_id}/cam{stream_id}",
         ],
@@ -107,12 +124,13 @@ def runner(session_id: str):
                         _stop_feed(stream_id, publishers, feeds)
                         completed_streams.discard(stream_id)
 
-                if feeds:
+                if not feeds:
+                    if not rows:
+                        with conn.cursor() as cur:
+                            cur.execute("UPDATE test_sessions SET status='idle',frames_processed=%s WHERE id=%s::uuid", (frames, session_id))
+                else:
                     with conn.cursor() as cur:
                         cur.execute("UPDATE test_sessions SET status='active' WHERE id=%s::uuid", (session_id,))
-                elif not rows:
-                    with conn.cursor() as cur:
-                        cur.execute("UPDATE test_sessions SET status='idle',frames_processed=%s WHERE id=%s::uuid", (frames, session_id))
                 last_db_poll = now
 
             for key in list(client.scan_iter(match=f"test:remove_feed:{session_id}:*")):
@@ -121,6 +139,7 @@ def runner(session_id: str):
                 except (ValueError, IndexError):
                     client.delete(key)
                     continue
+                publishers.pop(removed_stream, None)
                 _stop_feed(removed_stream, publishers, feeds)
                 client.delete(key)
                 with conn.cursor() as cur:
@@ -140,8 +159,8 @@ def runner(session_id: str):
                                 "-re", "-stream_loop", "-1" if feed["loop"] else "0", "-i", next(
                                     (row[1] for row in rows if int(row[0]) == stream_id), ""
                                 ),
-                                "-map", "0:v:0", "-an", "-c:v", "libx264", "-preset", "ultrafast",
-                                "-tune", "zerolatency", "-g", "30", "-keyint_min", "30",
+                                "-map", "0:v:0", "-an", "-c:v", "libx264", "-preset","ultrafast",
+                                "-tune","zerolatency", "-g","30", "-keyint_min", "30",
                                 "-sc_threshold", "0", "-f", "rtsp", "-rtsp_transport", "tcp",
                                 f"{RTSP_BASE}/test/{session_id}/cam{stream_id}",
                             ],
@@ -220,8 +239,10 @@ def supervise():
                     last_catalogue_refresh = time.monotonic()
                 cur.execute("SELECT id FROM test_sessions WHERE status='starting' AND runner_pid IS NULL ORDER BY created_at LIMIT 1"); row = cur.fetchone()
                 if row:
-                    session_id = str(row[0]); process = subprocess.Popen([sys.executable,"/app/test_runner.py","--session-id",session_id],start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-                    cur.execute("UPDATE test_sessions SET runner_pid=%s WHERE id=%s::uuid",(process.pid,session_id))
+                    session_id = str(row[0])
+                    runner_script = "/app/test_runner.py" if os.path.exists("/app/test_runner.py") else os.path.abspath(__file__)
+                    process = subprocess.Popen([sys.executable, runner_script, "--session-id", session_id], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    cur.execute("UPDATE test_sessions SET runner_pid=%s WHERE id=%s::uuid", (process.pid, session_id))
             conn.close()
         except Exception: pass
         time.sleep(2)

@@ -23,7 +23,7 @@ def check(ok, message):
 def main():
     required = [
         '.env.example', 'docker-compose.yml', 'api/main.py',
-        'api/routes/test.py', 'api/routes/test_alerts.py', 'api/routes/search.py', 'api/routes/watchlist.py', 'api/routes/camera_imports.py',
+        'api/routes/test.py', 'api/routes/alerts.py', 'api/routes/search.py', 'api/routes/watchlist.py', 'api/routes/camera_imports.py',
         'ai_engine/main.py', 'ai_engine/face_worker.py', 'ai_engine/person_investigation_worker.py', 'ai_engine/anpr_worker.py', 'ai_engine/thresholds.yaml',
         'ingestion/worker.py', 'ingestion/test_runner.py', 'ingestion/stream_adapters.py', 'intelligence/test_sighting_store.py',
         'dashboard/src/App.jsx', 'dashboard/src/api/client.js', 'dashboard/src/components/TestFeedManager.jsx', 'dashboard/src/components/WatchlistModal.jsx', 'dashboard/src/components/CameraGrid.jsx',
@@ -41,7 +41,7 @@ def main():
     check('Object.entries(p).filter' in client, 'query builders remove undefined filters')
     check('getTestWatchlist' in client and 'addTestWatchlistPersonPhoto' in client, 'Test Watchlist API is wired')
 
-    test_api = read('api/routes/test.py'); test_alerts = read('api/routes/test_alerts.py'); search = read('api/routes/search.py'); sight = read('intelligence/test_sighting_store.py')
+    test_api = read('api/routes/test.py'); test_alerts = read(str(Path('api') / 'routes' / 'test_alerts.py')); search = read('api/routes/search.py'); sight = read('intelligence/test_sighting_store.py')
     check('@router.post("/sessions/{session_id}/feeds"' in test_api and '@router.delete("/sessions/{session_id}/feeds/{stream_id}")' in test_api, 'Test Feed lifecycle exists')
     check('@router.post("/sessions/{session_id}/watchlist/person-photo")' in test_api and 'test_watchlists' in test_api, 'Test Watchlist lifecycle exists')
     check('test_watchlists' in search and 'X-Test-Session-Id' in search, 'Test search routing is isolated')

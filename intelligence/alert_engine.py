@@ -9,6 +9,11 @@ try:
     from .evidence_capture import capture_snapshot_bundle, build_human_summary
 except ImportError:
     from evidence_capture import capture_snapshot_bundle, build_human_summary
+try:
+    from .sighting_store import _get_conn as _db_conn, _put_conn as _db_put
+except ImportError:
+    from sighting_store import _get_conn as _db_conn, _put_conn as _db_put
+
 
 log = logging.getLogger("alert_engine")
 DB_URL = os.getenv("DATABASE_URL", "")
@@ -118,7 +123,8 @@ class AlertEngine:
             except Exception:
                 log.error("Alert evidence capture failed", exc_info=True)
         try:
-            with psycopg2.connect(DB_URL) as conn:
+            conn = _db_conn()
+            try:
                 with conn.cursor() as cur:
                     cur.execute("""INSERT INTO alerts
                       (id,detection_id,cam_id,alert_type,priority,confidence,entity_type,details,dedup_key,status,created_at,updated_at)
@@ -133,6 +139,7 @@ class AlertEngine:
                         if thumbnail_path:
                             try: os.unlink(thumbnail_path)
                             except OSError: pass
+                        conn.rollback()
                         return None
                     if snapshot_path:
                         cur.execute("""INSERT INTO evidence(event_id,alert_id,camera_id,captured_at,media_type,storage_key,sha256,metadata)
@@ -141,6 +148,16 @@ class AlertEngine:
                         evidence_id = str(cur.fetchone()[0])
                         details["evidence"] = {"available": True, "evidence_id": evidence_id, "frame_url": f"/api/evidence/{evidence_id}/content", "thumbnail_url": f"/api/evidence/{evidence_id}/thumbnail", "description": captured.get("description")}
                         cur.execute("UPDATE alerts SET details=%s::jsonb WHERE id=%s", (json.dumps(details), alert_id))
+                conn.commit()
+            except Exception:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                raise
+            finally:
+                _db_put(conn)
+
         except Exception:
             if snapshot_path:
                 try: os.unlink(snapshot_path)

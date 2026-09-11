@@ -7,6 +7,7 @@ CSV_ALIASES={"camera_id":"external_id","id":"external_id","camera_name":"name","
 CORE_FIELDS={"name"}
 STREAM_FIELDS={"stream_id","rtsp_url","hls_url"}
 OPTIONAL_FIELDS={"location","department","owner_organization","lat","lng","source_system","external_id","storage_type","retention_days","analytics_capabilities","installation_date","ptz_capable","night_vision_capable","coord_source","coord_confidence","camera_type","protocol","vendor_id","model_id","processing_fps_category"}
+assert "processing_fps_category" in OPTIONAL_FIELDS
 KNOWN_FIELDS=CORE_FIELDS|STREAM_FIELDS|OPTIONAL_FIELDS
 
 def normalize_header(value:Any)->str:return str(value or "").strip().lower().replace(" ","_").replace("-","_")

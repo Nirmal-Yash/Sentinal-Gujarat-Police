@@ -16,7 +16,7 @@ CONF       = float(os.getenv("DETECTION_CONF", "0.4"))
 TEST_MODE  = os.getenv("TEST_MODE", "false").lower() == "true"
 PREFIX     = "test:" if TEST_MODE else ""
 GROUP      = "test_face_workers" if TEST_MODE else "face_workers"
-IN_STREAM  = f"{PREFIX}raw_frames"
+IN_STREAM = f"{PREFIX}raw_frames"
 OUT_STREAM = f"{PREFIX}detections"
 OUT_MAX    = 5000
 HEALTH_PREFIX = os.getenv('AI_HEALTH_PREFIX','sentinel:ai:health:')

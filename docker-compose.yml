@@ -74,6 +74,10 @@ services:
     volumes:
       - ./videos:/videos:ro
       - test_videos:/test_videos
+    deploy:
+      resources:
+        limits:
+          memory: 2000m
 
   ai_worker:
     build: ./ai_engine
@@ -86,7 +90,7 @@ services:
       - YOLO_MODEL=${YOLO_MODEL:-yolov8n.pt}
       - DETECTION_CONF=${DETECTION_CONF:-0.4}
       - FRAME_SKIP=${FRAME_SKIP:-3}
-      - YOLO_WORKERS=${YOLO_WORKERS:-4}
+      - YOLO_WORKERS=${YOLO_WORKERS:-2}
       - ANPR_ENABLED=${ANPR_ENABLED:-true}
       - ANPR_OCR_GPU=${ANPR_OCR_GPU:-false}
       - ANPR_OCR_INTERVAL_SECS=${ANPR_OCR_INTERVAL_SECS:-0.8}
@@ -95,7 +99,7 @@ services:
       - ANPR_VOTE_WINDOW_SECS=${ANPR_VOTE_WINDOW_SECS:-8}
       - ANPR_TRACK_MIN_AGE_SECS=${ANPR_TRACK_MIN_AGE_SECS:-1.5}
       - ANPR_TRACK_EXPIRY_SECS=${ANPR_TRACK_EXPIRY_SECS:-3}
-      - ANPR_OCR_WORKERS=${ANPR_OCR_WORKERS:-4}
+      - ANPR_OCR_WORKERS=${ANPR_OCR_WORKERS:-2}
       - ANPR_MAX_PENDING_JOBS=${ANPR_MAX_PENDING_JOBS:-20}
       - ANPR_MIN_VEHICLE_W=${ANPR_MIN_VEHICLE_W:-80}
       - ANPR_MIN_VEHICLE_H=${ANPR_MIN_VEHICLE_H:-60}
@@ -116,11 +120,11 @@ services:
       - AI_RESTART_MAX_DELAY_SECS=${AI_RESTART_MAX_DELAY_SECS:-60}
       - AI_HEALTH_PREFIX=${AI_HEALTH_PREFIX:-sentinel:ai:health:}
       - AI_HEALTH_TTL_SECS=${AI_HEALTH_TTL_SECS:-45}
-    shm_size: '2gb'
+    shm_size: '1gb'
     deploy:
       resources:
         limits:
-          memory: 6g
+          memory: 2500m
 
   person_investigation:
     build: ./ai_engine
@@ -164,6 +168,10 @@ services:
       - AI_HEALTH_PREFIX=${AI_HEALTH_PREFIX:-sentinel:ai:health:}
       - AI_HEALTH_TTL_SECS=${AI_HEALTH_TTL_SECS:-45}
     shm_size: '1gb'
+    deploy:
+      resources:
+        limits:
+          memory: 1200m
 
   test_ai_worker:
     build: ./ai_engine
@@ -186,7 +194,7 @@ services:
       - ANPR_VOTE_WINDOW_SECS=${ANPR_TEST_VOTE_WINDOW_SECS:-8}
       - ANPR_TRACK_MIN_AGE_SECS=${ANPR_TEST_TRACK_MIN_AGE_SECS:-1.5}
       - ANPR_TRACK_EXPIRY_SECS=${ANPR_TEST_TRACK_EXPIRY_SECS:-3}
-      - ANPR_OCR_WORKERS=${ANPR_TEST_OCR_WORKERS:-2}
+      - ANPR_OCR_WORKERS=${ANPR_TEST_OCR_WORKERS:-1}
       - ANPR_MAX_PENDING_JOBS=${ANPR_TEST_MAX_PENDING_JOBS:-20}
       - ANPR_MIN_VEHICLE_W=${ANPR_MIN_VEHICLE_W:-80}
       - ANPR_MIN_VEHICLE_H=${ANPR_MIN_VEHICLE_H:-60}
@@ -203,6 +211,10 @@ services:
       - FACE_ENABLED=${TEST_FACE_ENABLED:-true}
       - BEHAVIOR_ENABLED=${TEST_BEHAVIOR_ENABLED:-true}
     shm_size: '1gb'
+    deploy:
+      resources:
+        limits:
+          memory: 1500m
 
   intelligence:
     build: ./intelligence

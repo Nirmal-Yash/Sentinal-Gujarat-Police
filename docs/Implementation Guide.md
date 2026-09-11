@@ -2,20 +2,21 @@
 
 | Claim in architecture-decisions.md | Actual code state | Verdict |
 |---|---|---|
-| PostGIS canonical registry | `FLOAT lat, lng` — no geometry column | **NOT implemented** |
-| CSV onboarding + audit history | No endpoint, no tables | **NOT implemented** |
-| Observed stream metadata | `stream_metadata JSONB` + Redis key — ✓ | **Implemented** |
-| Indexed registry/plate search | GIN FTS index on cameras — ✓ | **Implemented** |
-| Durable vehicle sightings | `_persist_plate()` in intelligence/main.py — ✓ | **Implemented** |
-| Restart-safe alert dedup | In-memory dict in `alert_engine.py` — resets on restart | **NOT restart-safe** |
-| Compact Gujarat GIS | `fitBounds(GUJARAT_BOUNDS)` on init — ✓ | **Implemented** |
-| Camera clustering/layers | MarkerCluster + coverage group — ✓ | **Implemented** |
-| Persistent UI preferences | localStorage cols + view — ✓ | **Implemented** |
-| Journey route from `/search/track/{id}` | Endpoint exists; returns empty — `global_track_id` never written to DB | **Broken** |
-| Manual camera entry | No endpoint, no UI | **NOT implemented** |
-| Vendor management | Not in schema or code | **NOT implemented** |
-
-Don't Refer Verdict but analyze yourself and Decide.
+| PostGIS canonical registry | `GEOMETRY(Point, 4326)` + lat/lng sync triggers + GiST index | **Implemented & Verified** |
+| CSV onboarding + audit history | `POST /api/cameras/import` + `camera_imports` + `camera_audit_log` | **Implemented & Verified** |
+| Observed stream metadata | `stream_metadata JSONB` + Redis keys + runtime probe | **Implemented & Verified** |
+| Indexed registry/plate search | GIN FTS index on cameras + GiST geospatial | **Implemented & Verified** |
+| Durable vehicle sightings | `_persist_plate()` in `intelligence/sighting_store.py` + `ThreadedConnectionPool` | **Implemented & Verified** |
+| Restart-safe alert dedup | Redis SETNX + TTL dedup key caching | **Implemented & Verified** |
+| Compact Gujarat GIS | Leaflet + Gujarat bounding box + MarkerCluster | **Implemented & Verified** |
+| Camera clustering/layers | Leaflet marker cluster + coverage groups | **Implemented & Verified** |
+| Persistent UI preferences | localStorage cols + view + theme | **Implemented & Verified** |
+| Journey route from `/search/plate/journey` | Verified route generator with directional polylines | **Implemented & Verified** |
+| Manual camera entry | `POST /api/cameras/onboard` + UI Onboarding Modal | **Implemented & Verified** |
+| Vendor management | `vendors` + `camera_models` tables + Vendor Modal | **Implemented & Verified** |
+| Test Mode Miniature Parity | Dedicated session isolation + Redis stream namespace + 9 real video assets | **Implemented & Verified** |
+| DB Connection Pooling | `SimpleConnectionPool` (ingestion) + `ThreadedConnectionPool` (intelligence) | **Implemented & Verified** |
+| Accelerated Watchlist Matching | `faiss.IndexFlatIP` (512-d ArcFace) with graceful numpy fallback | **Implemented & Verified** |
 
 ---
 

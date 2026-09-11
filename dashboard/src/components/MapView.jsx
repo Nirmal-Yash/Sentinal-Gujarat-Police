@@ -4,8 +4,8 @@ import 'leaflet/dist/leaflet.css'
 
 const GUJARAT_BOUNDS = L.latLngBounds([20.08, 68.08], [24.55, 74.55])
 const VIEW_KEY = 'sentinel.map.viewport.session.v1'
-const SELECTED_KEY = 'sentinel.map.selected-camera.session.v1'
-const PRIO_COLOR = { HIGH: '#f85149', MEDIUM: '#d29922', LOW: '#3fb950' }
+const SELECTED_KEY = 'sentinel.map.selected.camera.v1'
+const PRIO_COLOR = { CRITICAL: '#f85149', HIGH: '#f85149', MEDIUM: '#d29922', LOW: '#3fb950' }
 const hasCoordinates = cam => cam?.lat !== null && cam?.lat !== undefined && cam?.lng !== null && cam?.lng !== undefined && Number.isFinite(Number(cam.lat)) && Number.isFinite(Number(cam.lng))
 const needsCoordinateReview = cam => cam?.coord_source === 'default' || Number(cam?.coord_confidence) < 0.4
 
@@ -36,7 +36,8 @@ function camIcon(cam, selected = false) {
 function clusterIcon(count) { return L.divIcon({ className: '', iconSize: [34, 34], iconAnchor: [17, 17], html: `<div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:#1f6feb;color:white;border:2px solid white;box-shadow:0 1px 6px #000;font:700 11px system-ui">${count}</div>` }) }
 function popupForRegistryCamera(cam) {
   const review = needsCoordinateReview(cam) ? '<br/><span style="font-size:11px;color:#9a6700;font-weight:700">Coordinate review required</span>' : ''
-  return `<div style="font-family:system-ui;font-size:12px;min-width:210px"><b>CAM-${String(cam.stream_id || '?').padStart(2, '0')} · ${cam.name}</b><br/><span style="color:#555">${cam.location || 'Location not registered'}</span><br/><span style="color:#555">${cam.department || 'Unassigned'} · ${cam.camera_type || 'fixed'}</span><br/><span style="font-size:11px;color:#777">${accurateMetadata(cam)}</span><br/><span style="font-size:11px;color:${statusColor(cam)};font-weight:700">${(cam.health_status || cam.status || 'unknown').toUpperCase()}</span>${review}</div>`
+  const displayId = cam.camera_id || `CAM-${String(cam.stream_id || '?').padStart(2, '0')}`
+  return `<div style="font-family:system-ui;font-size:12px;min-width:210px"><b>${displayId} · ${cam.name}</b><br/><span style="color:#555">${cam.location || 'Location not registered'}</span><br/><span style="color:#555">${cam.department || 'Unassigned'} · ${cam.camera_type || 'fixed'}</span><br/><span style="font-size:11px;color:#777">${accurateMetadata(cam)}</span><br/><span style="font-size:11px;color:${statusColor(cam)};font-weight:700">${(cam.health_status || cam.status || 'unknown').toUpperCase()}</span>${review}</div>`
 }
 function alertPopup(alert) {
   const plate = alert.details?.plate_text ? `<br/><b>Plate:</b> ${alert.details.plate_text}` : ''

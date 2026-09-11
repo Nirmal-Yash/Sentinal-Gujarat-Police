@@ -156,12 +156,27 @@ def persist(data: dict):
                         cur.execute("""INSERT INTO test_alerts(session_id,detection_id,alert_type,priority,event_at,details)
                           VALUES(%s::uuid,%s::uuid,'watchlist_match',%s,%s,%s::jsonb) RETURNING id""",
                           (session_id,detection_id,wl_priority or 'HIGH',timestamp,json.dumps({"plate_text":plate,"camera_label":camera_label,"watchlist_id":str(wl_id),"watchlist_name":wl_name,"description":wl_description or "","track_id":track_id,"test":True})))
-                        alert = cur.fetchone()[0]
-                        cur.execute("UPDATE test_alerts SET details=details || CAST(%s AS jsonb) WHERE id=%s", (json.dumps({"human_summary": f"Vehicle {plate or 'with an unreadable plate'} sighted at {camera_label}.", "detection_detail": {"type": "plate_sighting", "plate_text": plate}, "evidence": {"available": False, "description": "Test-mode evidence capture is unavailable for this event."}}), alert))
+            if kind.startswith("anomaly") or kind in ("crowd_anomaly", "running_crowd", "crowd_formation"):
+                atype = _value(data, "anomaly_type") or kind.removeprefix("anomaly_") or "crowd_anomaly"
+                score = float(_value(data, "anomaly_score", "0") or confidence or "0.8")
+                prio = "CRITICAL" if "running" in atype.lower() else ("HIGH" if score > 0.6 else "MEDIUM")
+                cur.execute("""SELECT id FROM test_alerts
+                    WHERE session_id=%s::uuid AND alert_type=%s AND camera_label=%s
+                      AND event_at >= %s - (%s * INTERVAL '1 second') ORDER BY event_at DESC LIMIT 1""",
+                    (session_id, f"anomaly_{atype}", camera_label, timestamp, ALERT_COOLDOWN))
+                if not cur.fetchone():
+                    cur.execute("""INSERT INTO test_alerts(session_id,detection_id,alert_type,priority,event_at,details)
+                        VALUES(%s::uuid,%s::uuid,%s,%s,%s,%s::jsonb) RETURNING id""",
+                        (session_id, detection_id, f"anomaly_{atype}", prio, timestamp,
+                         json.dumps({"anomaly_type": atype, "score": score, "camera_label": camera_label, "test": True})))
+                    alert = cur.fetchone()[0]
+                    cur.execute("UPDATE test_alerts SET details=details || CAST(%s AS jsonb) WHERE id=%s",
+                        (json.dumps({"human_summary": f"Crowd anomaly ({atype.replace('_', ' ')}) detected at {camera_label}.", "detection_detail": {"type": "anomaly", "score": score}, "evidence": {"available": False, "description": "Test-mode event."}}), alert))
         conn.commit()
     finally:
         conn.close()
     return {"session_id":session_id,"detection_id":detection_id,"camera_label":camera_label,"alert_id":str(alert) if alert else None,"watchlist_match":bool(watchlist_match),"confidence":confidence,"kind":kind}
+
 
 
 class TestSightingStoreContract(unittest.TestCase):

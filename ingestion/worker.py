@@ -4,12 +4,22 @@ import os, sys, time, base64, logging, uuid, threading
 from datetime import datetime, timezone
 from multiprocessing import Process
 
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|threads;1|stimeout;10000000"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 import cv2
+try:
+    cv2.setNumThreads(1)
+except Exception:
+    pass
 import numpy as np
 import redis
 import psycopg2
+import psycopg2.pool
 from psycopg2.extras import RealDictCursor
 from stream_adapters import adapter_for
 
@@ -55,6 +65,32 @@ RESET_MAX = 500
 ENCODE_PARAMS = [cv2.IMWRITE_JPEG_QUALITY, JPEG_Q]
 SCENE_DISCONTINUITY_MS = max(1000, int(os.getenv("SCENE_DISCONTINUITY_MS", "5000")))
 
+# ── Per-process connection pool ───────────────────────────────────────────────
+# Each camera subprocess (run_worker) creates its own SimpleConnectionPool.
+# min=1 max=5 keeps total DB connections ≤ 150 across 30 camera processes,
+# well within PostgreSQL default max_connections=100 (set higher in production).
+
+def _make_pool() -> psycopg2.pool.SimpleConnectionPool:
+    """Create a per-process psycopg2 SimpleConnectionPool."""
+    return psycopg2.pool.SimpleConnectionPool(1, 5, DB_URL)
+
+
+def _pool_exec(pool: psycopg2.pool.SimpleConnectionPool, sql: str, params: tuple = ()):
+    """Execute a single write statement using a pooled connection with auto-return."""
+    conn = pool.getconn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        pool.putconn(conn)
+
 
 def test_mode_active():
     try:
@@ -88,54 +124,94 @@ def get_cameras():
         conn.close()
 
 
-def set_status(cam_id, status):
+def set_status(cam_id, status, pool=None):
     health = {"active": "healthy", "reconnecting": "reconnecting", "offline": "offline"}.get(status, "unknown")
     connectivity = {"active": "connected", "reconnecting": "reconnecting", "offline": "disconnected"}.get(status, "unknown")
+    sql = "UPDATE cameras SET connectivity_status=%s,health_status=%s,last_seen_at=CASE WHEN %s='active' THEN NOW() ELSE last_seen_at END,updated_at=NOW() WHERE id=%s"
+    params = (connectivity, health, status, str(cam_id))
     try:
-        with psycopg2.connect(DB_URL) as conn, conn.cursor() as cur:
-            cur.execute("UPDATE cameras SET connectivity_status=%s,health_status=%s,last_seen_at=CASE WHEN %s='active' THEN NOW() ELSE last_seen_at END,updated_at=NOW() WHERE id=%s", (connectivity, health, status, str(cam_id)))
+        if pool:
+            _pool_exec(pool, sql, params)
+        else:
+            with psycopg2.connect(DB_URL) as conn, conn.cursor() as cur:
+                cur.execute(sql, params)
     except Exception as exc:
         log.warning("Status update failed: %s", exc)
 
 
-def increment_reconnect(cam_id):
+def increment_reconnect(cam_id, pool=None):
+    sql = "UPDATE cameras SET reconnect_count=COALESCE(reconnect_count,0)+1,updated_at=NOW() WHERE id=%s"
     try:
-        with psycopg2.connect(DB_URL) as conn, conn.cursor() as cur:
-            cur.execute("UPDATE cameras SET reconnect_count=COALESCE(reconnect_count,0)+1,updated_at=NOW() WHERE id=%s", (str(cam_id),))
+        if pool:
+            _pool_exec(pool, sql, (str(cam_id),))
+        else:
+            with psycopg2.connect(DB_URL) as conn, conn.cursor() as cur:
+                cur.execute(sql, (str(cam_id),))
     except Exception as exc:
         log.warning("Reconnect counter update failed: %s", exc)
 
 
-def increment_decode_failure(cam_id):
+def increment_decode_failure(cam_id, pool=None):
+    sql = "UPDATE cameras SET decode_failure_count=COALESCE(decode_failure_count,0)+1,updated_at=NOW() WHERE id=%s"
     try:
-        with psycopg2.connect(DB_URL) as conn, conn.cursor() as cur:
-            cur.execute("UPDATE cameras SET decode_failure_count=COALESCE(decode_failure_count,0)+1,updated_at=NOW() WHERE id=%s", (str(cam_id),))
+        if pool:
+            _pool_exec(pool, sql, (str(cam_id),))
+        else:
+            with psycopg2.connect(DB_URL) as conn, conn.cursor() as cur:
+                cur.execute(sql, (str(cam_id),))
     except Exception as exc:
         log.warning("Decode-failure counter update failed: %s", exc)
 
 
-def update_runtime_observation(cam_id, width, height, source_fps, decode_fps, published_fps, codec, last_pts_ms, status="active"):
+
+def update_runtime_observation(cam_id, width, height, source_fps, decode_fps, published_fps, codec, last_pts_ms, status="active", pool=None):
     """Persist observed dimensions/rates and explicit frame-health evidence."""
     health = {"active": "healthy", "reconnecting": "reconnecting", "offline": "offline"}.get(status, "unknown")
     connectivity = {"active": "connected", "reconnecting": "reconnecting", "offline": "disconnected"}.get(status, "unknown")
+    sql_update = """UPDATE cameras SET observed_width=%s,observed_height=%s,
+        observed_fps=%s,observed_source_fps=%s,observed_decode_fps=%s,
+        observed_published_fps=%s,observed_codec=%s,observed_at=NOW(),
+        last_frame_at=NOW(),last_seen_at=NOW(),
+        health_status=%s,connectivity_status=%s,updated_at=NOW() WHERE id=%s"""
+    sql_insert = """INSERT INTO camera_health_observations
+        (camera_id,health_status,source_fps,decode_fps,published_fps,reconnect_count,decode_failure_count,observation_bucket)
+        SELECT id,%s,%s,%s,%s,reconnect_count,decode_failure_count,date_trunc('minute',NOW()) FROM cameras WHERE id=%s
+        ON CONFLICT (camera_id, observation_bucket) DO UPDATE SET
+            health_status = EXCLUDED.health_status,
+            source_fps = EXCLUDED.source_fps,
+            decode_fps = EXCLUDED.decode_fps,
+            published_fps = EXCLUDED.published_fps,
+            reconnect_count = EXCLUDED.reconnect_count,
+            decode_failure_count = EXCLUDED.decode_failure_count,
+            observed_at = NOW()"""
+    params_update = (width, height, source_fps, source_fps, decode_fps, published_fps, codec, health, connectivity, str(cam_id))
+    params_insert = (health, source_fps, decode_fps, published_fps, str(cam_id))
     try:
-        with psycopg2.connect(DB_URL) as conn, conn.cursor() as cur:
-            cur.execute("""UPDATE cameras SET observed_width=%s,observed_height=%s,
-                observed_fps=%s,observed_source_fps=%s,observed_decode_fps=%s,
-                observed_published_fps=%s,observed_codec=%s,observed_at=NOW(),
-                last_frame_at=NOW(),last_seen_at=NOW(),
-                health_status=%s,connectivity_status=%s,updated_at=NOW() WHERE id=%s""",
-                (width, height, source_fps, decode_fps, published_fps, codec, health, connectivity, str(cam_id)))
-            cur.execute("""INSERT INTO camera_health_observations
-                (camera_id,health_status,source_fps,decode_fps,published_fps,reconnect_count,decode_failure_count)
-                SELECT id,%s,%s,%s,%s,reconnect_count,decode_failure_count FROM cameras WHERE id=%s""",
-                (health, source_fps, decode_fps, published_fps, str(cam_id)))
+        if pool:
+            conn = pool.getconn()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(sql_update, params_update)
+                    cur.execute(sql_insert, params_insert)
+                conn.commit()
+            except Exception:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                raise
+            finally:
+                pool.putconn(conn)
+        else:
+            with psycopg2.connect(DB_URL) as conn, conn.cursor() as cur:
+                cur.execute(sql_update, params_update)
+                cur.execute(sql_insert, params_insert)
     except Exception as exc:
         log.warning("Runtime metadata update failed: %s", exc)
 
 
 class CameraWorker:
-    def __init__(self, cam, r):
+    def __init__(self, cam, r, pool=None):
         self.cam_id = str(cam["id"])
         self.sid = cam["stream_id"]
         self.name = cam["name"]
@@ -143,6 +219,7 @@ class CameraWorker:
         self.codec = cam.get("codec") or "unknown"
         self.adapter = adapter_for(cam)
         self.r = r
+        self.pool = pool  # per-process connection pool
         category = str(cam.get("processing_fps_category") or "pedestrian").lower()
         self.processing_category = category if category in CATEGORY_INTERVALS else "pedestrian"
         self.interval = CATEGORY_INTERVALS[self.processing_category]
@@ -157,7 +234,7 @@ class CameraWorker:
     def _reconnect(self):
         delay = 2
         attempts = 0
-        increment_reconnect(self.cam_id)
+        increment_reconnect(self.cam_id, pool=self.pool)
         while attempts < 6:
             attempts += 1
             log.info("%s: reconnecting in %ss (attempt %s/6)", self.name, delay, attempts)
@@ -218,9 +295,6 @@ class CameraWorker:
             b"processing_interval_ms": str(int(self.interval*1000)).encode(),
         }
         self.r.xadd(STREAM_KEY, fields, maxlen=RAW_STREAM_MAX, approximate=True)
-        # Keep both canonical registry and provider keys.  The UUID is the API
-        # identity; the provider alias is a cheap recovery path for streams
-        # that were restarted while a registry row was being refreshed.
         encoded = frame_b64.encode()
         self.r.set(f"snapshot:{self.cam_id}", encoded, ex=SNAPSHOT_TTL)
         self.r.set(f"snapshot:cam{int(self.sid):02d}", encoded, ex=SNAPSHOT_TTL)
@@ -234,9 +308,9 @@ class CameraWorker:
         cap = self._open()
         source_fps = self._stream_fps(cap)
         if not cap.isOpened():
-            set_status(self.cam_id, "offline")
+            set_status(self.cam_id, "offline", pool=self.pool)
         else:
-            set_status(self.cam_id, "active")
+            set_status(self.cam_id, "active", pool=self.pool)
             log.info("%s: connected; source_fps=%s", self.name, source_fps or "unknown")
 
         last_publish = 0.0
@@ -250,15 +324,15 @@ class CameraWorker:
         try:
             while True:
                 if cap is None or not cap.isOpened():
-                    set_status(self.cam_id, "reconnecting")
+                    set_status(self.cam_id, "reconnecting", pool=self.pool)
                     cap = self._reconnect()
                     if cap is None:
-                        set_status(self.cam_id, "offline")
+                        set_status(self.cam_id, "offline", pool=self.pool)
                         time.sleep(10)
                         continue
 
                     source_fps = self._stream_fps(cap)
-                    set_status(self.cam_id, "active")
+                    set_status(self.cam_id, "active", pool=self.pool)
                     fail_streak = 0
                     prev_pts = None
                     observed_started = time.monotonic()
@@ -270,12 +344,12 @@ class CameraWorker:
                 if not ret:
                     fail_streak += 1
                     if fail_streak == 1:
-                        increment_decode_failure(self.cam_id)
+                        increment_decode_failure(self.cam_id, pool=self.pool)
                     if fail_streak >= 15:
                         log.warning("%s: 15 consecutive frame-read failures; reconnecting", self.name)
                         cap.release()
                         cap = None
-                        set_status(self.cam_id, "reconnecting")
+                        set_status(self.cam_id, "reconnecting", pool=self.pool)
                     time.sleep(0.05)
                     continue
 
@@ -336,6 +410,7 @@ class CameraWorker:
                         round(publish_rate, 2),
                         self.codec,
                         int(pts_ms),
+                        pool=self.pool,
                     )
                     log.info(
                         "%s: telemetry frames=%s published=%s decode_fps=%.2f publish_fps=%.2f pts=%sms",
@@ -354,16 +429,31 @@ class CameraWorker:
         finally:
             if cap is not None:
                 cap.release()
-            set_status(self.cam_id, "offline")
+            set_status(self.cam_id, "offline", pool=self.pool)
+            if self.pool:
+                try:
+                    self.pool.closeall()
+                except Exception:
+                    pass
 
 
 def run_worker(cam):
+    """Entry point for each camera subprocess. Creates a per-process DB pool."""
+    try:
+        import cv2
+        cv2.setNumThreads(1)
+    except Exception:
+        pass
+    pool = None
+    try:
+        if DB_URL:
+            pool = _make_pool()
+    except Exception as exc:
+        log.warning("Could not create DB pool for %s: %s — DB telemetry disabled", cam.get("name"), exc)
     CameraWorker(
         cam,
-        redis.from_url(
-            REDIS_URL,
-            decode_responses=False,
-        ),
+        redis.from_url(REDIS_URL, decode_responses=False),
+        pool=pool,
     ).run()
 
 
@@ -398,6 +488,7 @@ def main():
             time.sleep(3)
 
     procs = {}
+    retry_after = {}
     last_catalogue_sync = 0.0
     while True:
         if not procs:
@@ -438,10 +529,18 @@ def main():
             except Exception as exc:
                 log.warning("Periodic CCTV catalogue sync failed: %s", exc)
 
+        now = time.monotonic()
         for key, (cam, proc) in list(procs.items()):
             if not proc.is_alive():
+                try:
+                    proc.join(timeout=0.1)
+                except Exception:
+                    pass
+                if now < retry_after.get(key, 0.0):
+                    continue
                 procs.pop(key, None)
                 set_status(str(cam["id"]), "reconnecting")
+                retry_after[key] = now + 12.0
                 procs[key] = (cam, start_camera_worker(cam))
 
 if __name__ == "__main__":
