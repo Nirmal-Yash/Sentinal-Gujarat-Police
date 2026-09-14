@@ -36,7 +36,7 @@ PERSON_INFER_SIZE = int(os.getenv("CROWD_PERSON_INFER_SIZE", "416"))
 
 def _ensure_group(r, stream, group):
     try:
-        r.xgroup_create(stream, group, id="$", mkstream=True)
+        r.xgroup_create(stream, group, id="0", mkstream=True)
     except redis.exceptions.ResponseError:
         pass
 

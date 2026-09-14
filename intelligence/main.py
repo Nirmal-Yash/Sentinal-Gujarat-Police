@@ -60,7 +60,7 @@ def main():
     STREAM = "detections"
 
     try:
-        r.xgroup_create(STREAM, GROUP, id="$", mkstream=True)
+        r.xgroup_create(STREAM, GROUP, id="0", mkstream=True)
     except redis.exceptions.ResponseError:
         pass
 
@@ -163,7 +163,7 @@ def test_main():
     from test_sighting_store import persist
     import redis, uuid
     r = redis.from_url(REDIS_URL, decode_responses=False); stream, group = "test:detections", "test_intelligence"
-    try: r.xgroup_create(stream, group, id="$", mkstream=True)
+    try: r.xgroup_create(stream, group, id="0", mkstream=True)
     except redis.exceptions.ResponseError: pass
     consumer = f"test-intel-{uuid.uuid4().hex[:8]}"; log.info("Test intelligence ready — isolated streams only")
     while True:
@@ -173,7 +173,7 @@ def test_main():
                 try:
                     outcome = persist(data)
                     if outcome["alert_id"]:
-                        r.xadd("test:alerts", {b"alert_id": outcome["alert_id"].encode(), b"session_id": outcome["session_id"].encode(), b"detection_id": outcome["detection_id"].encode(), b"camera_label": outcome["camera_label"].encode(), b"priority": b"LOW", b"alert_type": b"test_plate_detected", b"test": b"true"}, maxlen=5000, approximate=True)
+                        r.xadd("test:alerts", {b"alert_id": outcome["alert_id"].encode(), b"session_id": outcome["session_id"].encode(), b"detection_id": outcome["detection_id"].encode(), b"camera_label": outcome["camera_label"].encode(), b"priority": (outcome.get("alert_priority") or "LOW").encode(), b"alert_type": (outcome.get("alert_type") or "test_alert").encode(), b"test": b"true"}, maxlen=5000, approximate=True)
                 except Exception as exc: log.error("Test intelligence error: %s", exc, exc_info=True)
                 finally: r.xack(stream, group, message_id)
 

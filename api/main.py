@@ -22,16 +22,16 @@ STARTUP_RETRIES=max(1,int(os.getenv("STARTUP_RETRIES","30"))); STARTUP_RETRY_DEL
 INSECURE_SECRET_VALUES={"","change-me","changeme","sentinel-change-in-production","replace-me","replace-with-long-random-secret","ci-only-sentinel-signing-secret","ci-only-snapshot-signing-secret"}
 async def bootstrap_admin(db:AsyncSession)->None:
     await db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),{"lock_key":"sentinel:bootstrap-admin:v1"})
-    active=await db.scalar(text("SELECT 1 FROM users WHERE role IN ('ADMIN','SUPERADMIN') AND is_active=TRUE LIMIT 1"))
-    if active:return
     if not BOOTSTRAP_ADMIN_USERNAME or not BOOTSTRAP_ADMIN_PASSWORD:
-        if AUTH_REQUIRED:raise RuntimeError("No active ADMIN/SUPERADMIN exists and bootstrap admin credentials are not configured")
+        active=await db.scalar(text("SELECT 1 FROM users WHERE role IN ('ADMIN','SUPERADMIN') AND is_active=TRUE LIMIT 1"))
+        if not active and AUTH_REQUIRED:raise RuntimeError("No active ADMIN/SUPERADMIN exists and bootstrap admin credentials are not configured")
         return
     if BOOTSTRAP_ADMIN_ROLE not in {"ADMIN","SUPERADMIN"}:raise RuntimeError("BOOTSTRAP_ADMIN_ROLE must be ADMIN or SUPERADMIN")
     password_hash=hash_password(BOOTSTRAP_ADMIN_PASSWORD)
     existing=await db.scalar(text("SELECT 1 FROM users WHERE username=:username LIMIT 1"),{"username":BOOTSTRAP_ADMIN_USERNAME})
     if existing: await db.execute(text("UPDATE users SET password_hash=:password_hash,role=:role,is_active=TRUE WHERE username=:username"),{"username":BOOTSTRAP_ADMIN_USERNAME,"password_hash":password_hash,"role":BOOTSTRAP_ADMIN_ROLE})
     else: await db.execute(text("INSERT INTO users(username,password_hash,role,is_active) VALUES(:username,:password_hash,:role,TRUE)"),{"username":BOOTSTRAP_ADMIN_USERNAME,"password_hash":password_hash,"role":BOOTSTRAP_ADMIN_ROLE})
+    await db.execute(text("DELETE FROM auth_attempts WHERE username=:username"),{"username":BOOTSTRAP_ADMIN_USERNAME})
     await db.commit()
 async def initialize_runtime()->None:
     last=None

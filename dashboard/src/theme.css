@@ -2,37 +2,37 @@
 :root,
 html[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #000000;
-  --surface: #080706;
-  --surface2: #100e0b;
-  --surface3: #18130e;
-  --border: #2b2218;
-  --border-strong: #4a3522;
-  --text: #fff7ed;
-  --text2: #b9aa98;
-  --muted: #776957;
-  --accent: #f97316;
-  --accent-strong: #fb923c;
-  --on-accent: #140b04;
-  --accent-soft: rgba(249,115,22,.12);
-  --accent-border: rgba(249,115,22,.52);
-  --green: #4ade80;
-  --red: #f87171;
-  --high: #f87171;
-  --medium: #fb923c;
-  --low: #4ade80;
-  --shadow: 0 24px 70px rgba(0,0,0,.72);
-  --theme-bg: #000000;
-  --theme-surface: #080706;
-  --theme-surface-2: #100e0b;
-  --theme-surface-3: #18130e;
-  --theme-border: #2b2218;
-  --theme-border-strong: #4a3522;
-  --theme-text: #fff7ed;
-  --theme-text-2: #b9aa98;
-  --theme-muted: #776957;
-  --theme-accent: #f97316;
-  --theme-accent-strong: #fb923c;
+  --bg: #0B0F19;
+  --surface: #161B26;
+  --surface2: #1E2536;
+  --surface3: #263043;
+  --border: #2D3748;
+  --border-strong: #3D4B63;
+  --text: #FFFFFF;
+  --text2: #8A94A6;
+  --muted: #64748B;
+  --accent: #00E5FF;
+  --accent-strong: #00B4D8;
+  --on-accent: #0B0F19;
+  --accent-soft: rgba(0, 229, 255, 0.12);
+  --accent-border: rgba(0, 229, 255, 0.45);
+  --green: #34C759;
+  --red: #FF3B30;
+  --high: #FF3B30;
+  --medium: #FFB300;
+  --low: #34C759;
+  --shadow: 0 24px 70px rgba(0, 0, 0, 0.72);
+  --theme-bg: #0B0F19;
+  --theme-surface: #161B26;
+  --theme-surface-2: #1E2536;
+  --theme-surface-3: #263043;
+  --theme-border: #2D3748;
+  --theme-border-strong: #3D4B63;
+  --theme-text: #FFFFFF;
+  --theme-text-2: #8A94A6;
+  --theme-muted: #64748B;
+  --theme-accent: #00E5FF;
+  --theme-accent-strong: #00B4D8;
 }
 
 html[data-theme="light"] {
@@ -46,17 +46,17 @@ html[data-theme="light"] {
   --text: #17202a;
   --text2: #4d5965;
   --muted: #6b7682;
-  --accent: #ea6c0a;
-  --accent-strong: #c95500;
+  --accent: #0891B2;
+  --accent-strong: #0e7490;
   --on-accent: #ffffff;
-  --accent-soft: rgba(234,108,10,.10);
-  --accent-border: rgba(234,108,10,.34);
-  --green: #15803d;
-  --red: #dc2626;
-  --high: #dc2626;
-  --medium: #d97706;
-  --low: #15803d;
-  --shadow: 0 20px 55px rgba(31,41,55,.14);
+  --accent-soft: rgba(8, 145, 178, 0.12);
+  --accent-border: rgba(8, 145, 178, 0.38);
+  --green: #16A34A;
+  --red: #DC2626;
+  --high: #DC2626;
+  --medium: #D97706;
+  --low: #16A34A;
+  --shadow: 0 20px 55px rgba(31, 41, 55, 0.14);
   --theme-bg: #f4f6f8;
   --theme-surface: #ffffff;
   --theme-surface-2: #f8fafc;
@@ -66,8 +66,8 @@ html[data-theme="light"] {
   --theme-text: #17202a;
   --theme-text-2: #4d5965;
   --theme-muted: #6b7682;
-  --theme-accent: #ea6c0a;
-  --theme-accent-strong: #c95500;
+  --theme-accent: #0891B2;
+  --theme-accent-strong: #0e7490;
 }
 
 html,
@@ -161,10 +161,10 @@ html[data-theme="light"] .ui-sidebar-menu-button:hover {
 }
 
 html[data-theme="light"] .ui-sidebar-menu-button.is-active {
-  background: linear-gradient(90deg, var(--accent), #f08a26) !important;
+  background: linear-gradient(90deg, var(--accent), var(--accent-strong)) !important;
   border-color: var(--accent) !important;
   color: #ffffff !important;
-  box-shadow: 0 8px 22px rgba(234,108,10,.18) !important;
+  box-shadow: 0 8px 22px rgba(8, 145, 178, 0.22) !important;
 }
 
 html[data-theme="light"] .ui-sidebar-menu-button.is-active svg {
@@ -198,7 +198,7 @@ html[data-theme="light"] .ui-input:focus,
 html[data-theme="light"] .sentinel-search-input:focus {
   background: var(--surface) !important;
   border-color: var(--accent-border) !important;
-  box-shadow: 0 0 0 3px rgba(234,108,10,.09) !important;
+  box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.14) !important;
 }
 
 html[data-theme="light"] .ui-dropdown-content,
@@ -237,20 +237,40 @@ html[data-theme="light"] .sentinel-user-trigger:hover {
 }
 
 html[data-theme="light"] .sentinel-avatar {
-  background: #fff3e8 !important;
+  background: rgba(8, 145, 178, 0.12) !important;
   color: var(--accent-strong) !important;
   border-color: var(--accent-border) !important;
 }
 
 html[data-theme="light"] .sentinel-status {
-  background: rgba(21,128,61,.07) !important;
-  border-color: rgba(21,128,61,.22) !important;
+  background: rgba(22, 163, 74, 0.09) !important;
+  border-color: rgba(22, 163, 74, 0.25) !important;
   color: var(--green) !important;
+}
+
+html[data-theme="light"] .ui-button-default {
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong)) !important;
+  border-color: var(--accent) !important;
+  color: #ffffff !important;
+  box-shadow: 0 7px 18px rgba(8, 145, 178, 0.22) !important;
+}
+
+html[data-theme="light"] .ui-button-default:hover {
+  background: linear-gradient(180deg, #06b6d4, var(--accent)) !important;
+  border-color: #06b6d4 !important;
+  color: #ffffff !important;
 }
 
 html[data-theme="light"] .ui-button-outline {
   background: var(--surface-2) !important;
+  border-color: var(--border-strong) !important;
   color: var(--text) !important;
+}
+
+html[data-theme="light"] .ui-button-outline:hover {
+  background: var(--surface-3) !important;
+  border-color: var(--accent-border) !important;
+  color: var(--accent-strong) !important;
 }
 
 html[data-theme="light"] .sentinel-loading-screen {
@@ -415,9 +435,9 @@ section[role="dialog"][aria-label*="metadata"] header button[aria-label="Close m
 /* Accent actions use a readable foreground in both themes. */
 .ui-button-default,
 .sentinel-map-search label,
-button[style*="var(--accent)"] { color: #140b04 !important; }
+button[style*="var(--accent)"] { color: var(--on-accent) !important; }
 html[data-theme="light"] .ui-button-default,
-html[data-theme="light"] .ui-button-default:hover { color: #140b04 !important; }
+html[data-theme="light"] .ui-button-default:hover { color: #ffffff !important; }
 
 /* Camera Registry modal: explicit contrast and viewport containment. */
 .camera-registry-overlay,

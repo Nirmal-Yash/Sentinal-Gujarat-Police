@@ -76,6 +76,9 @@ export default function MapView({ cameras, alerts = [], compact = false, focusCa
 
   useEffect(() => {
     if (mapRef.current || !containerRef.current) return
+    if (containerRef.current._leaflet_id) {
+      delete containerRef.current._leaflet_id
+    }
     let saved
     try { saved = JSON.parse(sessionStorage.getItem(VIEW_KEY) || 'null') } catch { saved = null }
     const map = L.map(containerRef.current, { center: GUJARAT_BOUNDS.getCenter(), zoom: 7, zoomControl: true, maxBounds: GUJARAT_BOUNDS.pad(0.55), maxBoundsViscosity: 0.72 })
@@ -92,7 +95,13 @@ export default function MapView({ cameras, alerts = [], compact = false, focusCa
     map.on('moveend', () => { const c = map.getCenter(); sessionStorage.setItem(VIEW_KEY, JSON.stringify({ center: [c.lat, c.lng], zoom: map.getZoom() })) }); map.on('zoomend', refreshVisibleLayer)
     requestAnimationFrame(() => map.invalidateSize())
     if (saved?.center && Number.isFinite(saved.zoom)) map.setView(saved.center, saved.zoom, { animate: false })
-    return () => { map.remove(); mapRef.current = null }
+    return () => {
+      try { map.remove() } catch (err) { console.warn('Leaflet map cleanup:', err) }
+      mapRef.current = null
+      if (containerRef.current?._leaflet_id) {
+        delete containerRef.current._leaflet_id
+      }
+    }
   }, [])
 
   useEffect(() => {
@@ -147,7 +156,18 @@ export default function MapView({ cameras, alerts = [], compact = false, focusCa
     if (routeFocusNonce && map) { if (points.length === 1) map.setView(points[0], Math.max(map.getZoom(), 15), { animate: true }); else map.fitBounds(L.latLngBounds(points).pad(0.2), { maxZoom: 15, animate: true }) }
   }, [route, routeFocusNonce])
 
-  useEffect(() => { const map = mapRef.current; if (!map) return; const observer = new ResizeObserver(() => map.invalidateSize({ pan: false })); observer.observe(containerRef.current); requestAnimationFrame(() => map.invalidateSize({ pan: false })); return () => observer.disconnect() }, [compact])
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !containerRef.current) return
+    const observer = new ResizeObserver(() => {
+      try { map.invalidateSize({ pan: false }) } catch {}
+    })
+    observer.observe(containerRef.current)
+    requestAnimationFrame(() => {
+      try { map.invalidateSize({ pan: false }) } catch {}
+    })
+    return () => observer.disconnect()
+  }, [compact])
   const mappedCount = cameras.filter(hasCoordinates).length, reviewCount = cameras.filter(needsCoordinateReview).length
   const registryNotice = mappedCount ? '' : 'No camera locations are available in the canonical registry. Import verified latitude and longitude.'
   return <div className="sentinel-map-shell" style={{ position: 'relative', height: '100%', width: '100%' }}><div className="sentinel-map-container" ref={containerRef} style={{ height: '100%', width: '100%', background: '#1a1f2e' }}/>{(notice || registryNotice) && <div className="sentinel-map-notice" style={{ position: 'absolute', top: 12, left: 52, maxWidth: 460, padding: '8px 10px', borderRadius: 6, background: 'rgba(18,24,34,.94)', border: '1px solid var(--border)', color: 'var(--text)', fontSize: 11, pointerEvents: 'none' }}>{notice || registryNotice}</div>}<div className="sentinel-map-count" style={{ position: 'absolute', right: 12, top: 12, padding: '5px 8px', borderRadius: 5, background: 'rgba(18,24,34,.9)', color: 'var(--text2)', fontSize: 10, pointerEvents: 'none' }}>{mappedCount}/{cameras.length} mapped{reviewCount ? ` · ${reviewCount} need review` : ''}</div></div>

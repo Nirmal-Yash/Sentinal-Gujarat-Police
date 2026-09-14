@@ -77,7 +77,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2000m
+          memory: 1400m
 
   ai_worker:
     build: ./ai_engine
@@ -90,7 +90,7 @@ services:
       - YOLO_MODEL=${YOLO_MODEL:-yolov8n.pt}
       - DETECTION_CONF=${DETECTION_CONF:-0.4}
       - FRAME_SKIP=${FRAME_SKIP:-3}
-      - YOLO_WORKERS=${YOLO_WORKERS:-2}
+      - YOLO_WORKERS=${YOLO_WORKERS:-1}
       - ANPR_ENABLED=${ANPR_ENABLED:-true}
       - ANPR_OCR_GPU=${ANPR_OCR_GPU:-false}
       - ANPR_OCR_INTERVAL_SECS=${ANPR_OCR_INTERVAL_SECS:-0.8}
@@ -121,10 +121,12 @@ services:
       - AI_HEALTH_PREFIX=${AI_HEALTH_PREFIX:-sentinel:ai:health:}
       - AI_HEALTH_TTL_SECS=${AI_HEALTH_TTL_SECS:-45}
     shm_size: '1gb'
+    volumes:
+      - insightface_models:/root/.insightface
     deploy:
       resources:
         limits:
-          memory: 2500m
+          memory: 2600m
 
   person_investigation:
     build: ./ai_engine
@@ -143,11 +145,13 @@ services:
       - AI_HEALTH_PREFIX=${AI_HEALTH_PREFIX:-sentinel:ai:health:}
       - AI_HEALTH_TTL_SECS=${AI_HEALTH_TTL_SECS:-45}
     shm_size: '1gb'
+    volumes:
+      - insightface_models:/root/.insightface
     deploy:
       resources:
         limits:
           cpus: '2.0'
-          memory: 2g
+          memory: 1000m
 
 
   test_person_investigation:
@@ -168,10 +172,12 @@ services:
       - AI_HEALTH_PREFIX=${AI_HEALTH_PREFIX:-sentinel:ai:health:}
       - AI_HEALTH_TTL_SECS=${AI_HEALTH_TTL_SECS:-45}
     shm_size: '1gb'
+    volumes:
+      - insightface_models:/root/.insightface
     deploy:
       resources:
         limits:
-          memory: 1200m
+          memory: 800m
 
   test_ai_worker:
     build: ./ai_engine
@@ -214,7 +220,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1500m
+          memory: 1400m
 
   intelligence:
     build: ./intelligence
@@ -354,3 +360,4 @@ volumes:
   postgres_data:
   test_videos:
   evidence_data:
+  insightface_models:

@@ -116,7 +116,7 @@ const assetCard = { display: 'flex', gap: 8, padding: 9, border: '1px solid', bo
 const note = { color: 'var(--text2)', fontSize: 12 }
 const footer = { display: 'flex', gap: 8, alignItems: 'center', padding: 12, borderTop: '1px solid var(--border)' }
 const secondary = { padding: '7px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text)', cursor: 'pointer' }
-const primary = { ...secondary, border: 0, background: 'var(--accent)', color: '#fff' }
+const primary = { ...secondary, border: 0, background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 800 }
 
 const removeButton = { flex:'0 0 auto', alignSelf:'center', padding:'6px 8px', borderRadius:5, border:'1px solid var(--border-strong)', background:'var(--surface)', color:'var(--text)', cursor:'pointer', fontSize:9, fontWeight:800 }
 const protectedBadge = { flex:'0 0 auto', alignSelf:'center', padding:'4px 7px', borderRadius:5, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text2)', fontSize:9, fontWeight:700 }

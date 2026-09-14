@@ -9,7 +9,7 @@ import './alerts/alerts.css'
 
 const STATUS_OPTIONS=['ALL','NEW','ACKNOWLEDGED','INVESTIGATING','RESOLVED','CLOSED']
 const PRIORITY_OPTIONS=['ALL','HIGH','MEDIUM','LOW']
-const SEVERITY_STYLES={CRITICAL:{tone:'#ef4444',border:'rgba(239,68,68,.55)',glow:'0 0 0 1px rgba(239,68,68,.08)'},HIGH:{tone:'#f97316',border:'rgba(249,115,22,.45)',glow:'0 0 0 1px rgba(249,115,22,.06)'},MEDIUM:{tone:'#f59e0b',border:'rgba(245,158,11,.35)',glow:'0 0 0 1px rgba(245,158,11,.05)'},LOW:{tone:'#4ade80',border:'rgba(74,222,128,.25)',glow:'none'}}
+const SEVERITY_STYLES={CRITICAL:{tone:'#FF3B30',border:'rgba(255,59,48,.55)',glow:'0 0 0 1px rgba(255,59,48,.08)'},HIGH:{tone:'#FF3B30',border:'rgba(255,59,48,.45)',glow:'0 0 0 1px rgba(255,59,48,.06)'},MEDIUM:{tone:'#FFB300',border:'rgba(255,179,0,.35)',glow:'0 0 0 1px rgba(255,179,0,.05)'},LOW:{tone:'#34C759',border:'rgba(52,199,89,.25)',glow:'none'}}
 const severityFor=a=>{const p=String(a?.priority||'MEDIUM').toUpperCase();return SEVERITY_STYLES[p]?p:'MEDIUM'}
 const formatTime=v=>{if(!v)return'—';const d=typeof v==='number'?new Date(v*1000):new Date(v);return Number.isNaN(d.getTime())?'—':d.toLocaleString('en-IN',{hour12:false})}
 function ActionButton({children,onClick,disabled=false}){return <motion.button type="button" whileTap={{scale:.96}} whileHover={{y:-1}} disabled={disabled} onClick={e=>{e.stopPropagation();onClick?.()}} style={{minHeight:34,padding:'0 11px',border:'1px solid var(--accent-border)',borderRadius:7,background:'var(--accent-soft)',color:'var(--accent-strong)',fontSize:10,fontWeight:850,cursor:disabled?'wait':'pointer',opacity:disabled?.6:1}}>{children}</motion.button>}

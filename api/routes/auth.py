@@ -37,6 +37,14 @@ async def config():
     bootstrap_configured = bool(os.getenv('BOOTSTRAP_ADMIN_USERNAME','').strip() and os.getenv('BOOTSTRAP_ADMIN_PASSWORD',''))
     return {'auth_required': AUTH_REQUIRED, 'test_enabled': os.getenv('TEST_ENDPOINT_ENABLED','true').lower() == 'true', 'session_persistent': True, 'access_token_minutes': int(os.getenv('ACCESS_TOKEN_EXPIRE_MINUTES','15')), 'refresh_token_hours': REFRESH_TOKEN_HOURS, 'bootstrap_admin_configured': bootstrap_configured, 'login_available': True}
 
+@router.get('/csrf')
+async def csrf(request: Request, response: Response):
+    token = request.cookies.get('sentinel_csrf')
+    if not token or len(token) < 32:
+        token = secrets.token_urlsafe(32)
+        response.set_cookie('sentinel_csrf', token, max_age=min(COOKIE_MAX_AGE, REFRESH_TOKEN_HOURS * 3600), httponly=False, secure=COOKIE_SECURE, samesite=COOKIE_SAMESITE, path='/')
+    return {'csrf_token': token}
+
 @router.post('/login')
 async def login(body: Login, request: Request, response: Response, db: AsyncSession = Depends(get_db), _lim: None = Depends(rate_limit('auth-login', 5, 60))):
     username = body.username.strip()
@@ -48,7 +56,9 @@ async def login(body: Login, request: Request, response: Response, db: AsyncSess
     if not row or not verify_password(body.password, row['password_hash']):
         await record_attempt(username, request, False, db); await db.commit(); raise HTTPException(401, 'Invalid username or password')
     try:
-        await record_attempt(username, request, True, db); await enforce_session_limit(str(row['id']), db)
+        await record_attempt(username, request, True, db)
+        await db.execute(text("DELETE FROM auth_attempts WHERE username=:username AND succeeded=FALSE"), {"username": username})
+        await enforce_session_limit(str(row['id']), db)
         session = (await db.execute(text("INSERT INTO user_sessions(user_id,jti,expires_at) VALUES(CAST(:uid AS uuid),CAST(:jti AS uuid),:expires) RETURNING id"), {'uid': str(row['id']), 'jti': str(__import__('uuid').uuid4()), 'expires': datetime.now(timezone.utc)})).mappings().one()
         access, access_jti, access_expires = issue_access_token(str(row['id']), row['username'], row['role'], str(session['id']))
         await db.execute(text("UPDATE user_sessions SET jti=CAST(:jti AS uuid),expires_at=:expires WHERE id=CAST(:sid AS uuid)"), {'sid': str(session['id']), 'jti': access_jti, 'expires': access_expires})
@@ -58,10 +68,12 @@ async def login(body: Login, request: Request, response: Response, db: AsyncSess
     except Exception as exc:
         await db.rollback(); log.exception('Authentication transaction failed for username=%s', username); raise HTTPException(503, 'Authentication service temporarily unavailable') from exc
     set_auth_cookies(response, access, access_expires, refresh, refresh_expires)
-    return {'access_token': access, 'token_type': 'bearer', 'expires_at': access_expires, 'user': {'id': str(row['id']), 'username': row['username'], 'role': row['role']}, 'refresh_expires_at': refresh_expires}
+    csrf_token = request.cookies.get('sentinel_csrf') or secrets.token_urlsafe(32)
+    response.set_cookie('sentinel_csrf', csrf_token, max_age=min(COOKIE_MAX_AGE, REFRESH_TOKEN_HOURS * 3600), httponly=False, secure=COOKIE_SECURE, samesite=COOKIE_SAMESITE, path='/')
+    return {'access_token': access, 'token_type': 'bearer', 'expires_at': access_expires, 'csrf_token': csrf_token, 'user': {'id': str(row['id']), 'username': row['username'], 'role': row['role']}, 'refresh_expires_at': refresh_expires}
 
 @router.post('/refresh', dependencies=[Depends(rate_limit('auth-refresh', 30, 60))])
-async def refresh(response: Response, refresh_token: str | None = Cookie(default=None, alias=REFRESH_COOKIE_NAME), db: AsyncSession = Depends(get_db)):
+async def refresh(request: Request, response: Response, refresh_token: str | None = Cookie(default=None, alias=REFRESH_COOKIE_NAME), db: AsyncSession = Depends(get_db)):
     if not AUTH_REQUIRED: return {'access_token': None, 'token_type': 'bearer', 'expires_at': None}
     if not refresh_token: raise HTTPException(401, 'Refresh token required')
     try:
@@ -80,7 +92,9 @@ async def refresh(response: Response, refresh_token: str | None = Cookie(default
     access, access_jti, access_expires = issue_access_token(uid, row['username'], row['role'], sid)
     await db.execute(text('UPDATE user_sessions SET jti=CAST(:jti AS uuid),expires_at=:expires WHERE id=CAST(:sid AS uuid)'), {'sid': sid, 'jti': access_jti, 'expires': access_expires})
     new_refresh, _, refresh_expires = issue_refresh_token(uid, sid); await db.commit(); set_auth_cookies(response, access, access_expires, new_refresh, refresh_expires)
-    return {'access_token': access, 'token_type': 'bearer', 'expires_at': access_expires, 'refresh_expires_at': refresh_expires, 'user': {'id': uid, 'username': row['username'], 'role': row['role']}}
+    csrf_token = request.cookies.get('sentinel_csrf') or secrets.token_urlsafe(32)
+    response.set_cookie('sentinel_csrf', csrf_token, max_age=min(COOKIE_MAX_AGE, REFRESH_TOKEN_HOURS * 3600), httponly=False, secure=COOKIE_SECURE, samesite=COOKIE_SAMESITE, path='/')
+    return {'access_token': access, 'token_type': 'bearer', 'expires_at': access_expires, 'refresh_expires_at': refresh_expires, 'csrf_token': csrf_token, 'user': {'id': uid, 'username': row['username'], 'role': row['role']}}
 
 @router.post('/logout')
 async def logout(response: Response, principal: Principal = Depends(current_principal), db: AsyncSession = Depends(get_db)):
@@ -88,7 +102,12 @@ async def logout(response: Response, principal: Principal = Depends(current_prin
     response.delete_cookie(COOKIE_NAME, path='/'); response.delete_cookie(REFRESH_COOKIE_NAME, path='/api/auth/refresh'); response.delete_cookie('sentinel_csrf', path='/'); return {'status': 'logged_out'}
 
 @router.get('/me')
-async def me(principal: Principal = Depends(current_principal)): return {'id': principal.user_id, 'username': principal.username, 'role': principal.role}
+async def me(request: Request, response: Response, principal: Principal = Depends(current_principal)):
+    csrf_token = request.cookies.get('sentinel_csrf')
+    if not csrf_token or len(csrf_token) < 32:
+        csrf_token = secrets.token_urlsafe(32)
+        response.set_cookie('sentinel_csrf', csrf_token, max_age=min(COOKIE_MAX_AGE, REFRESH_TOKEN_HOURS * 3600), httponly=False, secure=COOKIE_SECURE, samesite=COOKIE_SAMESITE, path='/')
+    return {'id': principal.user_id, 'username': principal.username, 'role': principal.role, 'csrf_token': csrf_token}
 
 @router.post('/users', status_code=201)
 async def create_user(body: UserCreate, principal: Principal = Depends(require_role('SUPERADMIN')), db: AsyncSession = Depends(get_db)):

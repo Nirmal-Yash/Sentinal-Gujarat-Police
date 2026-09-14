@@ -27,7 +27,7 @@ PERSON_CLS = {0}   # COCO class 0 = person
 
 def _ensure_group(r):
     try:
-        r.xgroup_create(IN_STREAM, GROUP, id="$", mkstream=True)
+        r.xgroup_create(IN_STREAM, GROUP, id="0", mkstream=True)
     except redis.exceptions.ResponseError:
         pass
 
@@ -38,11 +38,34 @@ def run():
     log.info("Loading YOLO + InsightFace ArcFace …")
     yolo = get_yolo_model() or YOLO(os.getenv("YOLO_MODEL", "yolov8n.pt"))
 
-    face_app = FaceAnalysis(
-        name="buffalo_s",          # lightweight model
-        providers=["CPUExecutionProvider"],
-    )
-    face_app.prepare(ctx_id=0, det_size=(320, 320))
+    face_app = None
+    model_dir = os.path.expanduser("~/.insightface/models/buffalo_s")
+    def _has_model(d):
+        return os.path.isdir(d) and any(f.endswith(".onnx") for f in os.listdir(d))
+
+    if _has_model(model_dir):
+        try:
+            face_app = FaceAnalysis(
+                name="buffalo_s",
+                providers=["CPUExecutionProvider"],
+            )
+            face_app.prepare(ctx_id=0, det_size=(320, 320))
+            log.info("Local FaceAnalysis loaded successfully.")
+        except Exception as exc:
+            log.warning("FaceAnalysis initialization failed: %s; face worker running in bypass mode", exc)
+    else:
+        log.info("InsightFace buffalo_s weights not yet locally ready; face worker ready in bypass mode.")
+        import threading
+        def _bg_face_loader():
+            nonlocal face_app
+            try:
+                bg_app = FaceAnalysis(name="buffalo_s", providers=["CPUExecutionProvider"])
+                bg_app.prepare(ctx_id=0, det_size=(320, 320))
+                face_app = bg_app
+                log.info("Background FaceAnalysis loaded successfully.")
+            except Exception as e:
+                log.warning("Background FaceAnalysis loader: %s", e)
+        threading.Thread(target=_bg_face_loader, daemon=True).start()
 
     r        = redis.from_url(REDIS_URL, decode_responses=False)
     _ensure_group(r)
@@ -85,7 +108,7 @@ def run():
                         if crop.size == 0:
                             continue
 
-                        faces = face_app.get(crop)
+                        faces = face_app.get(crop) if face_app is not None else []
                         for face in faces:
                             emb = face.embedding          # shape (512,)
                             emb_norm = emb / (np.linalg.norm(emb) + 1e-9)

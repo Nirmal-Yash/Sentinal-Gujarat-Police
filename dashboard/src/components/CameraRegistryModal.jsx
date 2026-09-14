@@ -5,7 +5,7 @@ import { api } from '../api/client'
 import { Button } from './ui/button'
 
 const BOUNDS=L.latLngBounds([20.08,68.08],[24.55,74.55]),KEY='sentinel.registry.map.session.v1'
-const PIN=L.divIcon({className:'sentinel-registry-pin',iconSize:[34,42],iconAnchor:[17,42],html:'<div style="width:32px;height:32px;border-radius:50% 50% 50% 0;background:#f97316;border:3px solid #fff;transform:rotate(-45deg);box-shadow:0 4px 14px rgba(0,0,0,.7)"><span style="display:block;width:9px;height:9px;border-radius:50%;background:#090705;margin:8px auto"></span></div>'})
+const PIN=L.divIcon({className:'sentinel-registry-pin',iconSize:[34,42],iconAnchor:[17,42],html:'<div style="width:32px;height:32px;border-radius:50% 50% 50% 0;background:#00E5FF;border:3px solid #fff;transform:rotate(-45deg);box-shadow:0 4px 14px rgba(0,0,0,.7)"><span style="display:block;width:9px;height:9px;border-radius:50%;background:#0B0F19;margin:8px auto"></span></div>'})
 const EMPTY={name:'',stream_id:'',location:'',department:'',owner_organization:'',rtsp_url:'',hls_url:'',lat:'',lng:'',vendor_id:'',model_id:'',processing_fps_category:'pedestrian'}
 const FIELDS=[['name','Camera name',true],['stream_id','Stream ID',true],['location','Location'],['department','Department'],['owner_organization','Owner'],['rtsp_url','RTSP URL'],['hls_url','HLS URL'],['lat','Latitude'],['lng','Longitude']]
 

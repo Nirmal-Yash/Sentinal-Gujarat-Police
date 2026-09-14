@@ -51,7 +51,7 @@ def _start_feed(session_id, row, conn, publishers, feeds):
         ],
         start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
-    feeds[stream_id] = {"stream_id": stream_id, "cap": cap, "loop": loop, "next": 0.0, "pts": 0, "publisher_restart": 0}
+    feeds[stream_id] = {"stream_id": stream_id, "source": source, "cap": cap, "loop": loop, "next": 0.0, "pts": 0, "publisher_restart": 0}
 
 
 def _stop_feed(stream_id, publishers, feeds):
@@ -73,7 +73,7 @@ def runner(session_id: str):
     client = redis.from_url(REDIS_URL, decode_responses=True)
     feeds, publishers = {}, {}
     completed_streams, failed_streams = set(), set()
-    frames, last_db_poll = 0, 0.0
+    frames, last_db_poll, last_frame_report = 0, 0.0, 0.0
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -153,12 +153,11 @@ def runner(session_id: str):
                         feed["publisher_restart"] += 1
                         if publisher is not None:
                             log_file = f"/tmp/test_publisher_{session_id}_{stream_id}_{feed['publisher_restart']}.log"
+                        source_path = feed.get("source", "")
                         publishers[stream_id] = subprocess.Popen(
                             [
                                 imageio_ffmpeg.get_ffmpeg_exe(), "-hide_banner", "-loglevel", "warning",
-                                "-re", "-stream_loop", "-1" if feed["loop"] else "0", "-i", next(
-                                    (row[1] for row in rows if int(row[0]) == stream_id), ""
-                                ),
+                                "-re", "-stream_loop", "-1" if feed["loop"] else "0", "-i", source_path,
                                 "-map", "0:v:0", "-an", "-c:v", "libx264", "-preset","ultrafast",
                                 "-tune","zerolatency", "-g","30", "-keyint_min", "30",
                                 "-sc_threshold", "0", "-f", "rtsp", "-rtsp_transport", "tcp",
@@ -202,6 +201,11 @@ def runner(session_id: str):
                 feed["next"] = now + 1 / FRAME_FPS
                 frames += 1
 
+            if now - last_frame_report >= 1.0:
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE test_sessions SET frames_processed=%s WHERE id=%s::uuid", (frames, session_id))
+                last_frame_report = now
+
             time.sleep(0.004)
 
         with conn.cursor() as cur:
@@ -241,8 +245,14 @@ def supervise():
                 if row:
                     session_id = str(row[0])
                     runner_script = "/app/test_runner.py" if os.path.exists("/app/test_runner.py") else os.path.abspath(__file__)
-                    process = subprocess.Popen([sys.executable, runner_script, "--session-id", session_id], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    process = subprocess.Popen([sys.executable, runner_script, "--session-id", session_id], start_new_session=True)
                     cur.execute("UPDATE test_sessions SET runner_pid=%s WHERE id=%s::uuid", (process.pid, session_id))
+                cur.execute("SELECT id, runner_pid FROM test_sessions WHERE status='active' AND runner_pid IS NOT NULL")
+                for active_id, pid in cur.fetchall():
+                    try:
+                        os.kill(int(pid), 0)
+                    except (OSError, ValueError):
+                        cur.execute("UPDATE test_sessions SET status='error', error='Runner process died unexpectedly' WHERE id=%s::uuid", (str(active_id),))
             conn.close()
         except Exception: pass
         time.sleep(2)

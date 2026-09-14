@@ -64,15 +64,33 @@ async def list_test_alerts(
 ):
     if priority and priority.lower() in {"undefined", "null"}: priority = None
     if status and status.lower() in {"undefined", "null"}: status = None
-    rows = await db.execute(text("""SELECT id,session_id,alert_type,priority,entity_type,details,acknowledged,status,
-        created_at,updated_at,acknowledged_at,acknowledged_by,resolved_at,resolved_by,closed_at,closed_by,stream_id
-        FROM test_alerts
-        WHERE session_id=CAST(:session_id AS uuid)
-          AND (:priority IS NULL OR priority=upper(:priority))
-          AND (:alert_type IS NULL OR alert_type ILIKE '%' || :alert_type || '%')
-          AND (:status IS NULL OR COALESCE(status, CASE WHEN acknowledged THEN 'ACKNOWLEDGED' ELSE 'NEW' END)=upper(:status))
-        ORDER BY created_at DESC LIMIT :limit"""),
-        {"session_id": str(session_id), "priority": priority, "alert_type": alert_type, "status": status, "limit": limit})
+    if alert_type and alert_type.lower() in {"undefined", "null"}: alert_type = None
+
+    clauses = ["a.session_id=CAST(:session_id AS uuid)"]
+    params = {"session_id": str(session_id), "limit": limit}
+    if priority:
+        clauses.append("a.priority = upper(:priority)")
+        params["priority"] = priority
+    if alert_type:
+        clauses.append("a.alert_type ILIKE '%' || :alert_type || '%'")
+        params["alert_type"] = alert_type
+    if status:
+        clauses.append("COALESCE(a.status, CASE WHEN a.acknowledged THEN 'ACKNOWLEDGED' ELSE 'NEW' END) = upper(:status)")
+        params["status"] = status
+
+    sql = f"""SELECT a.id, a.session_id, a.alert_type, a.priority,
+        COALESCE(d.detection_type, a.details->>'entity_type', 'unknown') AS entity_type,
+        a.details, a.acknowledged, a.status,
+        a.created_at, a.updated_at, a.acknowledged_at, a.acknowledged_by,
+        a.resolved_at, a.resolved_by, a.closed_at, a.closed_by,
+        COALESCE(d.stream_id, (a.details->>'stream_id')::int) AS stream_id,
+        COALESCE(d.camera_label, a.details->>'camera_label') AS cam_name
+        FROM test_alerts a
+        LEFT JOIN test_detections d ON d.id = a.detection_id
+        WHERE {" AND ".join(clauses)}
+        ORDER BY a.created_at DESC LIMIT :limit"""
+
+    rows = await db.execute(text(sql), params)
     return [await _test_alert_public(row) for row in rows.mappings().all()]
 
 
@@ -83,6 +101,7 @@ async def test_alert_counts(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(text("""SELECT COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE priority='CRITICAL') AS critical,
         COUNT(*) FILTER (WHERE priority='HIGH') AS high,
         COUNT(*) FILTER (WHERE priority='MEDIUM') AS medium,
         COUNT(*) FILTER (WHERE priority='LOW') AS low,

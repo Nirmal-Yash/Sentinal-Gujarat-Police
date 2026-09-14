@@ -33,7 +33,7 @@ VEHICLE_TYPES = {"car", "motorcycle", "bus", "truck"}
 
 def _ensure_group(r, stream, group):
     try:
-        r.xgroup_create(stream, group, id="$", mkstream=True)
+        r.xgroup_create(stream, group, id="0", mkstream=True)
     except redis.exceptions.ResponseError:
         pass
 

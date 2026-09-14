@@ -77,10 +77,10 @@ def persist(data: dict):
             cur.execute("""INSERT INTO test_tracks(session_id,global_track_id,entity_type,first_camera_label,last_camera_label,first_seen_at,last_seen_at,sightings)
               VALUES(%s::uuid,%s,%s,%s,%s,%s,%s,jsonb_build_array(jsonb_build_object('camera_label',%s,'timestamp',%s)))
               ON CONFLICT(session_id,global_track_id) DO UPDATE SET last_camera_label=EXCLUDED.last_camera_label,last_seen_at=EXCLUDED.last_seen_at,sightings=test_tracks.sightings || EXCLUDED.sightings""",
-              (session_id,global_track,camera_label,camera_label,timestamp,timestamp,camera_label,timestamp.isoformat()))
+              (session_id,global_track,kind,camera_label,camera_label,timestamp,timestamp,camera_label,timestamp.isoformat()))
             if embedding and kind == "face":
                 cur.execute("UPDATE test_tracks SET embedding=CAST(%s AS vector) WHERE session_id=%s::uuid AND global_track_id=%s", (_vector_literal(embedding), session_id, global_track))
-            alert = None; watchlist_match = None
+            alert = None; watchlist_match = None; alert_type = None; alert_priority = "LOW"
             if embedding and kind == "face":
                 vector_literal = _vector_literal(embedding)
                 cur.execute(
@@ -138,6 +138,8 @@ def persist(data: dict):
                                 ),
                             )
                             alert = cur.fetchone()[0]
+                            alert_type = 'watchlist_match'
+                            alert_priority = wl_priority or "HIGH"
 
             if kind == "plate" and plate and _truthy(data, "plate_validated") and _truthy(data, "anpr_consensus"):
                 cur.execute("""SELECT id,name,description,alert_priority FROM test_watchlists
@@ -156,12 +158,15 @@ def persist(data: dict):
                         cur.execute("""INSERT INTO test_alerts(session_id,detection_id,alert_type,priority,event_at,details)
                           VALUES(%s::uuid,%s::uuid,'watchlist_match',%s,%s,%s::jsonb) RETURNING id""",
                           (session_id,detection_id,wl_priority or 'HIGH',timestamp,json.dumps({"plate_text":plate,"camera_label":camera_label,"watchlist_id":str(wl_id),"watchlist_name":wl_name,"description":wl_description or "","track_id":track_id,"test":True})))
+                        alert = cur.fetchone()[0]
+                        alert_type = 'watchlist_match'
+                        alert_priority = wl_priority or "HIGH"
             if kind.startswith("anomaly") or kind in ("crowd_anomaly", "running_crowd", "crowd_formation"):
                 atype = _value(data, "anomaly_type") or kind.removeprefix("anomaly_") or "crowd_anomaly"
                 score = float(_value(data, "anomaly_score", "0") or confidence or "0.8")
                 prio = "CRITICAL" if "running" in atype.lower() else ("HIGH" if score > 0.6 else "MEDIUM")
                 cur.execute("""SELECT id FROM test_alerts
-                    WHERE session_id=%s::uuid AND alert_type=%s AND camera_label=%s
+                    WHERE session_id=%s::uuid AND alert_type=%s AND details->>'camera_label'=%s
                       AND event_at >= %s - (%s * INTERVAL '1 second') ORDER BY event_at DESC LIMIT 1""",
                     (session_id, f"anomaly_{atype}", camera_label, timestamp, ALERT_COOLDOWN))
                 if not cur.fetchone():
@@ -170,12 +175,14 @@ def persist(data: dict):
                         (session_id, detection_id, f"anomaly_{atype}", prio, timestamp,
                          json.dumps({"anomaly_type": atype, "score": score, "camera_label": camera_label, "test": True})))
                     alert = cur.fetchone()[0]
+                    alert_type = f"anomaly_{atype}"
+                    alert_priority = prio
                     cur.execute("UPDATE test_alerts SET details=details || CAST(%s AS jsonb) WHERE id=%s",
                         (json.dumps({"human_summary": f"Crowd anomaly ({atype.replace('_', ' ')}) detected at {camera_label}.", "detection_detail": {"type": "anomaly", "score": score}, "evidence": {"available": False, "description": "Test-mode event."}}), alert))
         conn.commit()
     finally:
         conn.close()
-    return {"session_id":session_id,"detection_id":detection_id,"camera_label":camera_label,"alert_id":str(alert) if alert else None,"watchlist_match":bool(watchlist_match),"confidence":confidence,"kind":kind}
+    return {"session_id":session_id,"detection_id":detection_id,"camera_label":camera_label,"alert_id":str(alert) if alert else None,"alert_type":alert_type,"alert_priority":alert_priority,"watchlist_match":bool(watchlist_match),"confidence":confidence,"kind":kind}
 
 
 
