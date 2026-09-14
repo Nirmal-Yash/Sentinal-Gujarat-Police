@@ -143,15 +143,16 @@ async def proxy_cctv_asset(asset_path: str, request: Request, access_token: str 
     clean_path = asset_path.strip().lstrip("/")
     # Handle direct encryption key request
     if clean_path.lower() == "enc.key" or clean_path.lower().endswith("/enc.key"):
-        cam_match = re.match(r"(cam\d{2})", clean_path, re.IGNORECASE)
+        cam_match = re.search(r"(cam\d{2})", clean_path, re.IGNORECASE)
         camera_id = _camera_id(cam_match.group(1)) if cam_match else "cam01"
+        key_path = f"/{camera_id}/enc.key"
         await _authorize_playback(request, camera_id, access_token, credentials, db)
         await db.close()
         gateway = get_cctv_gateway()
         if not gateway.configured:
             raise HTTPException(503, "CCTV_PASSWORD is not configured on the server")
         try:
-            key_bytes = await asyncio.to_thread(gateway.get_cached_key, "/enc.key")
+            key_bytes = await asyncio.to_thread(gateway.get_cached_key, key_path)
         except Exception as exc:
             raise HTTPException(502, f"CCTV encryption key unavailable: {exc}") from exc
         return Response(
@@ -175,6 +176,23 @@ async def proxy_cctv_asset(asset_path: str, request: Request, access_token: str 
     gateway = get_cctv_gateway()
     if not gateway.configured:
         raise HTTPException(503, "CCTV_PASSWORD is not configured on the server")
+
+    is_segment = asset_path.lower().endswith((".ts", ".m4s", ".mp4"))
+    if is_segment:
+        cached = await asyncio.to_thread(gateway.get_cached_segment, asset_path)
+        if cached:
+            body, safe_type = cached
+            return Response(
+                body,
+                media_type=safe_type,
+                headers={
+                    **_cors_headers(request),
+                    "Cache-Control": "public, max-age=8",
+                    "X-Content-Type-Options": "nosniff",
+                    "Vary": "Authorization, Cookie, Origin",
+                },
+            )
+
     try:
         upstream = await asyncio.to_thread(gateway.proxy_asset, asset_path)
     except Exception as exc:
@@ -206,4 +224,22 @@ async def proxy_cctv_asset(asset_path: str, request: Request, access_token: str 
             upstream.close()
 
     safe_type = content_type.split(";", 1)[0].strip() or "application/octet-stream"
+    if is_segment:
+        try:
+            body = upstream.content
+            upstream.close()
+            await asyncio.to_thread(gateway.store_cached_segment, asset_path, body, safe_type)
+            return Response(
+                body,
+                media_type=safe_type,
+                headers={
+                    **_cors_headers(request),
+                    "Cache-Control": "public, max-age=8",
+                    "X-Content-Type-Options": "nosniff",
+                    "Vary": "Authorization, Cookie, Origin",
+                },
+            )
+        except Exception:
+            upstream.close()
+
     return StreamingResponse(iterator(), media_type=safe_type, headers={**_cors_headers(request), "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Vary": "Authorization, Cookie, Origin"})

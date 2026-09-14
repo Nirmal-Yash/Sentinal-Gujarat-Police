@@ -1,0 +1,23 @@
+{
+  "demo_plate": "GJ01AB1234",
+  "feeds": [
+    {
+      "stream_id": 1,
+      "asset_match": "ANPR",
+      "camera_label": "Gandhinagar CH Road",
+      "geo_index": 0
+    },
+    {
+      "stream_id": 2,
+      "asset_match": "Traffic",
+      "camera_label": "Ahmedabad SG Highway",
+      "geo_index": 1
+    },
+    {
+      "stream_id": 3,
+      "asset_match": "pexels-kelly-13999008",
+      "camera_label": "Surat Ring Road",
+      "geo_index": 2
+    }
+  ]
+}

@@ -203,3 +203,14 @@ class WatchlistOut(BaseModel):
 
 class WatchlistCreate(BaseModel):
     name:str; entity_type:str="person"; description:str=""; plate_number:Optional[str]=None; alert_priority:str="HIGH"
+
+    @field_validator("plate_number")
+    @classmethod
+    def validate_plate_number(cls, value, info):
+        from validators import require_valid_plate
+        entity_type = str((info.data or {}).get("entity_type") or "person").lower()
+        if entity_type == "vehicle":
+            return require_valid_plate(value, required=True)
+        if value:
+            return require_valid_plate(value, required=False)
+        return value

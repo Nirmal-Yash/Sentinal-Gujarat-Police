@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from auth import ROLE_ORDER, Principal, current_principal, require_role
@@ -14,6 +14,34 @@ from database import get_db
 from plate_normalise import normalize_plate
 
 router = APIRouter(prefix="/test", tags=["test"])
+RUNTIME_MODE_KEY = "sentinel:runtime:mode"
+RUNTIME_EVENTS_CHANNEL = "sentinel:runtime:events"
+
+
+def _redis_client():
+    return redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
+
+
+async def _set_runtime_mode(mode: str, db: AsyncSession | None = None):
+    """Signal production vs test runtime to ingestion and AI workers."""
+    client = _redis_client()
+    try:
+        if mode == "production" and db is not None:
+            active = await db.scalar(text("SELECT 1 FROM test_sessions WHERE status IN ('starting','active') LIMIT 1"))
+            if active:
+                return
+        client.set(RUNTIME_MODE_KEY, mode)
+        client.publish(RUNTIME_EVENTS_CHANNEL, "test_start" if mode == "test" else "test_end")
+    finally:
+        client.close()
+
+
+def _trim_test_streams(client):
+    for stream in ("test:raw_frames", "test:detections", "test:alerts", "test:cam_resets"):
+        try:
+            client.xtrim(stream, maxlen=0, approximate=False)
+        except Exception:
+            pass
 
 def _find_video_dir() -> Path:
     env_dir = os.getenv("TEST_VIDEO_DIR")
@@ -109,6 +137,7 @@ async def _close_empty_session(session_id: uuid.UUID, db: AsyncSession) -> bool:
     try: client.setex(f"test:stop:{session_id}", 60, "1")
     finally: client.close()
     await db.execute(text("UPDATE test_sessions SET status='closed',closed_at=COALESCE(closed_at,NOW()),runner_pid=NULL,error=COALESCE(error,'Test session closed after its final feed was removed') WHERE id=CAST(:id AS uuid)"), {"id": str(session_id)})
+    await _set_runtime_mode("production", db)
     return True
 
 class TestFeed(BaseModel):
@@ -122,6 +151,17 @@ class TestWatchlistCreate(BaseModel):
     description: str = ""
     plate_number: str | None = None
     alert_priority: str = "HIGH"
+
+    @field_validator("plate_number")
+    @classmethod
+    def validate_plate_number(cls, value, info):
+        from validators import require_valid_plate
+        entity_type = str((info.data or {}).get("entity_type") or "vehicle").lower()
+        if entity_type == "vehicle":
+            return require_valid_plate(value, required=True)
+        if value:
+            return require_valid_plate(value, required=False)
+        return value
 
 class TestSessionCreate(BaseModel):
     name: str = Field(default="Video test session", min_length=1, max_length=255)
@@ -386,7 +426,9 @@ async def create_session(body: TestSessionCreate, principal: Principal = Depends
             ORDER BY COALESCE(plate_number, name), entity_type, created_at DESC
         ) w
     """), {"session": session_id})
-    await db.commit(); return {**dict(session), "id": session_id, "session_id": session_id, "runner_pid": None, "production_data_affected": False}
+    await db.commit()
+    await _set_runtime_mode("test")
+    return {**dict(session), "id": session_id, "session_id": session_id, "runner_pid": None, "production_data_affected": False}
 
 
 @router.get("/sessions/active")
@@ -437,8 +479,23 @@ async def session_cameras(session_id: uuid.UUID, _: Principal = Depends(require_
             "health_status": "healthy" if row["status"] in ("starting", "active") else row["status"],
             "connectivity_status": "healthy" if row["status"] in ("starting", "active") else row["status"],
             "is_test": True,
+            "session_id": str(session_id),
         })
     return res
+
+@router.get("/sessions/{session_id}/feeds/{stream_id}/snapshot")
+async def test_feed_snapshot(session_id: uuid.UUID, stream_id: int, _: Principal = Depends(require_test_video_viewer)):
+    enabled()
+    client = _redis_client()
+    try:
+        data = client.get(f"snapshot:test:{session_id}:{stream_id}")
+        if not data:
+            raise HTTPException(404, "No snapshot available yet — test feed may still be starting")
+        raw = base64.b64decode(data)
+        return Response(content=raw, media_type="image/jpeg")
+    finally:
+        client.close()
+
 
 @router.get("/sessions/{session_id}/feeds/{stream_id}/video")
 async def session_video(session_id: uuid.UUID, stream_id: int, _: Principal = Depends(require_test_video_viewer), db: AsyncSession = Depends(get_db)):
@@ -509,9 +566,49 @@ async def delete_session(session_id: uuid.UUID, _: Principal = Depends(require_r
     if row["runner_pid"]:
         try: os.killpg(int(row["runner_pid"]), signal.SIGTERM)
         except (ProcessLookupError, PermissionError): pass
-    import redis
-    client = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
-    client.setex(f"test:stop:{session_id}", 60, "1")
-    client.delete("test:raw_frames", "test:detections", "test:alerts", "test:cam_resets")
-    await db.execute(text("DELETE FROM test_sessions WHERE id=CAST(:id AS uuid)"), {"id": str(session_id)}); await db.commit()
+    client = _redis_client()
+    try:
+        client.setex(f"test:stop:{session_id}", 60, "1")
+        _trim_test_streams(client)
+    finally:
+        client.close()
+    await db.execute(text("DELETE FROM test_sessions WHERE id=CAST(:id AS uuid)"), {"id": str(session_id)})
+    await db.commit()
+    await _set_runtime_mode("production", db)
     return {"status": "cleared", "production_data_affected": False}
+
+
+@router.get("/sessions/{session_id}/plate/{plate}/journey")
+async def test_plate_journey(session_id: uuid.UUID, plate: str, _: Principal = Depends(require_role("VIEWER")), db: AsyncSession = Depends(get_db)):
+    enabled()
+    normalized = normalize_plate(plate)
+    if not normalized:
+        raise HTTPException(422, "Invalid plate number")
+    rows = (await db.execute(text("""
+        SELECT td.id, td.stream_id, td.event_at AS timestamp, td.plate_text, td.confidence,
+               COALESCE(f.camera_label, td.camera_label) AS cam_name, td.track_id, td.bbox, td.details
+        FROM test_detections td
+        LEFT JOIN test_session_feeds f ON f.session_id = td.session_id AND f.stream_id = td.stream_id
+        WHERE td.session_id = CAST(:session AS uuid)
+          AND regexp_replace(upper(COALESCE(td.plate_text,'')),'[^A-Z0-9]','','g') = :plate
+        ORDER BY td.event_at ASC
+    """), {"session": str(session_id), "plate": normalized})).mappings().all()
+    sightings = []
+    for row in rows:
+        item = dict(row)
+        geo = TEST_CAMERA_GEODATA[(int(item["stream_id"]) - 1) % len(TEST_CAMERA_GEODATA)]
+        item["cam_id"] = f"test-{session_id}-{item['stream_id']}"
+        item["location"] = geo["location"]
+        item["lat"] = geo["lat"]
+        item["lng"] = geo["lng"]
+        sightings.append(item)
+    return {
+        "plate": normalized,
+        "session_id": str(session_id),
+        "sightings": sightings,
+        "journey": {
+            "sighting_count": len(sightings),
+            "started_at": sightings[0]["timestamp"] if sightings else None,
+            "ended_at": sightings[-1]["timestamp"] if sightings else None,
+        },
+    }

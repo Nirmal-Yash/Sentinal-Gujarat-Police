@@ -4,6 +4,8 @@ from auth import require_permission, Principal
 from database import get_db
 from rate_limit import rate_limit
 from plate_normalise import normalize_plate
+from validators import is_valid_indian_plate
+from test_geo import test_geo_for_stream
 import os, base64, json, time, uuid, asyncio
 from sqlalchemy import text
 import numpy as np
@@ -26,10 +28,12 @@ async def search_cameras(q: str = Query(..., min_length=1, max_length=100), limi
 
 
 @router.get('/plate', dependencies=[Depends(rate_limit('plate-search', int(os.getenv('PLATE_SEARCH_RATE_LIMIT', '60')), int(os.getenv('PLATE_SEARCH_RATE_WINDOW', '60'))))])
-async def search_plate(q: str = Query(..., min_length=1, max_length=100), x_test_session_id: str | None = Header(None, alias='X-Test-Session-Id'), limit: int = Query(20, ge=1, le=100), db: AsyncSession = Depends(get_db)):
+async def search_plate(q: str = Query(..., min_length=1, max_length=100), x_test_session_id: str | None = Header(None, alias='X-Test-Session-Id'), confirmed_only: bool = Query(False), limit: int = Query(20, ge=1, le=100), db: AsyncSession = Depends(get_db)):
     normalized = normalize_plate(q)
     if not normalized or len(normalized) < 3:
         return {'query': q, 'detections': [], 'watchlist_hits': [], 'journeys': [], 'session_id': x_test_session_id}
+    if not is_valid_indian_plate(normalized):
+        raise HTTPException(422, 'Plate must match Indian format, e.g. GJ01AB1234')
     if x_test_session_id:
         try:
             session_uuid = str(uuid.UUID(x_test_session_id))
@@ -47,8 +51,12 @@ async def search_plate(q: str = Query(..., min_length=1, max_length=100), x_test
             LEFT JOIN test_session_feeds f ON f.session_id=td.session_id AND f.stream_id=td.stream_id
             WHERE td.session_id=CAST(:session AS uuid)
               AND regexp_replace(upper(COALESCE(td.plate_text,'')),'[^A-Z0-9]','','g')=:plate
+              AND (:confirmed_only = false OR (
+                COALESCE(td.details->>'plate_validated','') IN ('1','true','yes')
+                AND COALESCE(NULLIF(td.details->>'anpr_consensus',''),'0')::float > 0
+              ))
             ORDER BY td.event_at DESC LIMIT :limit
-        '''), {'session': session_uuid, 'plate': normalized, 'limit': limit})
+        '''), {'session': session_uuid, 'plate': normalized, 'limit': limit, 'confirmed_only': confirmed_only})
         raw_rows = [dict(r) for r in result.mappings().all()]
         # Enrich with evidence and score data from details JSONB
         rows = []
@@ -67,6 +75,10 @@ async def search_plate(q: str = Query(..., min_length=1, max_length=100), x_test
                 try: raw_bbox = json.loads(raw_bbox)
                 except Exception: raw_bbox = {}
             r['bbox'] = raw_bbox
+            geo = test_geo_for_stream(int(r.get('cam_id') or r.get('stream_id') or 1))
+            r['location'] = geo['location']
+            r['lat'] = geo['lat']
+            r['lng'] = geo['lng']
             rows.append(r)
     else:
         result = await db.execute(text('''
@@ -111,7 +123,17 @@ async def search_plate(q: str = Query(..., min_length=1, max_length=100), x_test
         wl = await db.execute(text("SELECT id,name,description,alert_priority FROM test_watchlists WHERE session_id=CAST(:session AS uuid) AND regexp_replace(upper(COALESCE(plate_number,'')),'[^A-Z0-9]','','g')=:plate AND is_active=TRUE"), {'plate': normalized, 'session': session_uuid})
     else:
         wl = await db.execute(text("SELECT id,name,description,alert_priority FROM watchlist WHERE regexp_replace(upper(COALESCE(plate_number,'')),'[^A-Z0-9]','','g')=:plate AND is_active=TRUE"), {'plate': normalized})
-    journeys = [] if x_test_session_id else [dict(r) for r in (await db.execute(text('SELECT j.id,j.started_at,j.ended_at,j.sighting_count,j.journey_confidence,j.status FROM vehicle_journeys j JOIN vehicle_identities v ON v.id=j.vehicle_identity_id WHERE v.normalized_plate=:plate ORDER BY j.started_at DESC LIMIT 20'), {'plate': normalized})).mappings().all()]
+    if x_test_session_id:
+        journeys = [{
+            'id': f'test-route-{session_uuid}',
+            'started_at': rows[-1]['timestamp'] if rows else None,
+            'ended_at': rows[0]['timestamp'] if rows else None,
+            'sighting_count': len(rows),
+            'journey_confidence': min(1.0, len(rows) / 3.0) if rows else 0.0,
+            'status': 'active' if rows else 'empty',
+        }] if len(rows) >= 2 else []
+    else:
+        journeys = [dict(r) for r in (await db.execute(text('SELECT j.id,j.started_at,j.ended_at,j.sighting_count,j.journey_confidence,j.status FROM vehicle_journeys j JOIN vehicle_identities v ON v.id=j.vehicle_identity_id WHERE v.normalized_plate=:plate ORDER BY j.started_at DESC LIMIT 20'), {'plate': normalized})).mappings().all()]
     return {'query': q, 'detections': rows, 'watchlist_hits': [dict(r) for r in wl.mappings().all()], 'journeys': journeys, 'session_id': x_test_session_id}
 
 

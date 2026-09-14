@@ -1,10 +1,14 @@
 import { useState } from 'react'
 import BrandLogo from './BrandLogo'
+import { isValidPassword, isValidUsername, usernameValidationMessage } from '../lib/validators'
 
 export default function LoginModal({ onLogin, error: externalError = '' }) {
   const [username, setUsername] = useState(''), [password, setPassword] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false)
   const submit = async event => {
     event.preventDefault()
+    const userMsg = usernameValidationMessage(username)
+    if (userMsg) return setError(userMsg)
+    if (!isValidPassword(password)) return setError('Password is required (max 128 characters).')
     setBusy(true)
     setError('')
     try {

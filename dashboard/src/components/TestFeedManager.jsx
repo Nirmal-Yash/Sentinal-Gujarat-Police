@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api/client'
+import { cameraLabelValidationMessage } from '../lib/validators'
 
 const MAX_VIDEO_SIZE_BYTES = 200 * 1024 * 1024
 const MAX_FEEDS = 8
@@ -57,6 +58,11 @@ export default function TestFeedManager({ session, cameras = [], onClose, onChan
 
   const add = async () => {
     if (!session?.id || !selected) return
+    const labelMsg = cameraLabelValidationMessage(label)
+    if (labelMsg) {
+      setError(labelMsg)
+      return
+    }
     if (cameras.filter(camera => camera?.is_test).length >= MAX_FEEDS) {
       setError(`A Test Mode session can contain at most ${MAX_FEEDS} live feeds.`)
       return

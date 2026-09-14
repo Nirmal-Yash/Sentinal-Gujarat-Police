@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api/client'
+import { plateValidationMessage } from '../lib/validators'
 
 const overlay={position:'fixed',inset:0,background:'rgba(0,0,0,.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000}
 const modal={background:'var(--surface)',borderRadius:10,border:'1px solid var(--border)',width:'min(600px,95vw)',maxHeight:'84vh',display:'flex',flexDirection:'column',overflow:'hidden'}
@@ -13,6 +14,10 @@ export default function WatchlistModal({onClose,testMode=false,testSession=null}
  const choosePerson=async e=>{const file=e.target.files?.[0];e.target.value='';if(!file)return;if(!file.type.startsWith('image/')){setError('Select an image file.');return}setPersonFile(file);setPersonCheck(null);setChecking(true);setError('');try{setPersonCheck(await api.validatePersonPhoto(file,testMode&&testSession?.id?testSession.id:undefined))}catch(err){setError(err.message)}finally{setChecking(false)}}
  const submit=async()=>{
    if(!form.name.trim())return setError('Name is required.')
+   if(form.entity_type==='vehicle'){
+     const plateMsg=plateValidationMessage(form.plate_number)
+     if(plateMsg)return setError(plateMsg)
+   }
    if(form.entity_type==='person'){
      if(!personFile)return setError('Upload one reference photo for a person watchlist entry.')
      if(!personCheck?.valid||Number(personCheck.face_count)!==1)return setError('The photo must contain exactly one visible face.')

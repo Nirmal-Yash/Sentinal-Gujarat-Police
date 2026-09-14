@@ -5,6 +5,8 @@ from auth import require_authenticated, Principal
 from database import get_db
 from models import PlateInvestigateRequest
 from plate_normalise import normalize_plate
+from validators import require_valid_plate
+from test_geo import test_geo_for_stream
 import json, uuid
 
 router = APIRouter(prefix="/investigate", tags=["investigate"], dependencies=[Depends(require_authenticated)])
@@ -38,6 +40,13 @@ def _enrich_test_rows(rows: list[dict]) -> list[dict]:
             try: raw_bbox = json.loads(raw_bbox)
             except Exception: raw_bbox = {}
         r["bbox"] = raw_bbox or {}
+        stream_id = r.get("stream_id") or r.get("cam_id")
+        if stream_id is not None:
+            geo = test_geo_for_stream(int(stream_id))
+            r["stream_id"] = int(stream_id)
+            r["location"] = geo.get("location")
+            r["lat"] = geo.get("lat")
+            r["lng"] = geo.get("lng")
         out.append(r)
     return out
 
@@ -81,7 +90,10 @@ async def investigate_plate(
     x_test_session_id: str | None = Header(None, alias="X-Test-Session-Id"),
     db: AsyncSession = Depends(get_db),
 ):
-    normalized = normalize_plate(body.plate) or body.plate.strip().upper()
+    try:
+        normalized = require_valid_plate(body.plate, required=True)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
     if x_test_session_id:
         try:
@@ -91,7 +103,7 @@ async def investigate_plate(
 
         result = await db.execute(
             text("""
-                SELECT td.id, td.stream_id AS cam_id, td.event_at AS timestamp, td.plate_text,
+                SELECT td.id, td.session_id, td.stream_id, td.event_at AS timestamp, td.plate_text,
                        td.confidence, COALESCE(f.camera_label, td.camera_label) AS cam_name,
                        NULL AS location, NULL AS lat, NULL AS lng,
                        td.track_id, NULL AS global_vehicle_id, NULL AS journey_id,

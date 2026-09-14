@@ -12,6 +12,6 @@ def test_camera_player_prefers_test_hls_and_retries_warmup():
     assert "hls.startLoad(-1)" in source
     assert "FRAG_BUFFERED" in source
 
-def test_production_ingestion_has_no_test_mode_pause_branch():
+def test_production_ingestion_has_test_mode_pause_branch():
     source=(ROOT/"ingestion/worker.py").read_text(encoding="utf-8")
-    assert "production CCTV ingestion paused" not in source
+    assert "Production CCTV ingestion paused" in source

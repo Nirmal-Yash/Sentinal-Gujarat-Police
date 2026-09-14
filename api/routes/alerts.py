@@ -6,8 +6,14 @@ from auth import require_permission, has_permission, Principal
 from database import get_db
 from typing import Optional
 from datetime import datetime, timezone
-import uuid, os, json
+from pathlib import Path
+from types import SimpleNamespace
+import uuid, os, json, logging
 import redis as redis_lib
+
+log = logging.getLogger(__name__)
+EVIDENCE_ROOT = Path(os.getenv("EVIDENCE_STORAGE_PATH", "/evidence"))
+TEST_EVIDENCE_RETENTION_DAYS = max(1, int(os.getenv("TEST_EVIDENCE_RETENTION_DAYS", "7")))
 
 router = APIRouter(prefix="/alerts", tags=["alerts"], dependencies=[Depends(require_permission("alert:read"))])
 VALID_TRANSITIONS = {"NEW": {"ACKNOWLEDGED"}, "ACKNOWLEDGED": {"INVESTIGATING", "RESOLVED"}, "INVESTIGATING": {"RESOLVED"}, "RESOLVED": {"CLOSED"}, "CLOSED": set()}
@@ -29,34 +35,117 @@ async def _auto_close_resolved(db: AsyncSession):
         await db.commit()
 
 
+async def _purge_stale_test_evidence(db: AsyncSession):
+    """Remove orphaned test evidence files from closed sessions older than retention window."""
+    rows = (await db.execute(text("""
+        SELECT e.id, e.storage_key, e.metadata->>'thumbnail_key' AS thumbnail_key
+        FROM evidence e
+        WHERE COALESCE((e.metadata->>'test')::boolean, false) = true
+          AND e.created_at < NOW() - (CAST(:days AS integer) * INTERVAL '1 day')
+          AND NOT EXISTS (
+            SELECT 1 FROM test_sessions s
+            WHERE s.id::text = e.metadata->>'session_id'
+              AND s.status IN ('starting', 'active')
+          )
+    """), {"days": TEST_EVIDENCE_RETENTION_DAYS})).mappings().all()
+    if not rows:
+        return
+    removed = 0
+    for row in rows:
+        for key in (row["storage_key"], row["thumbnail_key"]):
+            if not key:
+                continue
+            target = EVIDENCE_ROOT / str(key)
+            try:
+                if target.is_file():
+                    target.unlink()
+                    removed += 1
+            except OSError as exc:
+                log.warning("Failed to purge test evidence file %s: %s", target, exc)
+        await db.execute(text("DELETE FROM evidence WHERE id=CAST(:id AS uuid)"), {"id": str(row["id"])})
+    if removed:
+        await db.commit()
+        log.info("Purged %s stale test evidence file(s)", removed)
+
+
 def _public_alert(alert, camera):
     details = dict(alert.details or {})
     public_details = {key: value for key, value in details.items() if key not in _PRIVATE_DETAIL_KEYS}
     camera_data = None
-    camera_name = "Camera"
+    camera_name = None
     if camera:
-        camera_name = camera.name or "Camera"
+        camera_name = camera.name
         camera_data = {"id": str(camera.id), "name": camera.name, "location": camera.location or "Location not registered", "coordinates": {"lat": camera.lat, "lng": camera.lng}, "department": camera.department or "Unassigned"}
-    summary = details.get("human_summary") or f"{str(alert.alert_type or 'Alert').replace('_', ' ').capitalize()} detected at {camera_name}."
+    else:
+        camera_data = None
+        camera_name = details.get("camera_label") or details.get("cam_name")
+    summary = details.get("human_summary")
+    if not summary:
+        label = camera_name or "the monitored camera"
+        summary = f"{str(alert.alert_type or 'Alert').replace('_', ' ').capitalize()} at {label}."
     evidence = details.get("evidence") or {"available": False, "description": "Evidence frame unavailable."}
     raw_detection_detail = details.get("detection_detail") or {key: value for key, value in public_details.items() if key not in {"human_summary", "evidence"}}
     detection_detail = {key: value for key, value in dict(raw_detection_detail).items() if key not in _PRIVATE_DETAIL_KEYS}
     return {"id": alert.id, "cam_id": alert.cam_id, "cam_name": camera.name if camera else None, "camera_label": camera.name if camera else None, "alert_type": alert.alert_type, "priority": alert.priority, "severity": alert.priority, "entity_type": alert.entity_type, "details": public_details, "acknowledged": alert.acknowledged, "status": alert.status, "created_at": alert.created_at, "updated_at": alert.updated_at, "acknowledged_at": alert.acknowledged_at, "acknowledged_by": alert.acknowledged_by, "resolved_at": alert.resolved_at, "resolved_by": alert.resolved_by, "closed_at": alert.closed_at, "closed_by": alert.closed_by, "human_summary": summary, "camera": camera_data, "detected_at": alert.created_at, "detection_detail": detection_detail, "evidence": evidence}
 
 @router.get("/", response_model=list[AlertOut])
-async def list_alerts(priority: Optional[str] = None, alert_type: Optional[str] = None, cam_id: Optional[uuid.UUID] = None, status: Optional[str] = None, unacked: bool = False, limit: int = Query(300, ge=1, le=300), offset: int = Query(0, ge=0), db: AsyncSession = Depends(get_db)):
+async def list_alerts(
+    priority: Optional[str] = None,
+    alert_type: Optional[str] = None,
+    cam_id: Optional[uuid.UUID] = None,
+    camera: Optional[str] = Query(None, max_length=100),
+    plate: Optional[str] = Query(None, max_length=20),
+    status: Optional[str] = None,
+    from_ts: Optional[str] = Query(None, alias="from"),
+    to_ts: Optional[str] = Query(None, alias="to"),
+    unacked: bool = False,
+    limit: int = Query(300, ge=1, le=300),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
     await _auto_close_resolved(db)
-    q = select(Alert).order_by(desc(Alert.created_at)).limit(limit).offset(offset)
-    if priority: q = q.where(Alert.priority == priority.upper())
-    if alert_type: q = q.where(Alert.alert_type.ilike(f"%{alert_type}%"))
-    if cam_id: q = q.where(Alert.cam_id == cam_id)
-    if status: q = q.where(Alert.status == status.upper())
-    if unacked: q = q.where(Alert.status == "NEW")
-    alerts = (await db.execute(q)).scalars().all()
-    ids = {alert.cam_id for alert in alerts if alert.cam_id}
+    await _purge_stale_test_evidence(db)
+    clauses = []
+    params: dict = {"limit": limit, "offset": offset}
+    if priority:
+        clauses.append("a.priority = upper(:priority)")
+        params["priority"] = priority
+    if alert_type:
+        clauses.append("a.alert_type ILIKE '%' || :alert_type || '%'")
+        params["alert_type"] = alert_type
+    if cam_id:
+        clauses.append("a.cam_id = CAST(:cam_id AS uuid)")
+        params["cam_id"] = str(cam_id)
+    if camera:
+        clauses.append("(c.name ILIKE :camera OR c.location ILIKE :camera)")
+        params["camera"] = f"%{camera.strip()}%"
+    if plate:
+        clauses.append("COALESCE(a.details->>'plate_text', '') ILIKE :plate")
+        params["plate"] = f"%{plate.strip()}%"
+    if status:
+        clauses.append("a.status = upper(:status)")
+        params["status"] = status
+    if from_ts:
+        clauses.append("a.created_at >= CAST(:from_ts AS timestamptz)")
+        params["from_ts"] = from_ts
+    if to_ts:
+        clauses.append("a.created_at <= CAST(:to_ts AS timestamptz)")
+        params["to_ts"] = to_ts
+    if unacked:
+        clauses.append("a.status = 'NEW'")
+    where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    result = await db.execute(text(f"""
+        SELECT a.* FROM alerts a
+        LEFT JOIN cameras c ON c.id = a.cam_id
+        {where_sql}
+        ORDER BY a.created_at DESC
+        LIMIT :limit OFFSET :offset
+    """), params)
+    alert_rows = result.mappings().all()
+    ids = {row["cam_id"] for row in alert_rows if row.get("cam_id")}
     cameras = (await db.execute(select(Camera).where(Camera.id.in_(ids)))).scalars().all() if ids else []
     by_id = {camera.id: camera for camera in cameras}
-    return [_public_alert(alert, by_id.get(alert.cam_id)) for alert in alerts]
+    return [_public_alert(SimpleNamespace(**dict(row)), by_id.get(row["cam_id"])) for row in alert_rows]
 
 async def _broadcast_transition(alert: Alert, from_status: str, to_status: str, actor: str, reason: str | None):
     try:
@@ -111,6 +200,7 @@ async def transition_alert(alert_id: uuid.UUID, target_status: str = Query(..., 
 @router.get("/stats/counts")
 async def alert_counts(db: AsyncSession = Depends(get_db), _: Principal = Depends(require_permission("alert:read"))):
     await _auto_close_resolved(db)
+    await _purge_stale_test_evidence(db)
     result = await db.execute(text("""
         SELECT COUNT(*) AS total,
                COUNT(*) FILTER (WHERE priority = 'CRITICAL') AS critical,

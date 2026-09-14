@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api/client'
+import { isValidIndianPlate, plateValidationMessage } from '../lib/validators'
 import { Input } from './ui/input'
 import { Button } from './ui/button'
 
@@ -9,7 +10,14 @@ const RouteIcon=()=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" 
 const ImageIcon=()=><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
 
 // EvidenceThumbnail: lazy-loads detection frame via IntersectionObserver, shows lightbox on click
-function EvidenceThumbnail({ evidence, plate, cameraName, capturedAt }) {
+function BboxOverlay({ bbox, frameWidth, frameHeight }) {
+  const x1=Number(bbox?.x1??bbox?.[0]),y1=Number(bbox?.y1??bbox?.[1]),x2=Number(bbox?.x2??bbox?.[2]),y2=Number(bbox?.y2??bbox?.[3])
+  const w=Number(frameWidth)||1920,h=Number(frameHeight)||1080
+  if(!Number.isFinite(x1+y1+x2+y2)||x2<=x1||y2<=y1)return null
+  return <div style={{position:'absolute',left:`${Math.max(0,Math.min(100,x1/w*100))}%`,top:`${Math.max(0,Math.min(100,y1/h*100))}%`,width:`${Math.max(1,Math.min(100,(x2-x1)/w*100))}%`,height:`${Math.max(1,Math.min(100,(y2-y1)/h*100))}%`,border:'2px solid var(--accent)',boxSizing:'border-box',pointerEvents:'none'}}/>
+}
+
+function EvidenceThumbnail({ evidence, plate, cameraName, capturedAt, bbox }) {
   const [visible, setVisible] = useState(false)
   const [imgState, setImgState] = useState('idle')
   const [lightbox, setLightbox] = useState(false)
@@ -50,7 +58,10 @@ function EvidenceThumbnail({ evidence, plate, cameraName, capturedAt }) {
               <button onClick={()=>setLightbox(false)} style={{ width:28,height:28,border:'1px solid var(--border)',borderRadius:6,background:'var(--surface2)',cursor:'pointer',display:'grid',placeItems:'center' }}><CloseIcon /></button>
             </div>
             <div style={{ overflow:'auto',padding:10,textAlign:'center' }}>
-              <img src={fullUrl} alt="Full frame" style={{ maxWidth:'100%',maxHeight:'70vh',borderRadius:6,objectFit:'contain' }} />
+              <div style={{ position:'relative',display:'inline-block',maxWidth:'100%' }}>
+                <img src={fullUrl} alt="Full frame" style={{ maxWidth:'100%',maxHeight:'70vh',borderRadius:6,objectFit:'contain',display:'block' }} />
+                <BboxOverlay bbox={bbox} frameWidth={evidence?.frame_width} frameHeight={evidence?.frame_height} />
+              </div>
             </div>
             <div style={{ padding:'8px 14px',borderTop:'1px solid var(--border)',fontSize:9,color:'var(--text2)',display:'flex',gap:12,flexWrap:'wrap' }}>
               <span><b>Camera:</b> {cameraName||'—'}</span>
@@ -82,14 +93,15 @@ function SightingCard({ d, journeyLoading, onShowJourney }) {
   const camName = d.cam_name||d.camera_label||`Stream ${d.stream_id||'—'}`
   return (
     <article style={{ display:'flex',alignItems:'flex-start',gap:10,padding:'11px 12px',marginBottom:7,borderRadius:9,background:'var(--surface2)',border:'1px solid var(--border)' }}>
-      <EvidenceThumbnail evidence={d.evidence} plate={d.plate_text||'Sighting'} cameraName={camName} capturedAt={timestamp} />
+      <EvidenceThumbnail evidence={d.evidence} plate={d.plate_text||'Sighting'} cameraName={camName} capturedAt={timestamp} bbox={d.bbox} />
       <div style={{ flex:1,minWidth:0 }}>
         <b style={{ fontSize:13 }}>{d.plate_text||'Plate sighting'}</b>
         <div style={{ fontSize:10,color:'var(--text2)',marginTop:2 }}>{camName} · {timestamp}</div>
         <div style={{ display:'flex',flexWrap:'wrap',gap:4,marginTop:5 }}>
           {d.confidence!=null && <ScoreBadge label="Detector" value={d.confidence} />}
           {d.anpr_consensus && <ScoreBadge label="Consensus" value={d.anpr_consensus} color="var(--accent-strong)" />}
-          {d.raw_ocr && <span style={{ fontSize:9,color:'var(--text2)',padding:'2px 5px',border:'1px solid var(--border)',borderRadius:4 }}>OCR: {d.raw_ocr}</span>}
+          {d.ocr_confidence!=null && <ScoreBadge label="OCR" value={d.ocr_confidence} />}
+          {d.raw_ocr && !d.ocr_confidence && <span style={{ fontSize:9,color:'var(--text2)',padding:'2px 5px',border:'1px solid var(--border)',borderRadius:4 }}>OCR: {d.raw_ocr}</span>}
         </div>
       </div>
       {(d.global_vehicle_id||d.track_id) && (
@@ -138,8 +150,11 @@ export default function InvestigationPanel({ onClose, onLocateRoute, init, testM
     const timer=setInterval(poll,3000); return()=>{active=false;clearInterval(timer)}
   },[tab,submitted,testMode,testSession?.id])
 
+  const plateError=plateValidationMessage(query.trim())
   const executePlate=async()=>{
-    const value=query.trim(); if(value.length<3){setError('Enter at least 3 characters.');return}
+    const value=query.trim()
+    const validation=plateValidationMessage(value)
+    if(validation){setError(validation);return}
     setSubmitted(value);setLoading(true);setError('')
     try{const r=await api.searchPlate(value,testMode&&testSession?{testSessionId:testSession.id}:{}); setResults(r)}
     catch(err){setResults(null);setError(err.message||'Investigation failed')}
@@ -151,7 +166,8 @@ export default function InvestigationPanel({ onClose, onLocateRoute, init, testM
     setJourneyLoading(row.id)
     try{
       let sightings=[]
-      if(testMode&&testSession){const r=await api.getTestResults(testSession.id,{limit:500}); sightings=(r.detections||[]).filter(d=>String(d.track_id||'')===String(row.track_id||track)).sort((a,b)=>new Date(a.event_at||a.timestamp)-new Date(b.event_at||b.timestamp))}
+      if(testMode&&testSession&&row.plate_text){const r=await api.getTestPlateJourney(testSession.id,row.plate_text); sightings=(r.sightings||[]).filter(s=>s.lat!=null&&s.lng!=null)}
+      else if(testMode&&testSession){const r=await api.getTestResults(testSession.id,{limit:500}); sightings=(r.detections||[]).filter(d=>String(d.track_id||'')===String(row.track_id||track)).sort((a,b)=>new Date(a.event_at||a.timestamp)-new Date(b.event_at||b.timestamp)).map(d=>({...d,lat:d.lat,lng:d.lng}))}
       else{const r=await api.searchTrack(track); sightings=r.sightings||[]}
       onLocateRoute?.(sightings)
     }catch(err){setError(err.message||'Journey lookup failed')}
@@ -159,13 +175,20 @@ export default function InvestigationPanel({ onClose, onLocateRoute, init, testM
   }
 
   const showFullJourneyRoute=async()=>{
-    const plate=submitted||query; if(!plate||plate.length<3) return
+    const plate=submitted||query
+    if(!plate||!isValidIndianPlate(plate)) return
     setJourneyRouteLoading(true);setError('')
     try{
-      const r=await api.searchPlateJourney(plate)
-      const all=(r.journeys||[]).flatMap(j=>j.journey_id?[j]:results?.detections||[]).filter(s=>s.lat!=null&&s.lng!=null)
-      if(!all.length){setError('No GPS-located sightings found.');return}
-      onLocateRoute?.(all)
+      let sightings=[]
+      if(testMode&&testSession){
+        const r=await api.getTestPlateJourney(testSession.id,plate)
+        sightings=(r.sightings||[]).filter(s=>s.lat!=null&&s.lng!=null)
+      }else{
+        const r=await api.searchPlateJourney(plate)
+        sightings=(r.journeys||[]).flatMap(j=>j.sightings||[]).concat(results?.detections||[]).filter(s=>s.lat!=null&&s.lng!=null)
+      }
+      if(sightings.length<2){setError('Need at least two GPS-located sightings for a route.');return}
+      onLocateRoute?.(sightings)
     }catch(err){setError(err.message||'Journey route lookup failed')}
     finally{setJourneyRouteLoading(false)}
   }
@@ -186,7 +209,8 @@ export default function InvestigationPanel({ onClose, onLocateRoute, init, testM
   }
 
   const validCount=Object.values(personValidation).filter(v=>v?.valid).length
-  const hasJourneyData=!testMode&&results&&(results.journeys?.length>0||results.detections?.length>0)
+  const geoDetections=(results?.detections||[]).filter(d=>d.lat!=null&&d.lng!=null)
+  const hasJourneyData=results&&(results.journeys?.length>0||geoDetections.length>=2)
   const SearchIcon=()=><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
   const containerStyle=embedded?{width:'100%',height:'100%',display:'flex',justifyContent:'center',padding:14,overflow:'hidden'}:overlay
   const sectionStyle=embedded?{...modal,width:'100%',maxWidth:1080,height:'100%',maxHeight:'100%',borderRadius:12}:modal
@@ -219,7 +243,7 @@ export default function InvestigationPanel({ onClose, onLocateRoute, init, testM
               <Input autoFocus value={query} onChange={e=>setQuery(e.target.value)}
                      onKeyDown={e=>e.key==='Enter'&&!loading&&query.trim().length>=3&&executePlate()}
                      placeholder="Enter number plate, e.g. GJ03AA1234" aria-label="Number plate" style={{ height:40,flex:1 }} />
-              <Button onClick={executePlate} disabled={loading||query.trim().length<3}
+              <Button onClick={executePlate} disabled={loading||Boolean(plateError)}
                       style={{ height:40,padding:'0 18px',fontSize:12,fontWeight:800,display:'inline-flex',alignItems:'center',gap:6 }}>
                 <SearchIcon />{loading?'Investigating…':'Investigate'}
               </Button>
@@ -294,12 +318,18 @@ export default function InvestigationPanel({ onClose, onLocateRoute, init, testM
                 <div style={personResults.status==='matches'?matchBox:empty}>
                   <b>{personResults.status==='matches'?'Face matches':'No face matches'}</b>
                   {personResults.matches?.length>0&&personResults.matches.slice(0,20).map((m,i)=>(
-                    <div key={`${m.id}-${i}`} style={matchRow}>
-                      <span style={{ flex:1 }}>{m.entity_type||'Person'} · {m.first_seen_cam||m.first_camera_label||'Camera'} <span style={muted}>{Number(m.similarity||0).toFixed(3)} similarity</span></span>
-                      <ScoreBadge label="Sim" value={Number(m.similarity||0)} color="var(--green)" />
+                    <div key={`${m.id}-${i}`} style={{...matchRow,flexWrap:'wrap'}}>
+                      <div style={{display:'flex',gap:10,alignItems:'center',flex:1,minWidth:0}}>
+                        {previewUrls[0]&&<img src={previewUrls[0]} alt="Reference" style={{width:72,height:54,objectFit:'cover',borderRadius:6,border:'1px solid var(--border)'}}/>}
+                        {m.sighting_evidence?.thumbnail_url||m.sighting_evidence?.frame_url
+                          ? <img src={m.sighting_evidence.thumbnail_url||m.sighting_evidence.frame_url} alt="Sighting" style={{width:72,height:54,objectFit:'cover',borderRadius:6,border:'1px solid var(--accent-border)'}}/>
+                          : <div style={{width:72,height:54,borderRadius:6,border:'1px dashed var(--border)',display:'grid',placeItems:'center',fontSize:8,color:'var(--text2)'}}>No frame</div>}
+                        <span style={{ flex:1,minWidth:0 }}>{m.entity_type||'Person'} · {m.first_seen_cam||m.first_camera_label||'Camera'}</span>
+                      </div>
+                      <ScoreBadge label="Match" value={Number(m.similarity||0)} color="var(--green)" />
+                      {personResults.threshold!=null && <span style={muted}>Threshold: {(Number(personResults.threshold)*100).toFixed(0)}%</span>}
                     </div>
                   ))}
-                  {personResults.threshold!=null && <div style={muted}>Match threshold: {Number(personResults.threshold).toFixed(2)}</div>}
                 </div>
               )}
               <div style={{ display:'flex',justifyContent:'flex-end',marginTop:13 }}>

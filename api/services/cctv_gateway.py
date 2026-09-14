@@ -37,6 +37,8 @@ class CctvGateway:
         self._authenticated_at = 0.0
         self._last_login_error: Optional[str] = None
         self._key_cache: dict[str, tuple[float, bytes]] = {}
+        self._segment_cache: dict[str, tuple[float, bytes, str]] = {}
+        self._segment_cache_ttl = float(os.getenv("CCTV_SEGMENT_CACHE_TTL", "8"))
 
     @property
     def configured(self) -> bool:
@@ -169,6 +171,22 @@ class CctvGateway:
             return key_bytes
         finally:
             resp.close()
+
+    def get_cached_segment(self, asset_path: str) -> tuple[bytes, str] | None:
+        now = time.monotonic()
+        with self._lock:
+            cached = self._segment_cache.get(asset_path)
+            if cached and (now - cached[0]) < self._segment_cache_ttl:
+                return cached[1], cached[2]
+        return None
+
+    def store_cached_segment(self, asset_path: str, body: bytes, content_type: str) -> None:
+        with self._lock:
+            self._segment_cache[asset_path] = (time.monotonic(), body, content_type)
+            if len(self._segment_cache) > 256:
+                oldest = sorted(self._segment_cache.items(), key=lambda item: item[1][0])[:64]
+                for key, _ in oldest:
+                    self._segment_cache.pop(key, None)
 
 
 _gateway: Optional[CctvGateway] = None

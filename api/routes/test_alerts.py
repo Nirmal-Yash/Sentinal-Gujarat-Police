@@ -6,6 +6,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from auth import Principal, require_permission
 from database import get_db
+from plate_normalise import normalize_plate
+from test_geo import test_geo_for_stream
+from alert_summary import build_human_summary
 
 router = APIRouter(prefix="/test/sessions", tags=["test-alerts"])
 VALID = {"NEW": {"ACKNOWLEDGED"}, "ACKNOWLEDGED": {"INVESTIGATING", "RESOLVED"}, "INVESTIGATING": {"RESOLVED"}, "RESOLVED": {"CLOSED"}, "CLOSED": set()}
@@ -14,13 +17,15 @@ async def _test_alert_public(row):
     details = dict(row.get("details") or {})
     camera = None
     stream_id = row.get("stream_id")
+    cam_name = row.get("cam_name") or (f"Test Camera {stream_id}" if stream_id is not None else None)
     if stream_id is not None:
+        geo = test_geo_for_stream(int(stream_id))
         camera = {
             "id": f"test-{row['session_id']}-{stream_id}",
-            "name": row.get("cam_name") or f"Test Camera {stream_id}",
-            "location": "Isolated video test",
-            "coordinates": {"lat": None, "lng": None},
-            "department": "Test Mode",
+            "name": cam_name,
+            "location": geo["location"],
+            "coordinates": {"lat": geo["lat"], "lng": geo["lng"]},
+            "department": geo["department"],
         }
     return {
         "id": row["id"],
@@ -44,7 +49,10 @@ async def _test_alert_public(row):
         "resolved_by": row["resolved_by"],
         "closed_at": row["closed_at"],
         "closed_by": row["closed_by"],
-        "human_summary": details.get("human_summary") or "Test Mode alert",
+        "human_summary": details.get("human_summary") or build_human_summary(row.get("alert_type"), details, cam_name or "test camera"),
+        "location": camera["location"] if camera else None,
+        "lat": camera["coordinates"]["lat"] if camera else None,
+        "lng": camera["coordinates"]["lng"] if camera else None,
         "camera": camera,
         "detected_at": row["created_at"],
         "detection_detail": details.get("detection_detail") or {},
@@ -58,6 +66,10 @@ async def list_test_alerts(
     priority: str | None = Query(None, max_length=16),
     alert_type: str | None = Query(None, max_length=64),
     status: str | None = Query(None, max_length=24),
+    camera: str | None = Query(None, max_length=100),
+    plate: str | None = Query(None, max_length=20),
+    from_ts: str | None = Query(None, alias="from"),
+    to_ts: str | None = Query(None, alias="to"),
     limit: int = Query(300, ge=1, le=300),
     _: Principal = Depends(require_permission("alert:read")),
     db: AsyncSession = Depends(get_db),
@@ -77,6 +89,18 @@ async def list_test_alerts(
     if status:
         clauses.append("COALESCE(a.status, CASE WHEN a.acknowledged THEN 'ACKNOWLEDGED' ELSE 'NEW' END) = upper(:status)")
         params["status"] = status
+    if camera:
+        clauses.append("COALESCE(d.camera_label, a.details->>'camera_label', '') ILIKE :camera")
+        params["camera"] = f"%{camera.strip()}%"
+    if plate:
+        clauses.append("COALESCE(a.details->>'plate_text', '') ILIKE :plate")
+        params["plate"] = f"%{plate.strip()}%"
+    if from_ts:
+        clauses.append("a.created_at >= CAST(:from_ts AS timestamptz)")
+        params["from_ts"] = from_ts
+    if to_ts:
+        clauses.append("a.created_at <= CAST(:to_ts AS timestamptz)")
+        params["to_ts"] = to_ts
 
     sql = f"""SELECT a.id, a.session_id, a.alert_type, a.priority,
         COALESCE(d.detection_type, a.details->>'entity_type', 'unknown') AS entity_type,
