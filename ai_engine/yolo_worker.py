@@ -152,12 +152,26 @@ def run():
                             continue
                         if now - state.last_anpr_dispatch.get(key, 0.0) < ANPR_DISPATCH_INTERVAL:
                             continue
+
+                        # Layer-3 ANPR gate: require track stability before wasting OCR
+                        track_hits = getattr(track, "hits", None) or getattr(track, "age", None) or 1
+                        min_hits = 1 if TEST_MODE else 3
+                        if track_hits < min_hits:
+                            continue
+                        # Minimum vehicle bounding-box: too small → plate region unusable
+                        bbox_w, bbox_h = r2 - l, b - t
+                        min_veh_w = 40 if TEST_MODE else 60
+                        min_veh_h = 25 if TEST_MODE else 40
+                        if bbox_w < min_veh_w or bbox_h < min_veh_h:
+                            continue
+
                         crop_b64 = _encode_crop(frame, l, t, r2, b)
                         if not crop_b64:
                             continue
                         request = detection_event(data, "anpr_request", track_id=track.track_id, conf=track_conf,
                                                   x1=l, y1=t, x2=r2, y2=b, frame_w=w, frame_h=h,
-                                                  vehicle_type=etype, vehicle_crop=crop_b64)
+                                                  vehicle_type=etype, vehicle_crop=crop_b64,
+                                                  track_first_seen_at=str(getattr(track, "start_time", now)))
                         request[b"event_type"] = b"anpr_request"
                         r.xadd(ANPR_STREAM, request, maxlen=OUT_MAX, approximate=True)
                         state.last_anpr_dispatch[key] = now

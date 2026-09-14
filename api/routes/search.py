@@ -37,21 +37,83 @@ async def search_plate(q: str = Query(..., min_length=1, max_length=100), x_test
             raise HTTPException(400, 'Invalid X-Test-Session-Id') from exc
         if not await db.scalar(text("SELECT 1 FROM test_sessions WHERE id=CAST(:id AS uuid) AND status IN ('starting','active')"), {'id': session_uuid}):
             raise HTTPException(404, 'Test session not active')
-        result = await db.execute(text('''SELECT td.id,td.stream_id AS cam_id,td.event_at AS timestamp,td.plate_text,td.confidence,COALESCE(f.camera_label,td.camera_label) AS cam_name,NULL AS location,NULL AS lat,NULL AS lng,td.track_id,NULL AS global_vehicle_id,NULL AS journey_id
-            FROM test_detections td LEFT JOIN test_session_feeds f ON f.session_id=td.session_id AND f.stream_id=td.stream_id
-            WHERE td.session_id=CAST(:session AS uuid) AND regexp_replace(upper(COALESCE(td.plate_text,'')),'[^A-Z0-9]','','g')=:plate
-            ORDER BY td.event_at DESC LIMIT :limit'''), {'session': session_uuid, 'plate': normalized, 'limit': limit})
-        rows = [dict(r) for r in result.mappings().all()]
+        result = await db.execute(text('''
+            SELECT td.id, td.stream_id AS cam_id, td.event_at AS timestamp, td.plate_text,
+                   td.confidence, COALESCE(f.camera_label,td.camera_label) AS cam_name,
+                   NULL AS location, NULL AS lat, NULL AS lng,
+                   td.track_id, NULL AS global_vehicle_id, NULL AS journey_id,
+                   td.bbox, td.details
+            FROM test_detections td
+            LEFT JOIN test_session_feeds f ON f.session_id=td.session_id AND f.stream_id=td.stream_id
+            WHERE td.session_id=CAST(:session AS uuid)
+              AND regexp_replace(upper(COALESCE(td.plate_text,'')),'[^A-Z0-9]','','g')=:plate
+            ORDER BY td.event_at DESC LIMIT :limit
+        '''), {'session': session_uuid, 'plate': normalized, 'limit': limit})
+        raw_rows = [dict(r) for r in result.mappings().all()]
+        # Enrich with evidence and score data from details JSONB
+        rows = []
+        for r in raw_rows:
+            d = r.get('details') or {}
+            if isinstance(d, str):
+                try: d = json.loads(d)
+                except Exception: d = {}
+            ev = d.get('evidence') or {}
+            r['evidence'] = ev if ev.get('available') else {'available': False}
+            r['anpr_consensus'] = d.get('anpr_consensus') or ''
+            r['raw_ocr'] = d.get('raw_ocr') or ''
+            r['detector_confidence'] = d.get('detector_confidence') or str(r.get('confidence') or '')
+            raw_bbox = r.get('bbox') or {}
+            if isinstance(raw_bbox, str):
+                try: raw_bbox = json.loads(raw_bbox)
+                except Exception: raw_bbox = {}
+            r['bbox'] = raw_bbox
+            rows.append(r)
     else:
-        result = await db.execute(text('''SELECT s.id,s.camera_id AS cam_id,s.source_timestamp AS timestamp,s.normalized_plate AS plate_text,s.confidence,c.name AS cam_name,c.location,c.lat,c.lng,s.track_id,s.global_vehicle_id,s.journey_id
-            FROM vehicle_sightings s JOIN cameras c ON c.id=s.camera_id WHERE s.normalized_plate=:plate ORDER BY s.source_timestamp DESC LIMIT :limit'''), {'plate': normalized, 'limit': limit})
-        rows = [dict(r) for r in result.mappings().all()]
+        result = await db.execute(text('''
+            SELECT s.id, s.camera_id AS cam_id, s.source_timestamp AS timestamp,
+                   s.normalized_plate AS plate_text, s.confidence, c.name AS cam_name,
+                   c.location, c.lat, c.lng, s.track_id, s.global_vehicle_id, s.journey_id,
+                   s.evidence_id, e.sha256 AS evidence_sha256,
+                   d.bbox, d.metadata AS det_meta
+            FROM vehicle_sightings s
+            JOIN cameras c ON c.id=s.camera_id
+            LEFT JOIN evidence e ON e.id::text=s.evidence_id
+            LEFT JOIN detections d ON d.id=s.detection_id
+            WHERE s.normalized_plate=:plate
+            ORDER BY s.source_timestamp DESC LIMIT :limit
+        '''), {'plate': normalized, 'limit': limit})
+        raw_rows = [dict(r) for r in result.mappings().all()]
+        rows = []
+        for r in raw_rows:
+            ev_id = r.get('evidence_id')
+            if ev_id:
+                r['evidence'] = {'available': True, 'evidence_id': str(ev_id),
+                                  'frame_url': f'/api/evidence/{ev_id}/content',
+                                  'thumbnail_url': f'/api/evidence/{ev_id}/thumbnail',
+                                  'sha256': r.pop('evidence_sha256', None) or ''}
+            else:
+                r.pop('evidence_sha256', None)
+                r['evidence'] = {'available': False}
+            d = r.pop('det_meta', None) or {}
+            if isinstance(d, str):
+                try: d = json.loads(d)
+                except Exception: d = {}
+            r['anpr_consensus'] = d.get('anpr_consensus') or ''
+            r['raw_ocr'] = d.get('raw_ocr') or ''
+            r['detector_confidence'] = d.get('detector_confidence') or str(r.get('confidence') or '')
+            raw_bbox = r.get('bbox') or {}
+            if isinstance(raw_bbox, str):
+                try: raw_bbox = json.loads(raw_bbox)
+                except Exception: raw_bbox = {}
+            r['bbox'] = raw_bbox
+            rows.append(r)
     if x_test_session_id:
         wl = await db.execute(text("SELECT id,name,description,alert_priority FROM test_watchlists WHERE session_id=CAST(:session AS uuid) AND regexp_replace(upper(COALESCE(plate_number,'')),'[^A-Z0-9]','','g')=:plate AND is_active=TRUE"), {'plate': normalized, 'session': session_uuid})
     else:
         wl = await db.execute(text("SELECT id,name,description,alert_priority FROM watchlist WHERE regexp_replace(upper(COALESCE(plate_number,'')),'[^A-Z0-9]','','g')=:plate AND is_active=TRUE"), {'plate': normalized})
     journeys = [] if x_test_session_id else [dict(r) for r in (await db.execute(text('SELECT j.id,j.started_at,j.ended_at,j.sighting_count,j.journey_confidence,j.status FROM vehicle_journeys j JOIN vehicle_identities v ON v.id=j.vehicle_identity_id WHERE v.normalized_plate=:plate ORDER BY j.started_at DESC LIMIT 20'), {'plate': normalized})).mappings().all()]
     return {'query': q, 'detections': rows, 'watchlist_hits': [dict(r) for r in wl.mappings().all()], 'journeys': journeys, 'session_id': x_test_session_id}
+
 
 
 @router.get('/plate/{plate}/journey')

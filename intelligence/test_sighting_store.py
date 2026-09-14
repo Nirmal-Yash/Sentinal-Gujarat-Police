@@ -1,12 +1,20 @@
 """Persistence boundary and regression tests for isolated test mode."""
-import base64, json, os, unittest
+import base64, json, os, time, unittest
 from datetime import datetime, timezone
 import psycopg2
 import numpy as np
+import redis as redis_lib
 from plate_normalise import normalize_plate
 
+try:
+    from .evidence_capture import capture_detection_snapshot
+except ImportError:
+    from evidence_capture import capture_detection_snapshot
+
 DB_URL = os.getenv("DATABASE_URL", "")
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 ALERT_COOLDOWN = max(1, int(os.getenv("ALERT_COOLDOWN", "60")))
+_EVIDENCE_ENABLED = os.getenv("TEST_EVIDENCE_ENABLED", "true").lower() == "true"
 
 
 def _value(data, name, default=""):
@@ -70,11 +78,15 @@ def persist(data: dict):
     plate = normalize_plate(_value(data, "plate_text"))
     confidence = max(0.0, min(1.0, float(_value(data, "conf", "0") or 0)))
     bbox = {key: _value(data, key) for key in ("x1","y1","x2","y2") if key.encode() in data}
+    anpr_consensus = _value(data, "anpr_consensus", "")
+    raw_ocr = _value(data, "raw_ocr", "")
     details = {
         "schema_version": _value(data, "schema_version", "1.0"), "event_id": _value(data, "event_id", detection_id),
-        "raw_ocr": _value(data, "raw_ocr", ""), "pts_ms": _value(data, "pts_ms", "0"),
-        "plate_validated": _value(data, "plate_validated", ""), "anpr_consensus": _value(data, "anpr_consensus", ""),
+        "raw_ocr": raw_ocr, "pts_ms": _value(data, "pts_ms", "0"),
+        "plate_validated": _value(data, "plate_validated", ""), "anpr_consensus": anpr_consensus,
         "track_id": track_id,
+        "detector_confidence": str(confidence),
+        "evidence": {"available": False, "description": "Test-mode event."},
     }
     global_track = f"test:{stream_id}:{kind}:{track_id or detection_id}"
     embedding = _value(data, "embedding") or None
@@ -83,6 +95,48 @@ def persist(data: dict):
         with conn.cursor() as cur:
             cur.execute("SELECT camera_label FROM test_session_feeds WHERE session_id=%s::uuid AND stream_id=%s", (session_id, stream_id))
             camera_label = (cur.fetchone() or [camera_label])[0]
+
+            # --- Evidence capture: persist detection frame from Redis snapshot ---
+            evidence_id = None
+            evidence_payload = {"available": False, "description": "Test-mode event."}
+            if _EVIDENCE_ENABLED:
+                try:
+                    r_client = redis_lib.from_url(REDIS_URL, decode_responses=False)
+                    snap_key = f"snapshot:test:{session_id}:{stream_id}"
+                    det_list = [{"x1": bbox.get("x1"), "y1": bbox.get("y1"),
+                                 "x2": bbox.get("x2"), "y2": bbox.get("y2"),
+                                 "plate_text": plate or kind, "detection_type": kind}] if bbox else None
+                    bundle = capture_detection_snapshot(
+                        r_client, detection_id, timestamp.timestamp(),
+                        snapshot_key=snap_key,
+                        detections=det_list,
+                        alert_type=kind,
+                        camera_name=camera_label,
+                        test_mode=True,
+                        session_id=session_id,
+                    )
+                    r_client.close()
+                    if bundle:
+                        cur.execute(
+                            """INSERT INTO evidence(event_id,alert_id,camera_id,captured_at,media_type,storage_key,sha256,metadata)
+                               VALUES(%s,NULL,NULL,%s,'image/jpeg',%s,%s,%s::jsonb) RETURNING id""",
+                            (detection_id, timestamp, bundle["storage_key"], bundle["sha256"],
+                             json.dumps({"test": True, "session_id": session_id, "detection_id": detection_id,
+                                         "thumbnail_key": bundle["thumbnail_key"],
+                                         "frame_width": bundle.get("frame_width"),
+                                         "frame_height": bundle.get("frame_height")}))
+                        )
+                        evidence_id = str(cur.fetchone()[0])
+                        evidence_payload = {
+                            "available": True, "evidence_id": evidence_id,
+                            "frame_url": f"/api/evidence/{evidence_id}/content",
+                            "thumbnail_url": f"/api/evidence/{evidence_id}/thumbnail",
+                            "sha256": bundle["sha256"],
+                        }
+                        details["evidence"] = evidence_payload
+                except Exception:
+                    pass  # evidence capture is best-effort; never block analytics
+
             cur.execute("""INSERT INTO test_detections(id,session_id,camera_label,detection_type,plate_text,confidence,event_at,source_timestamp,stream_id,track_id,bbox,details)
               VALUES(%s::uuid,%s::uuid,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb) ON CONFLICT(id) DO NOTHING""",
               (detection_id,session_id,camera_label,kind,plate,confidence,timestamp,timestamp,stream_id,track_id,json.dumps(bbox),json.dumps(details)))
@@ -146,12 +200,17 @@ def persist(data: dict):
                                         "description": wl_description or "", "entity_type": "person",
                                         "similarity": similarity, "track_id": track_id,
                                         "camera_label": camera_label, "test": True,
+                                        "evidence": evidence_payload,
                                     }),
                                 ),
                             )
                             alert = cur.fetchone()[0]
                             alert_type = 'watchlist_match'
                             alert_priority = wl_priority or "HIGH"
+                            # Link evidence record to alert for API lookup
+                            if evidence_id:
+                                cur.execute("UPDATE evidence SET metadata=metadata || %s::jsonb WHERE id=%s::uuid",
+                                            (json.dumps({"alert_id": str(alert)}), evidence_id))
 
             if plate and (kind in ("plate", "vehicle_sighting") or _value(data, "plate_text")) and (_truthy(data, "plate_validated") or _has_consensus(data, "anpr_consensus")):
                 cur.execute("""SELECT id,name,description,alert_priority FROM test_watchlists
@@ -169,10 +228,21 @@ def persist(data: dict):
                     if not existing:
                         cur.execute("""INSERT INTO test_alerts(session_id,detection_id,alert_type,priority,event_at,details)
                           VALUES(%s::uuid,%s::uuid,'watchlist_match',%s,%s,%s::jsonb) RETURNING id""",
-                          (session_id,detection_id,wl_priority or 'HIGH',timestamp,json.dumps({"plate_text":plate,"camera_label":camera_label,"watchlist_id":str(wl_id),"watchlist_name":wl_name,"description":wl_description or "","track_id":track_id,"test":True})))
+                          (session_id,detection_id,wl_priority or 'HIGH',timestamp,json.dumps({
+                              "plate_text":plate,"camera_label":camera_label,"watchlist_id":str(wl_id),
+                              "watchlist_name":wl_name,"description":wl_description or "",
+                              "track_id":track_id,"test":True,
+                              "anpr_consensus": anpr_consensus, "raw_ocr": raw_ocr,
+                              "detector_confidence": str(confidence),
+                              "evidence": evidence_payload,
+                          })))
                         alert = cur.fetchone()[0]
                         alert_type = 'watchlist_match'
                         alert_priority = wl_priority or "HIGH"
+                        # Link evidence record to alert for API lookup
+                        if evidence_id:
+                            cur.execute("UPDATE evidence SET metadata=metadata || %s::jsonb WHERE id=%s::uuid",
+                                        (json.dumps({"alert_id": str(alert)}), evidence_id))
             if kind.startswith("anomaly") or kind in ("crowd_anomaly", "running_crowd", "crowd_formation"):
                 atype = _value(data, "anomaly_type") or kind.removeprefix("anomaly_") or "crowd_anomaly"
                 score = float(_value(data, "anomaly_score", "0") or confidence or "0.8")

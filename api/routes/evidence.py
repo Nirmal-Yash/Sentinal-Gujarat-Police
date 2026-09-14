@@ -41,7 +41,11 @@ class EvidenceCreate(BaseModel):
 async def list_evidence(alert_id: uuid.UUID | None = None, event_id: str | None = Query(None, max_length=255), limit: int = Query(50, ge=1, le=200), _: Principal = Depends(require_permission("evidence:read")), db: AsyncSession = Depends(get_db)):
     conditions, params = ["1=1"], {"limit": limit}
     if alert_id:
-        conditions.append("alert_id=:alert_id"); params["alert_id"] = str(alert_id)
+        # Match both direct FK-linked evidence and test evidence where alert FK is NULL
+        # but alert UUID is stored inside metadata->>'alert_id'.
+        conditions.append("(alert_id=CAST(:alert_id AS uuid) OR metadata->>'alert_id'=:alert_id_str)")
+        params["alert_id"] = str(alert_id)
+        params["alert_id_str"] = str(alert_id)
     if event_id:
         conditions.append("event_id=:event_id"); params["event_id"] = event_id
     result = await db.execute(text(f"SELECT id,event_id,alert_id,camera_id,captured_at,media_type,storage_key,sha256,metadata,created_at FROM evidence WHERE {' AND '.join(conditions)} ORDER BY created_at DESC LIMIT :limit"), params)

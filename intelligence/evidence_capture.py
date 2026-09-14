@@ -70,8 +70,22 @@ def _annotate(image, detections, alert_type, camera_name, captured_at):
         return image, None, None, 0
 
 
-def capture_snapshot_bundle(redis_client, camera_id: str, alert_id: str, captured_at: float, *, detections=None, alert_type="Alert", camera_name=None) -> Optional[dict]:
-    data = redis_client.get(f"snapshot:{camera_id}")
+
+def capture_snapshot_bundle(redis_client, camera_id: str, alert_id: str, captured_at: float, *,
+                            detections=None, alert_type="Alert", camera_name=None,
+                            snapshot_key: str | None = None) -> Optional[dict]:
+    """Capture an annotated evidence frame for an alert.
+
+    ``snapshot_key`` overrides the default Redis lookup key so callers can
+    supply test-mode keys like ``snapshot:test:{session_id}:{stream_id}``.
+    """
+    key = snapshot_key or f"snapshot:{camera_id}"
+    data = redis_client.get(key)
+    if not data:
+        # Fallback to the cam-slot key (snapshot:cam01 etc.)
+        fallback = f"snapshot:{camera_id}" if snapshot_key else None
+        if fallback and fallback != key:
+            data = redis_client.get(fallback)
     if not data:
         return None
     if isinstance(data, str):
@@ -106,6 +120,64 @@ def capture_snapshot(redis_client, camera_id: str, alert_id: str, captured_at: f
     """Backward-compatible tuple API used by existing workers/tests."""
     bundle = capture_snapshot_bundle(redis_client, camera_id, alert_id, captured_at)
     return (bundle["stored_path"], bundle["storage_key"], bundle["sha256"]) if bundle else None
+
+
+def capture_detection_snapshot(redis_client, detection_id: str, captured_at: float, *,
+                                snapshot_key: str, detections=None,
+                                alert_type: str = "detection",
+                                camera_name: str = "Camera",
+                                test_mode: bool = False,
+                                session_id: str | None = None) -> Optional[dict]:
+    """Capture an evidence frame for a single vehicle/person detection sighting.
+
+    Unlike :func:`capture_snapshot_bundle` which targets alert IDs, this function
+    stores directly under the ``sightings/`` or ``test/`` subtree so detections
+    that have not (yet) triggered an alert also carry visual evidence.
+
+    Returns the same bundle dict as :func:`capture_snapshot_bundle`, or ``None``
+    when no snapshot is available in Redis.
+    """
+    data = redis_client.get(snapshot_key)
+    if not data:
+        return None
+    if isinstance(data, str):
+        data = data.encode()
+    try:
+        source = base64.b64decode(data, validate=True)
+    except Exception:
+        return None
+    if not source or len(source) > MAX_SNAPSHOT_BYTES:
+        return None
+    image, width, height, count = _annotate(source, detections, alert_type, camera_name, captured_at)
+    digest = hashlib.sha256(image).hexdigest()
+    day = datetime.fromtimestamp(captured_at, timezone.utc).strftime("%Y/%m/%d")
+    if test_mode and session_id:
+        storage_dir = f"test/{session_id}"
+        key = f"{storage_dir}/{detection_id}.jpg"
+        thumb_key = f"{storage_dir}/{detection_id}_thumb.jpg"
+    else:
+        key = f"sightings/{day}/{detection_id}.jpg"
+        thumb_key = f"sightings/{day}/{detection_id}_thumb.jpg"
+    target, thumb_target = EVIDENCE_ROOT / key, EVIDENCE_ROOT / thumb_key
+    stored = write_protected(target, image)
+    thumbnail = image
+    try:
+        import cv2, numpy as np
+        decoded = cv2.imdecode(np.frombuffer(image, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if decoded is not None:
+            h, w = decoded.shape[:2]; scale = min(THUMB_MAX[0] / max(1, w), THUMB_MAX[1] / max(1, h), 1.0)
+            thumbnail = cv2.imencode(".jpg", cv2.resize(decoded, (max(1, int(w * scale)), max(1, int(h * scale))), interpolation=cv2.INTER_AREA), [int(cv2.IMWRITE_JPEG_QUALITY), 78])[1].tobytes()
+    except Exception:
+        pass
+    stored_thumb = write_protected(thumb_target, thumbnail)
+    return {
+        "stored_path": str(stored), "storage_key": key,
+        "thumbnail_path": str(stored_thumb), "thumbnail_key": thumb_key,
+        "sha256": digest, "frame_width": width, "frame_height": height,
+        "detections_count": count,
+        "description": "Detection evidence frame.",
+    }
+
 
 
 def build_human_summary(alert_type: str, detection_data: dict, camera_name: str) -> str:
