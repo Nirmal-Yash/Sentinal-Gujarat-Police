@@ -1,5 +1,5 @@
 """Persistence boundary and regression tests for isolated test mode."""
-import base64, json, os, time, unittest
+import base64, json, logging, os, time, unittest
 from datetime import datetime, timezone
 import psycopg2
 import numpy as np
@@ -15,6 +15,7 @@ DB_URL = os.getenv("DATABASE_URL", "")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 ALERT_COOLDOWN = max(1, int(os.getenv("ALERT_COOLDOWN", "60")))
 _EVIDENCE_ENABLED = os.getenv("TEST_EVIDENCE_ENABLED", "true").lower() == "true"
+log = logging.getLogger("test_sighting_store")
 
 
 def _value(data, name, default=""):
@@ -134,8 +135,8 @@ def persist(data: dict):
                             "sha256": bundle["sha256"],
                         }
                         details["evidence"] = evidence_payload
-                except Exception:
-                    pass  # evidence capture is best-effort; never block analytics
+                except Exception as exc:
+                    log.warning("Test evidence capture failed for %s: %s", detection_id, exc)
 
             cur.execute("""INSERT INTO test_detections(id,session_id,camera_label,detection_type,plate_text,confidence,event_at,source_timestamp,stream_id,track_id,bbox,details)
               VALUES(%s::uuid,%s::uuid,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb) ON CONFLICT(id) DO NOTHING""",
@@ -212,7 +213,7 @@ def persist(data: dict):
                                 cur.execute("UPDATE evidence SET metadata=metadata || %s::jsonb WHERE id=%s::uuid",
                                             (json.dumps({"alert_id": str(alert)}), evidence_id))
 
-            if plate and (kind in ("plate", "vehicle_sighting") or _value(data, "plate_text")) and (_truthy(data, "plate_validated") or _has_consensus(data, "anpr_consensus")):
+            if plate and (kind in ("plate", "vehicle_sighting") or _value(data, "plate_text")) and _truthy(data, "plate_validated") and _has_consensus(data, "anpr_consensus"):
                 cur.execute("""SELECT id,name,description,alert_priority FROM test_watchlists
                     WHERE session_id=%s::uuid AND is_active=TRUE AND plate_number IS NOT NULL
                     AND regexp_replace(upper(plate_number),'[^A-Z0-9]','','g')=%s LIMIT 1""", (session_id, plate))
@@ -255,12 +256,15 @@ def persist(data: dict):
                     cur.execute("""INSERT INTO test_alerts(session_id,detection_id,alert_type,priority,event_at,details)
                         VALUES(%s::uuid,%s::uuid,%s,%s,%s,%s::jsonb) RETURNING id""",
                         (session_id, detection_id, f"anomaly_{atype}", prio, timestamp,
-                         json.dumps({"anomaly_type": atype, "score": score, "camera_label": camera_label, "test": True})))
+                         json.dumps({"anomaly_type": atype, "score": score, "camera_label": camera_label, "test": True, "evidence": evidence_payload})))
                     alert = cur.fetchone()[0]
                     alert_type = f"anomaly_{atype}"
                     alert_priority = prio
+                    if evidence_id:
+                        cur.execute("UPDATE evidence SET metadata=metadata || %s::jsonb WHERE id=%s::uuid",
+                                    (json.dumps({"alert_id": str(alert)}), evidence_id))
                     cur.execute("UPDATE test_alerts SET details=details || CAST(%s AS jsonb) WHERE id=%s",
-                        (json.dumps({"human_summary": f"Crowd anomaly ({atype.replace('_', ' ')}) detected at {camera_label}.", "detection_detail": {"type": "anomaly", "score": score}, "evidence": {"available": False, "description": "Test-mode event."}}), alert))
+                        (json.dumps({"human_summary": f"Crowd anomaly ({atype.replace('_', ' ')}) detected at {camera_label}.", "detection_detail": {"type": "anomaly", "score": score}}), alert))
         conn.commit()
     finally:
         conn.close()

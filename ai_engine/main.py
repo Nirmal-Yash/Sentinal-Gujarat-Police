@@ -8,6 +8,8 @@ import multiprocessing as mp
 from pathlib import Path
 from multiprocessing import Process
 
+import redis
+
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [AI-ENGINE][%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -21,6 +23,9 @@ RESTART_BASE_DELAY = max(1, float(os.getenv("AI_RESTART_BASE_DELAY_SECS", "2")))
 RESTART_MAX_DELAY = max(RESTART_BASE_DELAY, float(os.getenv("AI_RESTART_MAX_DELAY_SECS", "60")))
 YOLO_MODEL_PATH = os.getenv("YOLO_MODEL", "yolov8n.pt")
 INFER_SIZE = int(os.getenv("INFER_SIZE", "416"))
+TEST_MODE = os.getenv("TEST_MODE", "false").lower() == "true"
+RUNTIME_MODE_KEY = os.getenv("RUNTIME_MODE_KEY", "sentinel:runtime:mode")
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
 try:
     from process_health import heartbeat, publish
@@ -78,23 +83,73 @@ def _worker_entry(module_name):
     module.run()
 
 
+def _runtime_mode():
+    try:
+        client = redis.from_url(REDIS_URL, decode_responses=True, socket_timeout=1)
+        mode = client.get(RUNTIME_MODE_KEY) or "production"
+        client.close()
+        return mode
+    except Exception:
+        return "production"
+
+
+def _test_runtime_active():
+    return _runtime_mode() == "test"
+
+
+def _stop_workers(procs):
+    for state in procs.values():
+        proc = state["proc"]
+        if proc.is_alive():
+            proc.terminate()
+            proc.join(timeout=3)
+            if proc.is_alive():
+                proc.kill()
+                proc.join(timeout=1)
+
+
+def _spawn_workers():
+    procs = {}
+    workers = [("yolo_worker", f"YOLOv8+DeepSORT-{i+1}") for i in range(YOLO_WORKERS)]
+    if ANPR_ENABLED:
+        workers.append(("anpr_worker", "ANPR-EasyOCR"))
+    if FACE_ENABLED:
+        workers.append(("face_worker", "FaceEmbeds"))
+    if BEHAVIOR_ENABLED:
+        workers.append(("behavior_worker", "BehaviorAI"))
+    for module_name, name in workers:
+        p, started = spawn(_worker_entry, name, (module_name,))
+        procs[name] = {"module": module_name, "proc": p, "started": started, "restarts": 0, "next_restart": 0.0}
+    return procs
+
+
 def main():
     log.info("AI Engine starting …")
     time.sleep(6)
 
-    _preload_models(ANPR_ENABLED)
-    procs = {}
-    workers = [("yolo_worker", f"YOLOv8+DeepSORT-{i+1}") for i in range(YOLO_WORKERS)]
-    if ANPR_ENABLED: workers.append(("anpr_worker", "ANPR-EasyOCR"))
-    if FACE_ENABLED: workers.append(("face_worker", "FaceEmbeds"))
-    if BEHAVIOR_ENABLED: workers.append(("behavior_worker", "BehaviorAI"))
-    for module_name, name in workers:
-        p, started = spawn(_worker_entry, name, (module_name,))
-        procs[name] = {"module": module_name, "proc": p, "started": started, "restarts": 0, "next_restart": 0.0}
+    if TEST_MODE:
+        log.info("Test AI supervisor idle — waiting for active test session …")
+        while not _test_runtime_active():
+            publish("supervisor", "IDLE", os.getpid(), 0, time.time())
+            time.sleep(2)
+        log.info("Test session active — starting isolated AI workers")
 
+    _preload_models(ANPR_ENABLED)
+    procs = _spawn_workers()
     publish("supervisor", "RUNNING", os.getpid(), 0, time.time())
 
     while True:
+        if TEST_MODE and not _test_runtime_active():
+            log.info("Test session ended — stopping isolated AI workers")
+            _stop_workers(procs)
+            procs.clear()
+            publish("supervisor", "IDLE", os.getpid(), 0, time.time())
+            while not _test_runtime_active():
+                time.sleep(2)
+            log.info("Test session active — restarting isolated AI workers")
+            procs = _spawn_workers()
+            publish("supervisor", "RUNNING", os.getpid(), 0, time.time())
+
         now = time.time()
         heartbeat("supervisor", os.getpid(), 0, now)
         for name, state in list(procs.items()):

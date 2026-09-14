@@ -1,11 +1,21 @@
-# 🛡️ Sentinel AI — Gujarat Police CCTV Surveillance & Intelligence Platform
+# Sentinel AI — Gujarat Police CCTV Surveillance & Intelligence Platform
 
-[![CI Gate](https://img.shields.io/badge/CI%20Gate-PASS-brightgreen.svg)]()
-[![Tests](https://img.shields.io/badge/pytest-58%20passed-brightgreen.svg)]()
-[![Security](https://img.shields.io/badge/Security-RBAC%20Hardened-blue.svg)]()
-[![Platform](https://img.shields.io/badge/Platform-Docker%20Compose-orange.svg)]()
+## Evaluator Quick Start (60 seconds)
 
-> **Production-grade, enterprise-scale surveillance, GIS intelligence, vehicle journey tracing, and automated watchlist alerting for Gujarat Police.**
+| Step | Action |
+|------|--------|
+| 1 | Watch **Video 03** (Test Mode) first — full watchlist, evidence, investigation demo |
+| 2 | Watch **Video 04** (Government Feed) — 30 live cameras from `cctv.corp8.cloud` |
+| 3 | Open platform URL and sign in with VIEWER credentials from submission `07_Platform_Access.txt` |
+| 4 | Read `docs/submission/OUTPUT_REPORT.md` for measured detection data |
+
+**Dual-demo strategy:** Production Monitor proves live government CCTV integration. Test Mode proves every intelligence capability end-to-end on controlled footage — same pipeline, isolated from operational records.
+
+- Submission package: [`docs/submission/README.md`](docs/submission/README.md)
+- High-level design: [`docs/submission/HLD.md`](docs/submission/HLD.md)
+- Developer setup: [`SETUP.md`](SETUP.md)
+
+> Production-grade surveillance, GIS intelligence, vehicle journey tracing, and automated watchlist alerting for Gujarat Police.
 
 ---
 
@@ -133,7 +143,7 @@ Test Mode is **not a fake UI or static mock**. It is a fully functional, determi
 | **Stream Bus** | `raw_frames` Redis stream | `test:raw_frames` Redis stream | Complete namespace separation |
 | **Media Gateway** | Live CCTV / RTSP feeds | MediaMTX RTSP feeds from MP4s | Identical HLS / RTSP playback pipeline |
 | **Database** | `cameras`, `sightings`, `alerts` | `session_cameras`, `test_sightings`, `test_alerts` | Session-scoped UUID isolation |
-| **Watchlists** | `watchlists` table | `test_watchlists` table | Dedicated isolated test watchlist rules |
+| **Watchlists** | `watchlist` table | `test_watchlists` table | Dedicated isolated test watchlist rules |
 | **GIS Mapping** | Live camera coordinates | Verified Gujarat test geodata | Full Leaflet marker, popup & route parity |
 | **Alert Engine** | Production alert engine | `test_sighting_store.py` alert engine | Identical schema, statuses & transitions |
 
@@ -224,14 +234,7 @@ cp .env.example .env      # On Linux / macOS
 Copy-Item .env.example .env # On Windows PowerShell
 ```
 
-Ensure `.env` contains your desired secrets:
-```dotenv
-POSTGRES_PASSWORD=sentinel_secure_pass_2026
-SECRET_KEY=oaXHO0x5UiRg5rWE1DJ7Lds4BDO2MeNmSmX0S7cgpsY3oJLgA60mPOy5uuDlK854
-BOOTSTRAP_ADMIN_USERNAME=admin
-BOOTSTRAP_ADMIN_PASSWORD=admin_password_2026
-BOOTSTRAP_ADMIN_ROLE=SUPERADMIN
-```
+Copy `.env.example` to `.env` and replace all `replace-with-*` placeholders with strong secrets before deployment.
 
 ### 2. Build & Launch Docker Services
 

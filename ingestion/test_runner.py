@@ -202,8 +202,6 @@ def runner(session_id: str):
                 # can retrieve the exact frame at detection time in test mode.
                 _snap_ttl = 60
                 client.set(f"snapshot:test:{session_id}:{stream_id}", frame_b64, ex=_snap_ttl)
-                client.set(f"snapshot:cam{int(stream_id):02d}", frame_b64, ex=_snap_ttl)
-                client.set(f"snapshot:stream:{stream_id}", frame_b64, ex=_snap_ttl)
                 feed["pts"] += int(1000 / FRAME_FPS)
                 feed["next"] = now + 1 / FRAME_FPS
                 frames += 1

@@ -1,7 +1,9 @@
 # Local test media (never commit government or synthetic CCTV videos)
 /videos/
 /test_videos/
-
+/scripts/
+/tests/
+/docs/
 # Generated Python and frontend artifacts
 __pycache__/
 *.py[cod]
@@ -12,5 +14,4 @@ dashboard/dist/
 secrets/
 *.key
 *.pem
-/scripts/
 /bridge/

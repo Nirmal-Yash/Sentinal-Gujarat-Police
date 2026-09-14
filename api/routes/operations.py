@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import os
 import uuid
 
 import redis as redis_lib
@@ -16,23 +17,40 @@ AI_HEALTH_STALE_SECS = max(10, int(__import__("os").getenv("AI_HEALTH_STALE_SECS
 
 
 def _redis_health():
-    result = {"available": False, "processes": [], "streams": {}}
+    result = {"available": False, "production": {"processes": [], "streams": {}}, "test": {"processes": [], "streams": {}}}
+    test_prefix = os.getenv("TEST_AI_HEALTH_PREFIX", "sentinel:ai:health:test:")
     try:
         client = redis_lib.from_url(REDIS_URL, decode_responses=True, socket_timeout=1, socket_connect_timeout=1)
         client.ping()
         result["available"] = True
+        runtime_mode = client.get("sentinel:runtime:mode") or "production"
+        result["runtime_mode"] = runtime_mode
         for key in sorted(client.scan_iter(match=AI_HEALTH_PREFIX + "*")):
+            if key.startswith(test_prefix):
+                continue
             item = client.hgetall(key)
             if not item:
                 continue
             heartbeat = float(item.get("heartbeat_at", "0") or 0)
             item["stale"] = max(0.0, datetime.now(timezone.utc).timestamp() - heartbeat) > AI_HEALTH_STALE_SECS
-            result["processes"].append(item)
+            result["production"]["processes"].append(item)
+        for key in sorted(client.scan_iter(match=test_prefix + "*")):
+            item = client.hgetall(key)
+            if not item:
+                continue
+            heartbeat = float(item.get("heartbeat_at", "0") or 0)
+            item["stale"] = max(0.0, datetime.now(timezone.utc).timestamp() - heartbeat) > AI_HEALTH_STALE_SECS
+            result["test"]["processes"].append(item)
         for stream in ("raw_frames", "detections", "anpr_requests", "alerts"):
             try:
-                result["streams"][stream] = {"length": int(client.xlen(stream))}
+                result["production"]["streams"][stream] = {"length": int(client.xlen(stream))}
             except Exception:
-                result["streams"][stream] = {"length": None}
+                result["production"]["streams"][stream] = {"length": None}
+        for stream in ("test:raw_frames", "test:detections", "test:alerts"):
+            try:
+                result["test"]["streams"][stream] = {"length": int(client.xlen(stream))}
+            except Exception:
+                result["test"]["streams"][stream] = {"length": None}
     except Exception as exc:
         result["error"] = type(exc).__name__
     return result
@@ -64,7 +82,7 @@ async def operations_overview(_: Principal = Depends(require_permission("report:
                (SELECT COUNT(*) FROM alerts WHERE status='NEW') AS alerts_new,
                (SELECT COUNT(*) FROM alerts WHERE created_at >= NOW() - INTERVAL '1 hour') AS alerts_1h,
                (SELECT COUNT(*) FROM vehicle_journeys WHERE status='ACTIVE') AS active_journeys,
-               (SELECT COUNT(*) FROM evidence WHERE created_at >= NOW() - INTERVAL '1 hour') AS evidence_1h
+               (SELECT COUNT(*) FROM evidence WHERE created_at >= NOW() - INTERVAL '1 hour' AND COALESCE((metadata->>'test')::boolean, false) = false) AS evidence_1h
     """)).mappings().one()
     runtime = _redis_health()
     return {
@@ -72,8 +90,9 @@ async def operations_overview(_: Principal = Depends(require_permission("report:
         "metrics": dict(result),
         "runtime": {
             "redis": {"available": runtime["available"]},
-            "ai_processes": runtime["processes"],
-            "redis_streams": runtime["streams"],
+            "mode": runtime.get("runtime_mode", "production"),
+            "production": runtime.get("production", {}),
+            "test": runtime.get("test", {}),
         },
     }
 

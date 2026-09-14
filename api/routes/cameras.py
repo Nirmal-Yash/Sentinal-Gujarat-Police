@@ -598,15 +598,30 @@ async def recent_camera_analytics(
     """
     result = await db.execute(text("""
         SELECT DISTINCT ON (cam_id)
-               id, cam_id, detection_type, plate_text, confidence, timestamp,
-               global_track_id, track_id
-        FROM detections
-        WHERE cam_id IS NOT NULL
-          AND timestamp >= NOW() - (CAST(:seconds AS integer) * INTERVAL '1 second')
-          AND plate_text IS NOT NULL AND plate_text <> ''
-        ORDER BY cam_id, timestamp DESC
+               d.id, d.cam_id, d.detection_type, d.plate_text, d.confidence, d.timestamp,
+               d.global_track_id, d.track_id,
+               COALESCE(d.bbox, '{}'::jsonb) AS bbox,
+               COALESCE(c.observed_width, c.width) AS width,
+               COALESCE(c.observed_height, c.height) AS height
+        FROM detections d
+        LEFT JOIN cameras c ON c.id = d.cam_id
+        WHERE d.cam_id IS NOT NULL
+          AND d.timestamp >= NOW() - (CAST(:seconds AS integer) * INTERVAL '1 second')
+          AND d.plate_text IS NOT NULL AND d.plate_text <> ''
+        ORDER BY d.cam_id, d.timestamp DESC
     """), {"seconds": seconds})
-    return [dict(row) for row in result.mappings().all()]
+    rows = []
+    for row in result.mappings().all():
+        item = dict(row)
+        bbox = item.get("bbox") or {}
+        if isinstance(bbox, str):
+            try:
+                bbox = json.loads(bbox)
+            except json.JSONDecodeError:
+                bbox = {}
+        item["bbox"] = bbox
+        rows.append(item)
+    return rows
 
 
 @router.get("/{cam_id}", response_model=CameraOut)

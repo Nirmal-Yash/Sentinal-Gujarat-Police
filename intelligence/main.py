@@ -9,6 +9,7 @@ log = logging.getLogger(__name__)
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 DB_URL    = os.getenv("DATABASE_URL", "")
 TEST_MODE = os.getenv("TEST_MODE", "false").lower() == "true"
+RUNTIME_MODE_KEY = os.getenv("RUNTIME_MODE_KEY", "sentinel:runtime:mode")
 
 
 def _is_true(value):
@@ -73,8 +74,20 @@ def main():
     consumer = f"intel-{uuid.uuid4().hex[:8]}"
     log.info("Intelligence engine ready — consuming detections …")
 
+    try:
+        reclaimed, _, _ = r.xautoclaim(STREAM, GROUP, consumer, min_idle_time=60000, start_id="0-0", count=100)
+        for msg_id, data in reclaimed or []:
+            try:
+                r.xack(STREAM, GROUP, msg_id)
+            except Exception:
+                pass
+        if reclaimed:
+            log.info("XAUTOCLAIM reclaimed %s stale detections messages", len(reclaimed))
+    except Exception as exc:
+        log.warning("XAUTOCLAIM skipped: %s", exc)
+
     while True:
-        msgs = r.xreadgroup(GROUP, consumer, {STREAM: ">"}, count=10, block=500)
+        msgs = r.xreadgroup(GROUP, consumer, {STREAM: ">"}, count=50, block=200)
         if not msgs:
             continue
 
@@ -114,10 +127,14 @@ def main():
                                 "confidence": hit.get("score", 0.9),
                                 "entity_type": dtype,
                                 "event_timestamp": ts,
+                                "watchlist_id": hit.get("id"),
+                                "normalized_plate": plate if plate_confirmed else None,
                                 "details": {
+                                    "watchlist_id": hit.get("id"),
                                     "watchlist_name": hit.get("name"),
                                     "match_type": dtype,
                                     "plate_text": plate if plate_confirmed else None,
+                                    "normalized_plate": plate if plate_confirmed else None,
                                     "description": hit.get("description", ""),
                                     "bbox": _event_bbox(data),
                                     "detection_type": "plate",
@@ -164,15 +181,32 @@ def main():
                     r.xack(STREAM, GROUP, msg_id)
 
 
+def _test_runtime_active(r):
+    try:
+        return (r.get(RUNTIME_MODE_KEY) or b"production").decode() == "test"
+    except Exception:
+        return False
+
+
 def test_main():
     """Consume only test:detections and persist only test tables/streams."""
     from test_sighting_store import persist
     import redis, uuid
     r = redis.from_url(REDIS_URL, decode_responses=False); stream, group = "test:detections", "test_intelligence"
+    log.info("Test intelligence idle — waiting for active test session …")
+    while not _test_runtime_active(r):
+        time.sleep(2)
     try: r.xgroup_create(stream, group, id="0", mkstream=True)
     except redis.exceptions.ResponseError: pass
     consumer = f"test-intel-{uuid.uuid4().hex[:8]}"; log.info("Test intelligence ready — isolated streams only")
     while True:
+        if not _test_runtime_active(r):
+            log.info("Test session ended — test intelligence pausing")
+            while not _test_runtime_active(r):
+                time.sleep(2)
+            try: r.xgroup_create(stream, group, id="0", mkstream=True)
+            except redis.exceptions.ResponseError: pass
+            log.info("Test intelligence resumed — isolated streams only")
         try:
             messages = r.xreadgroup(group, consumer, {stream: ">"}, count=20, block=500)
         except redis.exceptions.ResponseError as exc:

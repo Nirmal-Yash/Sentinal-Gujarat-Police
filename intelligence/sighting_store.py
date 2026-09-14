@@ -1,8 +1,17 @@
 """Durable analytics, vehicle identity/sighting/journey and person re-identification persistence."""
-import json, os, threading
+import json, os, threading, logging
 from datetime import datetime, timezone, timedelta
 import psycopg2
 import psycopg2.pool
+import redis as redis_lib
+
+log = logging.getLogger("sighting_store")
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+
+try:
+    from .evidence_capture import capture_detection_snapshot
+except ImportError:
+    from evidence_capture import capture_detection_snapshot
 
 try:
     from .plate_normalise import normalize_plate
@@ -196,6 +205,38 @@ def persist(data: dict):
             sighting_id = str(inserted[0])
             journey_id = _upsert_journey(cur, f"plate:{plate}", plate, timestamp, camera_id, confidence, sighting_id)
             cur.execute("UPDATE vehicle_sightings SET journey_id=%s::uuid WHERE id=%s::uuid", (journey_id, sighting_id))
+            try:
+                r_client = redis_lib.from_url(REDIS_URL, decode_responses=False)
+                cam_label = _text(data, "cam_id") or (f"cam{int(_text(data, 'stream_id', '0') or 0):02d}" if _text(data, "stream_id", "0").isdigit() else "Camera")
+                snap_keys = []
+                if camera_id:
+                    snap_keys.append(f"snapshot:{camera_id}")
+                if cam_label:
+                    snap_keys.append(f"snapshot:{cam_label}")
+                det_list = [{"x1": bbox.get("x1"), "y1": bbox.get("y1"), "x2": bbox.get("x2"), "y2": bbox.get("y2"), "plate_text": plate, "detection_type": "plate"}] if bbox else None
+                bundle = None
+                for snap_key in snap_keys:
+                    bundle = capture_detection_snapshot(
+                        r_client, detection_id, timestamp.timestamp(),
+                        snapshot_key=snap_key, detections=det_list,
+                        alert_type="plate", camera_name=cam_label,
+                    )
+                    if bundle:
+                        break
+                if bundle:
+                    cur.execute(
+                        """INSERT INTO evidence(event_id,alert_id,camera_id,captured_at,media_type,storage_key,sha256,metadata)
+                           VALUES(%s,NULL,%s::uuid,%s,'image/jpeg',%s,%s,%s::jsonb) RETURNING id""",
+                        (detection_id, camera_id, timestamp, bundle["storage_key"], bundle["sha256"],
+                         json.dumps({"source": "sighting_store", "detection_id": detection_id, "sighting_id": sighting_id,
+                                     "thumbnail_key": bundle["thumbnail_key"], "frame_width": bundle.get("frame_width"),
+                                     "frame_height": bundle.get("frame_height")})),
+                    )
+                    evidence_id = str(cur.fetchone()[0])
+                    cur.execute("UPDATE vehicle_sightings SET evidence_id=%s WHERE id=%s::uuid", (evidence_id, sighting_id))
+                r_client.close()
+            except Exception as exc:
+                log.warning("Production sighting evidence capture failed for %s: %s", detection_id, exc)
         conn.commit()
     except Exception:
         try:

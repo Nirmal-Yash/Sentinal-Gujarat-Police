@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import engine, Session, get_db
 from auth import AUTH_REQUIRED, SECRET_KEY, REFRESH_SECRET, principal_from_token, hash_password
 from websocket_manager import manager, redis_alert_consumer
-from routes import cameras, camera_snapshot, camera_imports, alerts, watchlist, search, auth, reports, test, test_feeds, vendors, evidence, evidence_assets, operations, test_alerts, cctv, camera_groups, investigate
+from routes import cameras, camera_snapshot, camera_imports, alerts, watchlist, search, auth, reports, test, vendors, evidence, evidence_assets, operations, test_alerts, cctv, camera_groups, investigate
 from migrations import apply_migrations
 from security_hardening import SecurityHeadersMiddleware, RequestSizeLimitMiddleware, verify_cookie_csrf
 from security_audit import SecurityAuditMiddleware
@@ -84,7 +84,7 @@ async def csrf_boundary(request: Request, call_next):
 routers_list = [
     camera_snapshot.router, camera_groups.router, cameras.router, camera_imports.router,
     cctv.router, alerts.router, watchlist.router, search.router, auth.router, reports.router,
-    test.router, test_feeds.router, test_alerts.router, vendors.router, evidence_assets.router,
+    test.router, test_alerts.router, vendors.router, evidence_assets.router,
     evidence.router, operations.router, investigate.router
 ]
 for r in routers_list:

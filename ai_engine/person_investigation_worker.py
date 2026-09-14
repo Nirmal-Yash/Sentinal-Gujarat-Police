@@ -23,6 +23,16 @@ MIN_FACE_INPUT = max(320, int(os.getenv("PERSON_FACE_MIN_INPUT", "640")))
 MAX_FACE_INPUT = max(MIN_FACE_INPUT, int(os.getenv("PERSON_FACE_MAX_INPUT", "2200")))
 HEALTH_PREFIX=os.getenv('AI_HEALTH_PREFIX','sentinel:ai:health:')
 HEALTH_TTL=int(os.getenv('AI_HEALTH_TTL_SECS','45'))
+RUNTIME_MODE_KEY=os.getenv('RUNTIME_MODE_KEY','sentinel:runtime:mode')
+
+
+def _test_runtime_active(r):
+    if not TEST_MODE:
+        return True
+    try:
+        return (r.get(RUNTIME_MODE_KEY) or b'production').decode() == 'test'
+    except Exception:
+        return False
 
 
 def ensure_group(r):
@@ -92,9 +102,18 @@ def run():
     health_key=f"{HEALTH_PREFIX}{'test:' if TEST_MODE else ''}person_investigation"
     r.setex(health_key,HEALTH_TTL,'ready')
     processed=0
+    if TEST_MODE:
+        log.info("Test person investigation worker idle — waiting for active test session …")
+        while not _test_runtime_active(r):
+            r.setex(health_key, HEALTH_TTL, json.dumps({'status': 'IDLE', 'stream': STREAM}))
+            time.sleep(2)
     log.info("Person investigation worker ready.")
 
     while True:
+        if TEST_MODE and not _test_runtime_active(r):
+            r.setex(health_key, HEALTH_TTL, json.dumps({'status': 'IDLE', 'stream': STREAM}))
+            time.sleep(2)
+            continue
         try:
             messages = r.xreadgroup(GROUP, consumer, {STREAM: ">"}, count=1, block=1000)
         except redis.exceptions.ResponseError as exc:

@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import base64, hashlib, os
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo("Asia/Kolkata")
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -55,7 +58,7 @@ def _annotate(image, detections, alert_type, camera_name, captured_at):
             cv2.rectangle(decoded, (x1, top - th - 8), (min(width, x1 + tw + 6), top), color, -1)
             cv2.putText(decoded, label, (x1 + 3, top - 4), cv2.FONT_HERSHEY_SIMPLEX, .5, (0, 0, 0), 1, cv2.LINE_AA)
             count += 1
-        stamp = datetime.fromtimestamp(captured_at, timezone.utc).strftime("%d %b %Y  %H:%M:%S UTC")
+        stamp = datetime.fromtimestamp(captured_at, IST).strftime("%d %b %Y  %H:%M:%S IST")
         overlay = decoded.copy(); cv2.rectangle(overlay, (0, 0), (width, 34), (0, 0, 0), -1); cv2.addWeighted(overlay, .62, decoded, .38, 0, decoded)
         cv2.putText(decoded, str(camera_name or "Camera")[:64], (8, 23), cv2.FONT_HERSHEY_SIMPLEX, .58, (255, 200, 0), 1, cv2.LINE_AA)
         cv2.putText(decoded, stamp, (max(8, width - 190), 23), cv2.FONT_HERSHEY_SIMPLEX, .42, (220, 220, 220), 1, cv2.LINE_AA)

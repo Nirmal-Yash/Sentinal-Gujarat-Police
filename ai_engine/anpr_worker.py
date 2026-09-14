@@ -42,6 +42,8 @@ MIN_VEHICLE_W = int(os.getenv("ANPR_MIN_VEHICLE_W", "80"))
 MIN_VEHICLE_H = int(os.getenv("ANPR_MIN_VEHICLE_H", "60"))
 MIN_PLATE_W = int(os.getenv("ANPR_MIN_PLATE_WIDTH", "45"))
 MIN_PLATE_H = int(os.getenv("ANPR_MIN_PLATE_HEIGHT", "15"))
+MIN_EST_PLATE_W = int(os.getenv("ANPR_MIN_EST_PLATE_W", "30"))
+MIN_EST_PLATE_H = int(os.getenv("ANPR_MIN_EST_PLATE_H", "10"))
 OCR_WORKERS = max(1, min(4, int(os.getenv("ANPR_OCR_WORKERS", str(_thresholds["ocr_workers"])))))
 MAX_PENDING_JOBS = max(1, int(os.getenv("ANPR_MAX_PENDING_JOBS", str(_thresholds["max_pending_jobs"]))))
 
@@ -231,11 +233,13 @@ def run():
                     first_seen = float(_bytes(data, "track_first_seen_at") or b"0")
                     if first_seen and not state.first_seen_at:
                         state.first_seen_at = first_seen
-                    estimated_w = int((x2 - x1) * 0.60)
-                    estimated_h = int((y2 - y1) * 0.18)
+                    crop_w = int(_bytes(data, "crop_w") or b"0") or int(x2 - x1)
+                    crop_h = int(_bytes(data, "crop_h") or b"0") or int(y2 - y1)
+                    estimated_w = crop_w if crop_w > 0 else int((x2 - x1) * 0.60)
+                    estimated_h = crop_h if crop_h > 0 else int((y2 - y1) * 0.18)
                     if state.confirmed_plate:
                         continue
-                    if estimated_w < 40 or estimated_h < 12:
+                    if estimated_w < MIN_EST_PLATE_W or estimated_h < MIN_EST_PLATE_H:
                         continue
                     if not should_run_ocr(state, now, OCR_INTERVAL, TRACK_MIN_AGE):
                         continue

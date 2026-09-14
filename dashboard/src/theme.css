@@ -565,3 +565,8 @@ html[data-theme="light"] .ui-button-default:hover { color: #ffffff !important; }
 html[data-theme="light"] .sentinel-sidebar-toggle{background:var(--surface) !important;border-color:var(--border) !important;color:var(--text) !important}
 html[data-theme="light"] .sentinel-sidebar-toggle:hover{background:var(--surface3) !important;border-color:var(--accent-border) !important;color:var(--accent-strong) !important}
 
+@keyframes sentinel-shimmer{
+  0%{background-position:200% 0}
+  100%{background-position:-200% 0}
+}
+

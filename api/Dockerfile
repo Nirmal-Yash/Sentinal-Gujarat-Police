@@ -4,7 +4,6 @@ WORKDIR /app
 COPY api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY api/ .
-COPY scripts/seed_admin.py /app/seed_admin.py
 COPY database/migrations /migrations
 
 # Run one Uvicorn worker per container. FastAPI lifespan performs startup

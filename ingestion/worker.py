@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Updated: 2026-09-15T01:28:00
 """Ingestion Worker — live RTSP ingestion with P0 operational telemetry."""
 import os, sys, time, base64, logging, uuid, threading
 from datetime import datetime, timezone
@@ -103,7 +104,7 @@ def test_mode_active():
 
 
 def stop_production_workers(procs):
-    """Stop only when the production service itself is shutting down."""
+    """Terminate production camera worker processes (test session active or service shutdown)."""
     for key, (_, proc) in list(procs.items()):
         if proc.is_alive():
             proc.terminate()
@@ -516,7 +517,27 @@ def main():
     procs = {}
     retry_after = {}
     last_catalogue_sync = 0.0
+    production_paused = False
+    last_test_poll = 0.0
     while True:
+        now_poll = time.monotonic()
+        if now_poll - last_test_poll >= TEST_SESSION_POLL_SECS:
+            last_test_poll = now_poll
+            test_active = test_mode_active()
+            if test_active and not production_paused:
+                if procs:
+                    log.info("Production CCTV ingestion paused — test session active")
+                    stop_production_workers(procs)
+                production_paused = True
+            elif not test_active and production_paused:
+                log.info("Test session ended — resuming production CCTV ingestion")
+                production_paused = False
+                last_catalogue_sync = 0.0
+
+        if production_paused:
+            time.sleep(TEST_SESSION_POLL_SECS)
+            continue
+
         if not procs:
             try:
                 n = catalogue_sync()
@@ -555,6 +576,9 @@ def main():
             except Exception as exc:
                 log.warning("Periodic CCTV catalogue sync failed: %s", exc)
 
+        if production_paused:
+            continue
+
         now = time.monotonic()
         for key, (cam, proc) in list(procs.items()):
             if not proc.is_alive():
@@ -563,6 +587,9 @@ def main():
                 except Exception:
                     pass
                 if now < retry_after.get(key, 0.0):
+                    continue
+                if production_paused or test_mode_active():
+                    procs.pop(key, None)
                     continue
                 procs.pop(key, None)
                 set_status(str(cam["id"]), "reconnecting")

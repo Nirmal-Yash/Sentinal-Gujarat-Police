@@ -148,6 +148,12 @@ class AlertEngine:
                         evidence_id = str(cur.fetchone()[0])
                         details["evidence"] = {"available": True, "evidence_id": evidence_id, "frame_url": f"/api/evidence/{evidence_id}/content", "thumbnail_url": f"/api/evidence/{evidence_id}/thumbnail", "description": captured.get("description")}
                         cur.execute("UPDATE alerts SET details=%s::jsonb WHERE id=%s", (json.dumps(details), alert_id))
+                        det_id = payload.get("detection_id")
+                        if det_id:
+                            cur.execute(
+                                "UPDATE vehicle_sightings SET evidence_id=%s WHERE detection_id=%s::uuid AND (evidence_id IS NULL OR evidence_id='')",
+                                (evidence_id, det_id),
+                            )
                 conn.commit()
             except Exception:
                 try:
