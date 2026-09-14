@@ -123,7 +123,9 @@ class TestWatchlistCreate(BaseModel):
 
 class TestSessionCreate(BaseModel):
     name: str = Field(default="Video test session", min_length=1, max_length=255)
-    cameras: list[TestFeed] = Field(min_length=1, max_length=8)
+    label: str | None = None
+    cameras: list[TestFeed] = Field(default_factory=list)
+
 
 @router.get("/assets")
 async def list_assets(_: Principal = Depends(require_role("ADMIN")), db: AsyncSession = Depends(get_db)):
@@ -303,20 +305,26 @@ async def create_session(body: TestSessionCreate, principal: Principal = Depends
     enabled()
     await _close_orphaned_sessions(db)
     if await db.scalar(text("SELECT 1 FROM test_sessions WHERE status IN ('starting','active') LIMIT 1")): raise HTTPException(409, "Only one isolated video test session may run at a time")
-    assets = {}
-    for feed in body.cameras:
-        row = (await db.execute(text("SELECT * FROM test_video_assets WHERE id=CAST(:id AS uuid)"), {"id": str(feed.asset_id)})).mappings().first()
-        if not row or not Path(row["storage_key"]).is_file(): raise HTTPException(422, "A selected test video is unavailable")
-        assets[feed.asset_id] = dict(row)
-    session = (await db.execute(text("INSERT INTO test_sessions(name,created_by,status,loop,started_at) VALUES(:name,:actor,'starting',TRUE,NOW()) RETURNING id,name,status,created_at"), {"name": body.name, "actor": principal.username})).mappings().one(); session_id = str(session["id"])
-    for number, feed in enumerate(body.cameras, start=1):
-        asset = assets[feed.asset_id]; label = feed.camera_label.strip() or f"Test Camera {number} — {asset['display_name']}"
-        await db.execute(text("""INSERT INTO test_session_feeds(session_id,asset_id,stream_id,camera_label,rtsp_path,hls_path,loop,width,height,fps)
-          VALUES(CAST(:session AS uuid),CAST(:asset AS uuid),:stream,:label,:rtsp,:hls,:loop,:width,:height,:fps)"""), {"session": session_id,"asset": str(feed.asset_id),"stream": number,"label": label,"rtsp": f"rtsp://mediamtx:8554/test/{session_id}/cam{number}","hls": f"/test-hls/test/{session_id}/cam{number}/index.m3u8","loop": feed.loop,"width": asset["width"],"height": asset["height"],"fps": asset["fps"]})
-    # The existing ingestion service detects this starting row and spawns one
-    # isolated decoder subprocess. No operational worker or Docker service is
-    # restarted to run a test.
-    await db.commit(); return {**dict(session), "id": session_id, "runner_pid": None, "production_data_affected": False}
+    session_name = (body.label or body.name).strip()
+    session = (await db.execute(text("INSERT INTO test_sessions(name,created_by,status,loop,started_at) VALUES(:name,:actor,'starting',TRUE,NOW()) RETURNING id,name,status,created_at"), {"name": session_name, "actor": principal.username})).mappings().one(); session_id = str(session["id"])
+    if body.cameras:
+        assets = {}
+        for feed in body.cameras:
+            row = (await db.execute(text("SELECT * FROM test_video_assets WHERE id=CAST(:id AS uuid)"), {"id": str(feed.asset_id)})).mappings().first()
+            if not row or not Path(row["storage_key"]).is_file(): raise HTTPException(422, "A selected test video is unavailable")
+            assets[feed.asset_id] = dict(row)
+        for number, feed in enumerate(body.cameras, start=1):
+            asset = assets[feed.asset_id]; label = feed.camera_label.strip() or f"Test Camera {number} — {asset['display_name']}"
+            await db.execute(text("""INSERT INTO test_session_feeds(session_id,asset_id,stream_id,camera_label,rtsp_path,hls_path,loop,width,height,fps)
+              VALUES(CAST(:session AS uuid),CAST(:asset AS uuid),:stream,:label,:rtsp,:hls,:loop,:width,:height,:fps)"""), {"session": session_id,"asset": str(feed.asset_id),"stream": number,"label": label,"rtsp": f"rtsp://mediamtx:8554/test/{session_id}/cam{number}","hls": f"/test-hls/test/{session_id}/cam{number}/index.m3u8","loop": feed.loop,"width": asset["width"],"height": asset["height"],"fps": asset["fps"]})
+    else:
+        asset = (await db.execute(text("SELECT * FROM test_video_assets ORDER BY source_kind, display_name LIMIT 1"))).mappings().first()
+        if asset and Path(asset["storage_key"]).is_file():
+            label = f"Test Camera 1 — {asset['display_name']}"
+            await db.execute(text("""INSERT INTO test_session_feeds(session_id,asset_id,stream_id,camera_label,rtsp_path,hls_path,loop,width,height,fps)
+              VALUES(CAST(:session AS uuid),CAST(:asset AS uuid),1,:label,:rtsp,:hls,TRUE,:width,:height,:fps)"""), {"session": session_id,"asset": str(asset["id"]),"label": label,"rtsp": f"rtsp://mediamtx:8554/test/{session_id}/cam1","hls": f"/test-hls/test/{session_id}/cam1/index.m3u8","width": asset["width"],"height": asset["height"],"fps": asset["fps"]})
+    await db.commit(); return {**dict(session), "id": session_id, "session_id": session_id, "runner_pid": None, "production_data_affected": False}
+
 
 @router.get("/sessions/active")
 async def active_session(_: Principal = Depends(require_role("ADMIN")), db: AsyncSession = Depends(get_db)):

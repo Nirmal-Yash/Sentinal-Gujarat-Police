@@ -1,0 +1,328 @@
+=== SENTINEL AI AUDIT BASELINE ===
+Date: 2026-09-14T13:58:44.239767+00:00
+
+--- DOCKER SERVICES ---
+NAME                                                  STATUS                        PORTS
+sentinal-gujarat-police-ai_worker-1                   Up About a minute             
+sentinal-gujarat-police-api-1                         Up About a minute (healthy)   0.0.0.0:8000->8000/tcp, [::]:8000->8000/tcp
+sentinal-gujarat-police-dashboard-1                   Up About a minute             0.0.0.0:3000->80/tcp, [::]:3000->80/tcp
+sentinal-gujarat-police-ingestion-1                   Up About a minute             
+sentinal-gujarat-police-intelligence-1                Up About a minute             
+sentinal-gujarat-police-mediamtx-1                    Up About a minute             
+sentinal-gujarat-police-person_investigation-1        Up About a minute             
+sentinal-gujarat-police-postgres-1                    Up About a minute (healthy)   0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp
+sentinal-gujarat-police-redis-1                       Up About a minute (healthy)   0.0.0.0:6379->6379/tcp, [::]:6379->6379/tcp
+sentinal-gujarat-police-test_ai_worker-1              Up About a minute             
+sentinal-gujarat-police-test_intelligence-1           Up About a minute             
+sentinal-gujarat-police-test_person_investigation-1   Up About a minute
+
+--- SERVICE HEALTH ---
+GET /health (200): {"status":"ok","service":"sentinel-ai"}
+GET /api/enterprise/health/detailed (404): {"detail":"Not Found"}
+GET /ready: ERROR timed out
+
+--- RESOURCE USAGE ---
+NAME                                                  CPU %     MEM USAGE / LIMIT     MEM %
+sentinal-gujarat-police-dashboard-1                   0.00%     8.898MiB / 7.601GiB   0.11%
+sentinal-gujarat-police-ai_worker-1                   1.79%     2.132GiB / 2.539GiB   83.98%
+sentinal-gujarat-police-api-1                         0.38%     145.2MiB / 7.601GiB   1.87%
+sentinal-gujarat-police-ingestion-1                   431.52%   1.348GiB / 1.367GiB   98.61%
+sentinal-gujarat-police-test_person_investigation-1   0.10%     440.3MiB / 800MiB     55.04%
+sentinal-gujarat-police-intelligence-1                0.09%     34.91MiB / 7.601GiB   0.45%
+sentinal-gujarat-police-test_ai_worker-1              93.98%    1.596GiB / 1.758GiB   90.81%
+sentinal-gujarat-police-person_investigation-1        0.04%     432.5MiB / 1000MiB    43.25%
+sentinal-gujarat-police-test_intelligence-1           4.33%     26.23MiB / 7.601GiB   0.34%
+sentinal-gujarat-police-postgres-1                    19.81%    163.3MiB / 7.601GiB   2.10%
+sentinal-gujarat-police-redis-1                       3.13%     125.4MiB / 7.601GiB   1.61%
+sentinal-gujarat-police-mediamtx-1                    0.02%     4.91MiB / 7.601GiB    0.06%
+
+--- REDIS STATE ---
+# Memory
+used_memory:124834048
+used_memory_human:119.05M
+used_memory_rss:106332160
+used_memory_rss_human:101.41M
+used_memory_peak:158711840
+used_memory_peak_human:151.36M
+used_memory_peak_perc:78.65%
+used_memory_overhead:1295073
+used_memory_startup:948544
+used_memory_dataset:123538975
+used_memory_dataset_perc:99.72%
+allocator_allocated:125565968
+allocator_active:125947904
+allocator_resident:135135232
+allocator_muzzy:0
+total_system_memory:8161722368
+total_system_memory_human:7.60G
+used_memory_lua:32768
+used_memory_vm_eval:32768
+used_memory_lua_human:32.00K
+used_memory_scripts_eval:0
+number_of_cached_scripts:0
+number_of_functions:0
+number_of_libraries:0
+used_memory_vm_functions:33792
+used_memory_vm_total:66560
+used_memory_vm_total_human:65.00K
+used_memory_functions:192
+used_memory_scripts:192
+used_memory_scripts_human:192B
+maxmemory:2147483648
+maxmemory_human:2.00G
+maxmemory_policy:allkeys-lru
+allocator_frag_ratio:1.00
+allocator_frag_bytes:305904
+allocator_rss_ratio:1.07
+allocator_rss_bytes:9187328
+rss_overhead_ratio:0.79
+rss_overhead_bytes:-28803072
+mem_fragmentation_ratio:0.85
+mem_fragmentation_bytes:-18467032
+mem_not_counted_for_evict:0
+mem_replication_backlog:0
+mem_total_replication_buffers:0
+mem_clients_slaves:0
+mem_clients_normal:342481
+mem_cluster_links:0
+mem_aof_buffer:0
+mem_allocator:jemalloc-5.3.0
+mem_overhead_db_hashtable_rehashing:0
+active_defrag_running:0
+lazyfree_pending_objects:0
+lazyfreed_objects:0
+KEYS sentinel:* :
+sentinel:ai:health:ANPR-EasyOCR
+sentinel:ai:health:YOLOv8+DeepSORT-2
+sentinel:ai:health:supervisor
+sentinel:ai:health:YOLOv8+DeepSORT-4
+sentinel:ai:health:face
+sentinel:ai:health:YOLOv8+DeepSORT-1
+sentinel:ai:health:FaceEmbeds
+sentinel:ai:health:BehaviorAI
+sentinel:ai:health:YOLOv8+DeepSORT-3
+
+--- POSTGRES TABLE COUNTS ---
+schemaname |         tablename          | rows 
+------------+----------------------------+------
+ public     | test_detections            |  519
+ public     | test_tracks                |  145
+ public     | cameras                    |   30
+ public     | camera_health_observations |   16
+ public     | detections                 |    9
+ public     | global_tracks              |    8
+ public     | revoked_tokens             |    1
+ public     | security_audit_events      |    1
+ public     | auth_attempts              |    0
+ public     | camera_audit_log           |    0
+ public     | vendors                    |    0
+ public     | users                      |    0
+ public     | schema_migrations          |    0
+ public     | test_alerts                |    0
+ public     | test_sessions              |    0
+ public     | vehicle_journeys           |    0
+ public     | camera_groups              |    0
+ public     | test_session_feeds         |    0
+ public     | test_watchlists            |    0
+ public     | vehicle_identities         |    0
+ public     | evidence                   |    0
+ public     | vehicle_sightings          |    0
+ public     | vehicle_journey_sightings  |    0
+ public     | test_video_assets          |    0
+ public     | user_sessions              |    0
+ public     | spatial_ref_sys            |    0
+ public     | intelligence_contracts     |    0
+ public     | camera_models              |    0
+ public     | alerts                     |    0
+ public     | alert_audit_log            |    0
+ public     | watchlist                  |    0
+ public     | camera_imports             |    0
+ public     | migration_integrity_marker |    0
+ public     | evidence_audit_log         |    0
+(34 rows)
+
+--- MISSING INDEXES ---
+schemaname | tablename | attname | n_distinct 
+------------+-----------+---------+------------
+(0 rows)
+
+--- ENV VARS PRESENT IN API ---
+PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+HOSTNAME=1e9aebececee
+DB_SSL=0
+DATABASE_URL=postgresql://sentinel:sentinel@postgres:5432/sentinel
+RTSP_HOST_IP=103.250.160.189
+PERSON_INVESTIGATION_TIMEOUT=20
+AUTH_COOKIE_SECURE=false
+FIELD_ENCRYPTION_KEY=SLuwdpYs2oB93gU4ogu0Ecj3adHkfGZ1k2BK513SfEaw7OCodFIbqsOYbH85gQ8H
+SECRET_KEY=oaXHO0x5UiRg5rWE1DJ7Lds4BDO2MeNmSmX0S7cgpsY3oJLgA60mPOy5uuDlK854
+CORS_ORIGINS=http://localhost:3000
+WATCHLIST_UPDATE_CHANNEL=watchlist:updated
+CCTV_CATALOGUE_PATH=/cameras.json
+MIGRATION_CONNECT_RETRY_DELAY=2
+EVIDENCE_TOKEN_TTL_SECS=300
+JWT_REFRESH_SECRET_KEY=mkYWTubs3faGfazo/UrLnUAtrM2UX2sNI7Fk9xxyu3iU6xci/A+Qlx/5Fl9NpCfT
+ACCESS_TOKEN_EXPIRE_MINUTES=15
+AUTH_COOKIE_SAMESITE=lax
+TEST_VIDEO_DIR=/videos
+CCTV_BASE_URL=https://cctv.corp8.cloud
+REFRESH_TOKEN_EXPIRE_HOURS=8
+SNAPSHOT_TOKEN_TTL_SECS=120
+FORCE_SECURITY_HEADERS=false
+CCTV_PASSWORD=9JSD-HPRF-ZPZ7
+RTSP_PORT=8554
+BOOTSTRAP_ADMIN_PASSWORD=Admin@Sentinel2026
+TEST_HLS_BASE=/test-hls
+SNAPSHOT_TOKEN_SECRET=F3UfpAOWr6wlrbBTMo9DiT0g9S0Czei560sqM8YriTiM20VC5P6MkRaM8Ycp1IJz
+TEST_MAX_UPLOAD_BYTES=209715200
+ENVIRONMENT=development
+ALLOWED_ORIGINS=http://localhost:3000
+EVIDENCE_STORAGE_PATH=/evidence
+REDIS_PASSWORD=replace-with-strong-redis-password
+TEST_ENDPOINT_ENABLED=true
+TEST_RTSP_BASE=rtsp://mediamtx:8554
+CCTV_LOGIN_PATH=/auth/login
+BOOTSTRAP_ADMIN_ROLE=SUPERADMIN
+JWT_TOKEN_HOURS=8
+REDIS_URL=redis://redis:6379
+AI_HEALTH_PREFIX=sentinel:ai:health:
+MIGRATION_CONNECT_ATTEMPTS=12
+CCTV_EMAIL=nirmalyash721@gmail.com
+AI_HEALTH_STALE_SECS=45
+BOOTSTRAP_ADMIN_USERNAME=admin
+AUTH_REQUIRED=true
+FACE_INVESTIGATION_THRESHOLD=0.65
+TEST_UPLOAD_DIR=/test_videos
+LANG=C.UTF-8
+GPG_KEY=A035C8C19219BA821ECEA86B64E628F8D684696D
+PYTHON_VERSION=3.11.16
+PYTHON_SHA256=91bcdebfdde239a003ae93738a7fce0f9230fee5c4bc2b86f6e6e8c6f98aabe8
+HOME=/root
+
+--- RECENT ERRORS (API) ---
+api-1  |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+api-1  |   File "/usr/local/lib/python3.11/site-packages/fastapi/applications.py", line 1054, in __call__
+api-1  |     await super().__call__(scope, receive, send)
+api-1  |   File "/usr/local/lib/python3.11/site-packages/starlette/applications.py", line 123, in __call__
+api-1  |     await self.middleware_stack(scope, receive, send)
+api-1  |   File "/usr/local/lib/python3.11/site-packages/starlette/middleware/errors.py", line 186, in __call__
+api-1  |     raise exc
+api-1  |   File "/usr/local/lib/python3.11/site-packages/starlette/middleware/errors.py", line 164, in __call__
+api-1  |     await self.app(scope, receive, _send)
+api-1  |   File "/usr/local/lib/python3.11/site-packages/starlette/middleware/base.py", line 189, in __call__
+api-1  |     with collapse_excgroups():
+api-1  |   File "/usr/local/lib/python3.11/contextlib.py", line 158, in __exit__
+api-1  |     self.gen.throw(typ, value, traceback)
+api-1  |   File "/usr/local/lib/python3.11/site-packages/starlette/_utils.py", line 93, in collapse_excgroups
+api-1  |     raise exc
+api-1  |   File "/usr/local/lib/python3.11/site-packages/starlette/middleware/base.py", line 191, in __call__
+api-1  |     response = await self.dispatch_func(request, call_next)
+api-1  |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+api-1  |   File "/app/main.py", line 75, in csrf_boundary
+api-1  |     response=await call_next(request); response.headers.setdefault("X-Request-Id",str(uuid.uuid4())); return response
+api-1  |              ^^^^^^^^^^^^^^^^^^^^^^^^
+api-1  |   File "/usr/local/lib/python3.11/site-packages/starlette/middleware/base.py", line 166, in call_next
+api-1  |     raise RuntimeError("No response returned.")
+api-1  | RuntimeError: No response returned.
+api-1  | INFO:     172.18.0.13:52372 - "GET /cameras/dc233c22-bb4c-4107-9936-6b97dfa863ba/snapshot?t=1789394333368&access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzZW50aW5lbC1zbmFwc2hvdCIsImFzc2V0IjoiY2FtMDIiLCJpYXQiOjE3ODkzOTQyNzYsImV4cCI6MTc4OTM5NDM5Nn0.T3vzSnFSH731n75AcbKvM1i-Y13F5vXl2vipywiZQWc HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.13:52376 - "GET /cameras/9c6180fa-c9a3-4981-a5c9-4cee9fec6b2f/snapshot?t=1789394333363&access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzZW50aW5lbC1zbmFwc2hvdCIsImFzc2V0IjoiY2FtMDEiLCJpYXQiOjE3ODkzOTQyNzYsImV4cCI6MTc4OTM5NDM5Nn0.qnqnCt17v6nndquAdbVs3lVQ4h3O5_5cGfbJYgS7qG4 HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.13:52380 - "GET /cameras/cbd7140f-c6e7-418c-8971-8b9351743b08/snapshot?t=1789394333370&access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzZW50aW5lbC1zbmFwc2hvdCIsImFzc2V0IjoiY2FtMDUiLCJpYXQiOjE3ODkzOTQyNzYsImV4cCI6MTc4OTM5NDM5Nn0.8zpH317h7O4mGWSEGIXpPjD2CA-Ybn3Vmrm-7o8WCfc HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.13:52402 - "GET /cameras/e0b34072-5c9e-44ee-80a4-a89c788d8b2c/snapshot?t=1789394333369&access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzZW50aW5lbC1zbmFwc2hvdCIsImFzc2V0IjoiY2FtMDQiLCJpYXQiOjE3ODkzOTQyNzYsImV4cCI6MTc4OTM5NDM5Nn0.d6ix2NdHskge1WqG5-GBOmHWVkqi2zXuGDlAnY7tFrQ HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.13:52414 - "GET /cameras/419b2e16-7e8d-40a7-9fa3-8a0c08761b28/snapshot?t=1789394333867&access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzZW50aW5lbC1zbmFwc2hvdCIsImFzc2V0IjoiY2FtMDMiLCJpYXQiOjE3ODkzOTQyNjEsImV4cCI6MTc4OTM5NDM4MX0.j7f_pYDzlk73AclAD9sbrG-n7a25OjEvfA1ytVrxc9E HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.13:52422 - "GET /cameras/1d14df88-81d3-421b-b2bb-8191c903e298/snapshot?t=1789394333869&access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzZW50aW5lbC1zbmFwc2hvdCIsImFzc2V0IjoiY2FtMDYiLCJpYXQiOjE3ODkzOTQyNjEsImV4cCI6MTc4OTM5NDM4MX0.5FawTwbI8WvUHzp66ZHwl3XdHbfGD_NVCUgbnHpq97g HTTP/1.1" 200 OK
+
+--- RECENT ERRORS (AI WORKER) ---
+ai_worker-1  | 2026-09-14 13:58:29,334 [AI-ENGINE][INFO] - appearance threshold: 0.2
+ai_worker-1  | 2026-09-14 13:58:29,334 [AI-ENGINE][INFO] - nms threshold: OFF
+ai_worker-1  | 2026-09-14 13:58:29,334 [AI-ENGINE][INFO] - max num of appearance features: None
+ai_worker-1  | 2026-09-14 13:58:29,334 [AI-ENGINE][INFO] - overriding track class : No
+ai_worker-1  | 2026-09-14 13:58:29,334 [AI-ENGINE][INFO] - today given : No
+ai_worker-1  | 2026-09-14 13:58:29,334 [AI-ENGINE][INFO] - in-build embedder : Yes
+ai_worker-1  | 2026-09-14 13:58:29,334 [AI-ENGINE][INFO] - polygon detections : No
+ai_worker-1  | 2026-09-14 13:58:29,454 [AI-ENGINE][INFO] DeepSort Tracker initialised
+ai_worker-1  | 2026-09-14 13:58:29,457 [AI-ENGINE][INFO] - max age: 30
+ai_worker-1  | 2026-09-14 13:58:29,457 [AI-ENGINE][INFO] - appearance threshold: 0.2
+ai_worker-1  | 2026-09-14 13:58:29,458 [AI-ENGINE][INFO] - nms threshold: OFF
+ai_worker-1  | 2026-09-14 13:58:29,458 [AI-ENGINE][INFO] - max num of appearance features: None
+ai_worker-1  | 2026-09-14 13:58:29,458 [AI-ENGINE][INFO] - overriding track class : No
+ai_worker-1  | 2026-09-14 13:58:29,459 [AI-ENGINE][INFO] - today given : No
+ai_worker-1  | 2026-09-14 13:58:29,459 [AI-ENGINE][INFO] - in-build embedder : Yes
+ai_worker-1  | 2026-09-14 13:58:29,459 [AI-ENGINE][INFO] - polygon detections : No
+ai_worker-1  | 2026-09-14 13:58:30,822 [AI-ENGINE][INFO] MobileNetV2 Embedder for Deep Sort initialised
+ai_worker-1  | 2026-09-14 13:58:30,822 [AI-ENGINE][INFO] - gpu enabled: False
+ai_worker-1  | 2026-09-14 13:58:30,828 [AI-ENGINE][INFO] - half precision: False
+ai_worker-1  | 2026-09-14 13:58:30,828 [AI-ENGINE][INFO] - max batch size: 16
+ai_worker-1  | 2026-09-14 13:58:30,828 [AI-ENGINE][INFO] - expects BGR: True
+ai_worker-1  | 2026-09-14 13:58:30,965 [AI-ENGINE][INFO] DeepSort Tracker initialised
+ai_worker-1  | 2026-09-14 13:58:30,966 [AI-ENGINE][INFO] - max age: 30
+ai_worker-1  | 2026-09-14 13:58:30,966 [AI-ENGINE][INFO] - appearance threshold: 0.2
+ai_worker-1  | 2026-09-14 13:58:30,966 [AI-ENGINE][INFO] - nms threshold: OFF
+ai_worker-1  | 2026-09-14 13:58:30,966 [AI-ENGINE][INFO] - max num of appearance features: None
+ai_worker-1  | 2026-09-14 13:58:30,966 [AI-ENGINE][INFO] - overriding track class : No
+ai_worker-1  | 2026-09-14 13:58:30,966 [AI-ENGINE][INFO] - today given : No
+ai_worker-1  | 2026-09-14 13:58:30,966 [AI-ENGINE][INFO] - in-build embedder : Yes
+ai_worker-1  | 2026-09-14 13:58:30,966 [AI-ENGINE][INFO] - polygon detections : No
+
+--- RECENT ERRORS (INGESTION) ---
+ingestion-1  | [ WARN:0@55.375] global cap_ffmpeg_impl.hpp:453 _opencv_ffmpeg_interrupt_callback Stream timeout triggered after 30703.691836 ms
+ingestion-1  | [ WARN:0@55.983] global cap_ffmpeg_impl.hpp:453 _opencv_ffmpeg_interrupt_callback Stream timeout triggered after 30059.297947 ms
+ingestion-1  | [h264 @ 0x63370b4717c0] error while decoding MB 119 37, bytestream -17
+ingestion-1  | 2026-09-14 13:58:22,695 [INGEST][INFO] 23 Patan Dethali Char Rasta: connected; source_fps=25.0
+ingestion-1  | 2026-09-14 13:58:23,478 [INGEST][INFO] 15 Suvidha park: connected; source_fps=10.0
+ingestion-1  | [h264 @ 0x63370b57d6c0] error while decoding MB 17 41, bytestream -11
+ingestion-1  | [ WARN:0@56.461] global cap_ffmpeg_impl.hpp:453 _opencv_ffmpeg_interrupt_callback Stream timeout triggered after 30553.596328 ms
+ingestion-1  | [h264 @ 0x63370b51c580] error while decoding MB 89 62, bytestream -9
+ingestion-1  | [ WARN:0@56.751] global cap_ffmpeg_impl.hpp:453 _opencv_ffmpeg_interrupt_callback Stream timeout triggered after 32995.446574 ms
+ingestion-1  | [h264 @ 0x63370b484d80] error while decoding MB 74 28, bytestream -5
+ingestion-1  | 2026-09-14 13:58:25,388 [INGEST][INFO] 19 KHAPARIA GRAM PANCHAYAT , TALUKA GANDEVI, DISTRICT NAVSARI: connected; source_fps=unknown
+ingestion-1  | [h264 @ 0x63370b57d6c0] error while decoding MB 58 40, bytestream -25
+ingestion-1  | [ WARN:0@58.437] global cap_ffmpeg_impl.hpp:453 _opencv_ffmpeg_interrupt_callback Stream timeout triggered after 30198.257540 ms
+ingestion-1  | [ WARN:0@58.595] global cap_ffmpeg_impl.hpp:453 _opencv_ffmpeg_interrupt_callback Stream timeout triggered after 33614.643701 ms
+ingestion-1  | 2026-09-14 13:58:26,129 [INGEST][INFO] 30 kheram: connected; source_fps=unknown
+ingestion-1  | 2026-09-14 13:58:26,770 [INGEST][INFO] 16 Visat P2: connected; source_fps=10.0
+ingestion-1  | [h264 @ 0x63370b4d9040] error while decoding MB 61 9, bytestream -31
+ingestion-1  | 2026-09-14 13:58:28,204 [INGEST][INFO] 20 Mohanpura: connected; source_fps=unknown
+ingestion-1  | 2026-09-14 13:58:28,672 [INGEST][INFO] Gandhidham Rambaugh p2: connected; source_fps=unknown
+ingestion-1  | 2026-09-14 13:58:28,960 [INGEST][INFO] 01 Chiman bhai Bridge: telemetry frames=270 published=9 decode_fps=8.04 publish_fps=0.27 pts=18650ms
+ingestion-1  | [h264 @ 0x63370b4b3780] error while decoding MB 17 41, bytestream -11
+ingestion-1  | 2026-09-14 13:58:34,738 [INGEST][INFO] 02 Janpath: telemetry frames=180 published=15 decode_fps=4.84 publish_fps=0.40 pts=5964ms
+ingestion-1  | 2026-09-14 13:58:35,032 [INGEST][INFO] 17 Rajkot Bus Port CCTV: telemetry frames=128 published=3 decode_fps=3.72 publish_fps=0.09 pts=5080ms
+ingestion-1  | [ WARN:0@75.310] global cap_ffmpeg_impl.hpp:453 _opencv_ffmpeg_interrupt_callback Stream timeout triggered after 30048.496770 ms
+ingestion-1  | [ WARN:0@75.502] global cap_ffmpeg_impl.hpp:453 _opencv_ffmpeg_interrupt_callback Stream timeout triggered after 32532.470928 ms
+ingestion-1  | [ WARN:0@75.393] global cap_ffmpeg_impl.hpp:453 _opencv_ffmpeg_interrupt_callback Stream timeout triggered after 30339.327549 ms
+ingestion-1  | [ WARN:0@75.458] global cap_ffmpeg_impl.hpp:453 _opencv_ffmpeg_interrupt_callback Stream timeout triggered after 31735.399193 ms
+ingestion-1  | [NULL @ 0x63370b57d6c0] missing picture in access unit with size 39
+ingestion-1  | [NULL @ 0x63370b57d6c0] missing picture in access unit with size 2876
+ingestion-1  | [h264 @ 0x63370b41cd40] no frame!
+
+--- RECENT ERRORS (INTELLIGENCE) ---
+intelligence-1  | 2026-09-14 13:16:58,331 [INTEL][INFO] Watchlist loaded: 0 faces, 1 plates, generation=7, faiss=disabled
+intelligence-1  | 2026-09-14 13:17:58,371 [INTEL][INFO] Watchlist loaded: 0 faces, 1 plates, generation=8, faiss=disabled
+intelligence-1  | 2026-09-14 13:18:58,408 [INTEL][INFO] Watchlist loaded: 0 faces, 1 plates, generation=9, faiss=disabled
+intelligence-1  | 2026-09-14 13:19:58,426 [INTEL][INFO] Watchlist loaded: 0 faces, 1 plates, generation=10, faiss=disabled
+intelligence-1  | 2026-09-14 13:20:58,437 [INTEL][INFO] Watchlist loaded: 0 faces, 1 plates, generation=11, faiss=disabled
+intelligence-1  | 2026-09-14 13:21:58,498 [INTEL][INFO] Watchlist loaded: 0 faces, 1 plates, generation=12, faiss=disabled
+intelligence-1  | 2026-09-14 13:22:58,510 [INTEL][INFO] Watchlist loaded: 0 faces, 1 plates, generation=13, faiss=disabled
+intelligence-1  | 2026-09-14 13:23:58,520 [INTEL][INFO] Watchlist loaded: 0 faces, 1 plates, generation=14, faiss=disabled
+intelligence-1  | 2026-09-14 13:24:58,542 [INTEL][INFO] Watchlist loaded: 0 faces, 1 plates, generation=15, faiss=disabled
+intelligence-1  | 2026-09-14 13:25:58,596 [INTEL][INFO] Watchlist loaded: 0 faces, 1 plates, generation=16, faiss=disabled
+intelligence-1  | 2026-09-14 13:26:58,605 [INTEL][INFO] Watchlist loaded: 0 faces, 1 plates, generation=17, faiss=disabled
+intelligence-1  | 2026-09-14 13:27:58,618 [INTEL][INFO] Watchlist loaded: 0 faces, 1 plates, generation=18, faiss=disabled
+intelligence-1  | 2026-09-14 13:50:38,443 [INTEL][INFO] Intelligence engine starting â€¦
+intelligence-1  | 2026-09-14 13:50:38,872 [INTEL][INFO] Waiting for services â€¦ connection to server at "postgres" (172.18.0.13), port 5432 failed: Connection refused
+intelligence-1  | 	Is the server running on that host and accepting TCP/IP connections?
+intelligence-1  | 
+intelligence-1  | 2026-09-14 13:50:42,155 [INTEL][INFO] Loading faiss with AVX512 support.
+intelligence-1  | 2026-09-14 13:50:42,230 [INTEL][INFO] Successfully loaded faiss with AVX512 support.
+intelligence-1  | 2026-09-14 13:50:42,247 [INTEL][INFO] FAISS available â€” O(1) face watchlist matching enabled (IndexFlatIP)
+intelligence-1  | 2026-09-14 13:50:42,340 [INTEL][INFO] Watchlist loaded: 0 faces, 1 plates, generation=1, faiss=disabled
+intelligence-1  | 2026-09-14 13:50:42,343 [INTEL][INFO] Watchlist event listener subscribed: watchlist:updated
+intelligence-1  | 2026-09-14 13:50:42,343 [INTEL][INFO] Intelligence engine ready â€” consuming detections â€¦
+intelligence-1  | 2026-09-14 13:57:27,154 [INTEL][INFO] Intelligence engine starting â€¦
+intelligence-1  | 2026-09-14 13:57:27,465 [INTEL][INFO] Loading faiss with AVX512 support.
+intelligence-1  | 2026-09-14 13:57:27,545 [INTEL][INFO] Successfully loaded faiss with AVX512 support.
+intelligence-1  | 2026-09-14 13:57:27,556 [INTEL][INFO] FAISS available â€” O(1) face watchlist matching enabled (IndexFlatIP)
+intelligence-1  | 2026-09-14 13:57:27,608 [INTEL][INFO] Watchlist loaded: 0 faces, 1 plates, generation=1, faiss=disabled
+intelligence-1  | 2026-09-14 13:57:27,611 [INTEL][INFO] Watchlist event listener subscribed: watchlist:updated
+intelligence-1  | 2026-09-14 13:57:27,612 [INTEL][INFO] Intelligence engine ready â€” consuming detections â€¦
+intelligence-1  | 2026-09-14 13:58:27,755 [INTEL][INFO] Watchlist loaded: 0 faces, 1 plates, generation=2, faiss=disabled

@@ -55,6 +55,18 @@ def _truthy(data, key):
     return _text(data, key).strip().lower() in {"1", "true", "yes"}
 
 
+def _has_consensus(data, key):
+    val = _text(data, key).strip()
+    if not val:
+        return False
+    if val.lower() in {"1", "true", "yes"}:
+        return True
+    try:
+        return float(val) > 0.0
+    except (ValueError, TypeError):
+        return False
+
+
 def _timestamp(data):
     value = _text(data, "source_ts") or _text(data, "ingested_at")
     if not value:
@@ -153,7 +165,7 @@ def persist(data: dict):
               (detection_id, camera_id, timestamp, int(_text(data, "pts_ms", "0") or 0), _text(data, "detection_type"),
                json.dumps(bbox), confidence, _text(data, "track_id") or None, plate, json.dumps(metadata)))
 
-            is_confirmed = _truthy(data, "plate_validated") and _truthy(data, "anpr_consensus")
+            is_confirmed = _truthy(data, "plate_validated") and _has_consensus(data, "anpr_consensus")
             if not plate or not is_confirmed:
                 conn.commit()
                 return {"timestamp": timestamp, "plate": plate, "global_vehicle_id": None, "journey_id": None,

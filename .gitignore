@@ -9,5 +9,8 @@ __pycache__/
 *.pyd
 dashboard/dist/
 .env
+secrets/
+*.key
+*.pem
 /scripts/
 /bridge/

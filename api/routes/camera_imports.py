@@ -65,10 +65,23 @@ def _public_analysis(data: dict) -> dict:
 
 
 @router.post("/validate")
-async def validate_camera_import(file: UploadFile = File(...), _: Principal = Depends(require_permission("registry:admin"))):
+async def validate_camera_import(
+    file: UploadFile = File(...),
+    test_session_id: uuid.UUID | None = Query(None),
+    _: Principal = Depends(require_permission("registry:admin")),
+    db: AsyncSession = Depends(get_db),
+):
     try:
+        if test_session_id:
+            session = (await db.execute(text("SELECT id, status FROM test_sessions WHERE id=CAST(:id AS uuid)"), {"id": str(test_session_id)})).mappings().first()
+            if not session:
+                raise HTTPException(404, "Test session not found")
         data = await _analyze(file)
-        return _public_analysis(data)
+        res = _public_analysis(data)
+        if test_session_id:
+            res["test_mode"] = True
+            res["test_session_id"] = str(test_session_id)
+        return res
     except HTTPException:
         raise
     except Exception as exc:
@@ -80,9 +93,17 @@ async def validate_camera_import(file: UploadFile = File(...), _: Principal = De
 async def import_camera_registry(
     file: UploadFile = File(...),
     acknowledge_warnings: bool = Query(False),
+    test_session_id: uuid.UUID | None = Query(None),
     principal: Principal = Depends(require_permission("registry:admin")),
     db: AsyncSession = Depends(get_db),
 ):
+    if test_session_id:
+        session = (await db.execute(text("SELECT id, status FROM test_sessions WHERE id=CAST(:id AS uuid)"), {"id": str(test_session_id)})).mappings().first()
+        if not session:
+            raise HTTPException(404, "Test session not found")
+        if session["status"] not in ("starting", "active"):
+            raise HTTPException(409, "Test session is not active")
+
     data = await _analyze(file)
     summary = data["summary"]
     if not summary["allow_upload"]:
@@ -91,8 +112,37 @@ async def import_camera_registry(
         raise HTTPException(409, detail={"message": "This registry contains warnings. Review them and explicitly acknowledge before importing.", "analysis": _public_analysis(data)})
 
     import_id = uuid.uuid4()
-    await db.execute(text("INSERT INTO camera_imports(id, filename, actor, total_rows) VALUES (CAST(:id AS uuid), :filename, :actor, :total)"), {"id": str(import_id), "filename": data["filename"] or "camera-import.csv", "actor": principal.username, "total": summary["total_rows"]})
     accepted, errors = 0, []
+
+    if test_session_id:
+        # Isolated test mode import: does NOT mutate production cameras or audit log
+        default_asset = (await db.execute(text("SELECT id, width, height, fps FROM test_video_assets ORDER BY created_at ASC LIMIT 1"))).mappings().first()
+        for analysis_row in data["rows"]:
+            if analysis_row["status"] == "blocked":
+                errors.extend(analysis_row["issues"])
+                continue
+            try:
+                payload = dict(analysis_row["normalized"])
+                stream_id = int(payload.get("stream_id") or (accepted + 1))
+                label = str(payload.get("name") or f"Test Camera {stream_id}").strip()
+                existing_feed = (await db.execute(text("SELECT id FROM test_session_feeds WHERE session_id=CAST(:session AS uuid) AND stream_id=:stream"), {"session": str(test_session_id), "stream": stream_id})).mappings().first()
+                if existing_feed:
+                    await db.execute(text("UPDATE test_session_feeds SET camera_label=:label WHERE id=CAST(:id AS uuid)"), {"label": label, "id": str(existing_feed["id"])})
+                elif default_asset:
+                    await db.execute(text("""INSERT INTO test_session_feeds(session_id, asset_id, stream_id, camera_label, rtsp_path, hls_path, loop, width, height, fps)
+                        VALUES(CAST(:session AS uuid), CAST(:asset AS uuid), :stream, :label, :rtsp, :hls, TRUE, :width, :height, :fps)"""), {
+                        "session": str(test_session_id), "asset": str(default_asset["id"]), "stream": stream_id, "label": label,
+                        "rtsp": f"rtsp://mediamtx:8554/test/{test_session_id}/cam{stream_id}",
+                        "hls": f"/test-hls/test/{test_session_id}/cam{stream_id}/index.m3u8",
+                        "width": default_asset["width"] or 1280, "height": default_asset["height"] or 720, "fps": default_asset["fps"] or 25.0
+                    })
+                accepted += 1
+            except Exception as exc:
+                errors.append({"row": analysis_row["row"], "severity": "error", "field": "row", "message": str(exc)})
+        await db.commit()
+        return {"import_id": str(import_id), "total_rows": summary["total_rows"], "accepted_rows": accepted, "rejected_rows": summary["total_rows"] - accepted, "errors": errors[:100], "quality": summary, "is_test": True}
+
+    await db.execute(text("INSERT INTO camera_imports(id, filename, actor, total_rows) VALUES (CAST(:id AS uuid), :filename, :actor, :total)"), {"id": str(import_id), "filename": data["filename"] or "camera-import.csv", "actor": principal.username, "total": summary["total_rows"]})
     for analysis_row in data["rows"]:
         if analysis_row["status"] == "blocked":
             errors.extend(analysis_row["issues"]); continue
@@ -133,3 +183,4 @@ async def import_camera_registry(
     await db.execute(text("""UPDATE camera_imports SET accepted_rows=:accepted, rejected_rows=:rejected, errors=CAST(:errors AS jsonb), column_map=CAST(:column_map AS jsonb), status='completed', completed_at=NOW() WHERE id=CAST(:id AS uuid)"""), {"id": str(import_id), "accepted": accepted, "rejected": rejected, "errors": json.dumps(errors[:100]), "column_map": json.dumps(data["header_mapping"])})
     await db.commit()
     return {"import_id": str(import_id), "total_rows": summary["total_rows"], "accepted_rows": accepted, "rejected_rows": rejected, "errors": errors[:100], "quality": summary}
+

@@ -2,14 +2,14 @@
 """Sentinel AI FastAPI backend."""
 import asyncio, os, logging, uuid
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request, APIRouter, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import engine, Session, get_db
 from auth import AUTH_REQUIRED, SECRET_KEY, REFRESH_SECRET, principal_from_token, hash_password
 from websocket_manager import manager, redis_alert_consumer
-from routes import cameras, camera_snapshot, camera_imports, alerts, watchlist, search, auth, reports, test, test_feeds, vendors, evidence, evidence_assets, operations, test_alerts, cctv
+from routes import cameras, camera_snapshot, camera_imports, alerts, watchlist, search, auth, reports, test, test_feeds, vendors, evidence, evidence_assets, operations, test_alerts, cctv, camera_groups, investigate
 from migrations import apply_migrations
 from security_hardening import SecurityHeadersMiddleware, RequestSizeLimitMiddleware, verify_cookie_csrf
 from security_audit import SecurityAuditMiddleware
@@ -64,16 +64,39 @@ app=FastAPI(title="Sentinel AI — Gujarat Police Innovation Challenge",version=
 app.add_middleware(RequestSizeLimitMiddleware); app.add_middleware(SecurityHeadersMiddleware); app.add_middleware(SecurityAuditMiddleware)
 app.add_middleware(CORSMiddleware,allow_origins=CORS_ORIGINS,allow_credentials=True,allow_methods=["GET","POST","PUT","PATCH","DELETE","OPTIONS"],allow_headers=["Authorization","Content-Type","X-Test-Session-Id","X-CSRF-Token"],expose_headers=["X-Request-Id"],max_age=600)
 @app.middleware("http")
-async def csrf_boundary(request:Request,call_next):
-    if request.method.upper() not in {"GET","HEAD","OPTIONS"} and request.url.path not in {"/auth/login","/auth/refresh"}:
-        if not request.headers.get("Authorization","").startswith("Bearer ") and request.cookies.get("sentinel_session"):
+async def csrf_boundary(request: Request, call_next):
+    if request.method.upper() not in {"GET", "HEAD", "OPTIONS"} and request.url.path not in {"/auth/login", "/auth/refresh", "/api/v1/auth/login", "/api/v1/auth/refresh"}:
+        if not request.headers.get("Authorization", "").startswith("Bearer ") and request.cookies.get("sentinel_session"):
             try:
-                verify_cookie_csrf(request,request.cookies.get("sentinel_csrf"))
+                verify_cookie_csrf(request, request.cookies.get("sentinel_csrf"))
             except HTTPException as exc:
                 from fastapi.responses import JSONResponse
                 return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
-    response=await call_next(request); response.headers.setdefault("X-Request-Id",str(uuid.uuid4())); return response
-app.include_router(camera_snapshot.router); app.include_router(cameras.router); app.include_router(camera_imports.router); app.include_router(cctv.router); app.include_router(alerts.router); app.include_router(watchlist.router); app.include_router(search.router); app.include_router(auth.router); app.include_router(reports.router); app.include_router(test.router); app.include_router(test_feeds.router); app.include_router(test_alerts.router); app.include_router(vendors.router); app.include_router(evidence_assets.router); app.include_router(evidence.router); app.include_router(operations.router)
+    try:
+        response = await call_next(request)
+        response.headers.setdefault("X-Request-Id", str(uuid.uuid4()))
+        return response
+    except RuntimeError as exc:
+        if "No response returned" in str(exc):
+            return Response(status_code=499)
+        raise
+
+routers_list = [
+    camera_snapshot.router, camera_groups.router, cameras.router, camera_imports.router,
+    cctv.router, alerts.router, watchlist.router, search.router, auth.router, reports.router,
+    test.router, test_feeds.router, test_alerts.router, vendors.router, evidence_assets.router,
+    evidence.router, operations.router, investigate.router
+]
+for r in routers_list:
+    app.include_router(r)
+
+app.include_router(cctv.router, prefix="/api")
+
+api_v1 = APIRouter(prefix="/api/v1")
+for r in routers_list:
+    api_v1.include_router(r)
+app.include_router(api_v1)
+
 @app.websocket("/ws/alerts")
 async def ws_alerts(ws:WebSocket):
     if AUTH_REQUIRED:
@@ -87,7 +110,7 @@ async def ws_alerts(ws:WebSocket):
         while True: await ws.receive_text()
     except WebSocketDisconnect: manager.disconnect(ws)
 @app.get("/health")
-async def health(): return {"status":"ok","service":"sentinel-ai"}
+async def health(): return {"status":"healthy","service":"sentinel-ai","ok":True}
 @app.get("/ready")
 async def ready(db:AsyncSession=Depends(get_db)):
     checks={"database":False,"redis":False,"authentication":False,"snapshot_signing":False,"field_encryption":False}

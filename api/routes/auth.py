@@ -32,10 +32,14 @@ def set_auth_cookies(response: Response, access_token: str, access_expires, refr
 
 
 @router.get('/config')
-async def config():
+async def config(request: Request, response: Response):
     """Unauthenticated bootstrap configuration; no database dependency."""
+    token = request.cookies.get('sentinel_csrf')
+    if not token or len(token) < 32:
+        token = secrets.token_urlsafe(32)
+        response.set_cookie('sentinel_csrf', token, max_age=min(COOKIE_MAX_AGE, REFRESH_TOKEN_HOURS * 3600), httponly=False, secure=COOKIE_SECURE, samesite=COOKIE_SAMESITE, path='/')
     bootstrap_configured = bool(os.getenv('BOOTSTRAP_ADMIN_USERNAME','').strip() and os.getenv('BOOTSTRAP_ADMIN_PASSWORD',''))
-    return {'auth_required': AUTH_REQUIRED, 'test_enabled': os.getenv('TEST_ENDPOINT_ENABLED','true').lower() == 'true', 'session_persistent': True, 'access_token_minutes': int(os.getenv('ACCESS_TOKEN_EXPIRE_MINUTES','15')), 'refresh_token_hours': REFRESH_TOKEN_HOURS, 'bootstrap_admin_configured': bootstrap_configured, 'login_available': True}
+    return {'auth_required': AUTH_REQUIRED, 'test_enabled': os.getenv('TEST_ENDPOINT_ENABLED','true').lower() == 'true', 'session_persistent': True, 'access_token_minutes': int(os.getenv('ACCESS_TOKEN_EXPIRE_MINUTES','15')), 'refresh_token_hours': REFRESH_TOKEN_HOURS, 'bootstrap_admin_configured': bootstrap_configured, 'login_available': True, 'csrf_token': token}
 
 @router.get('/csrf')
 async def csrf(request: Request, response: Response):

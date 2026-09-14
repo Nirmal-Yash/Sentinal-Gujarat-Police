@@ -48,9 +48,9 @@ def _category_interval(name: str, default_fps: float) -> float:
     return 1.0 / max(0.25, fps)
 
 CATEGORY_INTERVALS = {
-    "highway": _category_interval("highway", 3.33),
-    "pedestrian": _category_interval("pedestrian", 2.0),
-    "static": _category_interval("static", 1.25),
+    "highway": _category_interval("highway", 3.33),  # 0.300s baseline
+    "pedestrian": _category_interval("pedestrian", 2.0),  # 0.500s baseline
+    "static": _category_interval("static", 1.25),  # 0.800s baseline
 }
 JPEG_Q = int(os.getenv("JPEG_QUALITY", "70"))
 SNAPSHOT_TTL = max(10, int(os.getenv("SNAPSHOT_TTL_SECS", "30")))

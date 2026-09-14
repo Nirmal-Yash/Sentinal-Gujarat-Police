@@ -70,7 +70,7 @@ export default function MapView({ cameras, alerts = [], compact = false, focusCa
     if (!map || !selected) return false
     selectedRef.current = cameraId; sessionStorage.setItem(SELECTED_KEY, cameraId)
     Object.values(markersRef.current).forEach(item => item.marker.setIcon(camIcon(item.camera, item.camera.id === cameraId)))
-    if (focus) { map.setView(selected.marker.getLatLng(), Math.max(map.getZoom(), 15), { animate: true }); selected.marker.openPopup() }
+    if (focus) { map.flyTo(selected.marker.getLatLng(), Math.max(map.getZoom(), 15), { duration: 1.5 }); selected.marker.openPopup() }
     return true
   }
 
@@ -113,7 +113,7 @@ export default function MapView({ cameras, alerts = [], compact = false, focusCa
       const current = markersRef.current[cam.id]
       if (current) { current.marker.setLatLng([Number(cam.lat), Number(cam.lng)]).setIcon(camIcon(cam, selectedRef.current === cam.id)).bindPopup(popupForRegistryCamera(cam)); current.camera = cam; return }
       const marker = L.marker([Number(cam.lat), Number(cam.lng)], { icon: camIcon(cam, selectedRef.current === cam.id), title: cam.name }).bindPopup(popupForRegistryCamera(cam))
-      marker.on('click', () => selectCamera(cam.id)); markersRef.current[cam.id] = { marker, camera: cam }
+      marker.on('click', () => selectCamera(cam.id, { focus: true })); markersRef.current[cam.id] = { marker, camera: cam }
     })
     camerasRef.current = cameras
     coverageLayerRef.current?.clearLayers()

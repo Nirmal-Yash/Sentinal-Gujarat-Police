@@ -3,7 +3,7 @@ from fastapi.responses import Response
 from sqlalchemy import select, text, or_, String
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from models import Camera, CameraOut, CameraCreate
+from models import Camera, CameraOut, CameraCreate, CameraPage, CameraSearchResult
 from auth import require_authenticated, require_permission, require_role, Principal
 from database import get_db
 import uuid, os, base64, csv, io, json
@@ -77,26 +77,332 @@ def _csv_payload(row: dict) -> tuple[dict, dict]:
     return payload, column_map
 
 
+@router.get("/search", response_model=list[CameraSearchResult])
+async def search_cameras(
+    q: str = Query(..., min_length=1, max_length=100),
+    department: str | None = None,
+    location: str | None = None,
+    status: str | None = None,
+    health_status: str | None = None,
+    zone: str | None = None,
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """Database-scale trigram ranked camera search for 80,000+ camera catalogs."""
+    clean_q = q.strip()
+    like_term = f"%{clean_q}%"
+    prefix_term = f"{clean_q}%"
+
+    num_match = 0
+    has_num = False
+    if clean_q.isdigit():
+        num_match = int(clean_q)
+        has_num = True
+    elif clean_q.lower().startswith("cam") and clean_q[3:].isdigit():
+        num_match = int(clean_q[3:])
+        has_num = True
+
+    params: dict[str, Any] = {
+        "clean_q": clean_q,
+        "like_term": like_term,
+        "prefix_term": prefix_term,
+        "num_match": num_match,
+        "has_num": has_num,
+        "limit": limit,
+    }
+
+    extra_filters = []
+    if department:
+        extra_filters.append("c.department ILIKE :department")
+        params["department"] = department
+    if location:
+        extra_filters.append("c.location ILIKE :location")
+        params["location"] = f"%{location}%"
+    if status:
+        extra_filters.append("c.status ILIKE :status")
+        params["status"] = status
+    if health_status:
+        extra_filters.append("c.health_status ILIKE :health_status")
+        params["health_status"] = health_status
+    if zone:
+        extra_filters.append("c.zone ILIKE :zone")
+        params["zone"] = zone
+
+    filter_sql = (" AND " + " AND ".join(extra_filters)) if extra_filters else ""
+
+    sql = f"""
+        WITH ranked AS (
+            SELECT 
+                c.*,
+                CASE 
+                    WHEN :has_num = TRUE AND c.stream_id = :num_match THEN 100.0
+                    WHEN lower(COALESCE(c.external_id,'')) = lower(:clean_q) THEN 100.0
+                    WHEN lower(c.name) = lower(:clean_q) OR lower(c.location) = lower(:clean_q) THEN 95.0
+                    WHEN lower(c.name) LIKE lower(:prefix_term) OR lower(c.location) LIKE lower(:prefix_term) THEN 80.0
+                    WHEN lower(COALESCE(c.external_id,'')) LIKE lower(:prefix_term) THEN 75.0
+                    WHEN lower(COALESCE(c.police_station,'')) LIKE lower(:prefix_term) THEN 70.0
+                    ELSE 50.0 + (GREATEST(
+                        similarity(c.name, :clean_q), 
+                        similarity(c.location, :clean_q), 
+                        similarity(COALESCE(c.police_station,''), :clean_q),
+                        similarity(COALESCE(c.zone,''), :clean_q)
+                    ) * 40.0)
+                END as rank_score,
+                CASE 
+                    WHEN :has_num = TRUE AND c.stream_id = :num_match THEN 'exact_id'
+                    WHEN lower(COALESCE(c.external_id,'')) = lower(:clean_q) THEN 'exact_id'
+                    WHEN lower(c.name) = lower(:clean_q) OR lower(c.location) = lower(:clean_q) THEN 'exact_name'
+                    WHEN lower(c.name) LIKE lower(:prefix_term) OR lower(c.location) LIKE lower(:prefix_term) THEN 'prefix'
+                    ELSE 'trigram'
+                END as match_type
+            FROM cameras c
+            WHERE c.status <> 'deleted'
+              AND (
+                  ( :has_num = TRUE AND c.stream_id = :num_match )
+                  OR c.name ILIKE :like_term
+                  OR c.location ILIKE :like_term
+                  OR c.external_id ILIKE :like_term
+                  OR c.department ILIKE :like_term
+                  OR c.zone ILIKE :like_term
+                  OR c.police_station ILIKE :like_term
+                  OR similarity(c.name, :clean_q) > 0.18
+                  OR similarity(c.location, :clean_q) > 0.18
+              )
+              {filter_sql}
+        )
+        SELECT * FROM ranked ORDER BY rank_score DESC, stream_id ASC LIMIT :limit
+    """
+    result = await db.execute(text(sql), params)
+    rows = result.mappings().all()
+    out = []
+    for row in rows:
+        cam_dict = dict(row)
+        rank_score = float(cam_dict.pop("rank_score", 0.0))
+        match_type = str(cam_dict.pop("match_type", "trigram"))
+        cam = CameraOut.model_validate(cam_dict)
+        out.append(CameraSearchResult(camera=cam, rank_score=rank_score, match_type=match_type))
+    return out
+
+
+@router.get("/paged", response_model=CameraPage)
+async def paged_cameras(
+    page: int = Query(1, ge=1),
+    limit: int = Query(9, ge=1, le=100),
+    q: str | None = Query(None, min_length=1, max_length=100),
+    department: str | None = None,
+    location: str | None = None,
+    status: str | None = None,
+    health_status: str | None = None,
+    zone: str | None = None,
+    sort: str = Query("grid", pattern="^(grid|priority|status|name|stream_id)$"),
+    group_id: uuid.UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Server-side paginated camera query with operational summary for 80,000+ camera catalogs."""
+    offset = (page - 1) * limit
+    where_clauses = ["c.status <> 'deleted'"]
+    params = {"limit": limit, "offset": offset}
+
+    if q:
+        clean = q.strip()
+        num_q = int(clean) if clean.isdigit() else (int(clean[3:]) if clean.lower().startswith("cam") and clean[3:].isdigit() else None)
+        params["q_num"] = num_q
+        params["q_like"] = f"%{clean}%"
+        params["q_clean"] = clean
+        where_clauses.append("""(
+            (:q_num IS NOT NULL AND c.stream_id = :q_num)
+            OR c.name ILIKE :q_like
+            OR c.location ILIKE :q_like
+            OR c.external_id ILIKE :q_like
+            OR c.department ILIKE :q_like
+            OR c.police_station ILIKE :q_like
+            OR similarity(c.name, :q_clean) > 0.2
+        )""")
+
+    if department:
+        where_clauses.append("c.department ILIKE :department")
+        params["department"] = department
+    if location:
+        where_clauses.append("c.location ILIKE :location")
+        params["location"] = f"%{location}%"
+    if status:
+        where_clauses.append("c.status ILIKE :status")
+        params["status"] = status
+    if health_status:
+        where_clauses.append("c.health_status ILIKE :health_status")
+        params["health_status"] = health_status
+    if zone:
+        where_clauses.append("c.zone ILIKE :zone")
+        params["zone"] = zone
+    if group_id:
+        where_clauses.append("c.group_id = CAST(:group_id AS uuid)")
+        params["group_id"] = str(group_id)
+
+    where_sql = " AND ".join(where_clauses)
+
+    order_sql = "c.stream_id ASC"
+    if sort == "priority":
+        order_sql = "CASE WHEN c.health_status IN ('offline', 'error') THEN 1 WHEN c.health_status IN ('degraded', 'warning') THEN 2 ELSE 3 END, c.stream_id ASC"
+    elif sort == "status":
+        order_sql = "c.health_status ASC, c.status ASC, c.stream_id ASC"
+    elif sort == "name":
+        order_sql = "c.name ASC"
+
+    # Count and summary
+    count_sql = f"""
+        SELECT 
+            COUNT(*) as total_count,
+            COUNT(*) FILTER (WHERE c.health_status IN ('healthy', 'online') OR c.status = 'active') as online_count,
+            COUNT(*) FILTER (WHERE c.health_status IN ('degraded', 'warning') OR c.status = 'reconnecting') as degraded_count,
+            COUNT(*) FILTER (WHERE c.health_status IN ('offline', 'error') OR c.status = 'offline') as offline_count
+        FROM cameras c
+        WHERE {where_sql}
+    """
+    count_res = (await db.execute(text(count_sql), params)).mappings().first()
+    total_count = int(count_res["total_count"] or 0)
+    online_count = int(count_res["online_count"] or 0)
+    degraded_count = int(count_res["degraded_count"] or 0)
+    offline_count = int(count_res["offline_count"] or 0)
+
+    # Active alerts count
+    alerts_sql = f"""
+        SELECT COUNT(*) as alert_count
+        FROM alerts a
+        JOIN cameras c ON c.id = a.cam_id
+        WHERE {where_sql} AND a.status = 'NEW' AND a.acknowledged = FALSE
+    """
+    alerts_count = int(await db.scalar(text(alerts_sql), params) or 0)
+
+    # Items query
+    items_sql = f"""
+        SELECT c.*
+        FROM cameras c
+        WHERE {where_sql}
+        ORDER BY {order_sql}
+        LIMIT :limit OFFSET :offset
+    """
+    rows = (await db.execute(text(items_sql), params)).mappings().all()
+    items = [CameraOut.model_validate(dict(r)) for r in rows]
+    total_pages = max(1, (total_count + limit - 1) // limit) if total_count else 1
+
+    return CameraPage(
+        items=items,
+        total_count=total_count,
+        page=page,
+        page_size=limit,
+        total_pages=total_pages,
+        next_cursor=str(page + 1) if page < total_pages else None,
+        prev_cursor=str(page - 1) if page > 1 else None,
+        summary={
+            "total": total_count,
+            "online": online_count,
+            "degraded": degraded_count,
+            "offline": offline_count,
+            "active_alerts": alerts_count,
+        },
+    )
+
+
+@router.get("/map/clusters")
+async def get_map_clusters(
+    min_lng: float = Query(-180.0, ge=-180, le=180),
+    min_lat: float = Query(-90.0, ge=-90, le=90),
+    max_lng: float = Query(180.0, ge=-180, le=180),
+    max_lat: float = Query(90.0, ge=-90, le=90),
+    zoom: int = Query(10, ge=1, le=20),
+    db: AsyncSession = Depends(get_db),
+):
+    """Spatial clustering for GIS map to handle 80,000 cameras without DOM overload."""
+    bbox_where = "lat BETWEEN :min_lat AND :max_lat AND lng BETWEEN :min_lng AND :max_lng AND status <> 'deleted'"
+    params = {"min_lat": min_lat, "max_lat": max_lat, "min_lng": min_lng, "max_lng": max_lng}
+
+    if zoom <= 11:
+        # Cluster dynamically by district / geographic grid cell
+        cluster_sql = f"""
+            SELECT 
+                COALESCE(district, 'Gujarat') as cluster_name,
+                AVG(lat) as lat,
+                AVG(lng) as lng,
+                COUNT(*) as count,
+                COUNT(*) FILTER (WHERE health_status IN ('healthy', 'online') OR status = 'active') as online_count,
+                COUNT(*) FILTER (WHERE health_status IN ('degraded', 'warning') OR status = 'reconnecting') as degraded_count,
+                COUNT(*) FILTER (WHERE health_status IN ('offline', 'error') OR status = 'offline') as offline_count
+            FROM cameras
+            WHERE {bbox_where} AND lat IS NOT NULL AND lng IS NOT NULL
+            GROUP BY COALESCE(district, 'Gujarat')
+        """
+        rows = (await db.execute(text(cluster_sql), params)).mappings().all()
+        return {
+            "type": "clusters",
+            "zoom": zoom,
+            "clusters": [
+                {
+                    "name": r["cluster_name"],
+                    "lat": float(r["lat"]),
+                    "lng": float(r["lng"]),
+                    "count": int(r["count"]),
+                    "online": int(r["online_count"]),
+                    "degraded": int(r["degraded_count"]),
+                    "offline": int(r["offline_count"]),
+                }
+                for r in rows
+            ],
+        }
+    else:
+        # High zoom: return visible camera pins directly (capped at 250)
+        pins_sql = f"""
+            SELECT id, stream_id, name, location, lat, lng, health_status, status, zone, police_station
+            FROM cameras
+            WHERE {bbox_where} AND lat IS NOT NULL AND lng IS NOT NULL
+            ORDER BY stream_id ASC
+            LIMIT 250
+        """
+        rows = (await db.execute(text(pins_sql), params)).mappings().all()
+        return {
+            "type": "cameras",
+            "zoom": zoom,
+            "cameras": [
+                {
+                    "id": str(r["id"]),
+                    "stream_id": r["stream_id"],
+                    "camera_id": f"cam{int(r['stream_id']):02d}" if r["stream_id"] else "cam00",
+                    "name": r["name"],
+                    "location": r["location"],
+                    "lat": float(r["lat"]),
+                    "lng": float(r["lng"]),
+                    "health_status": r["health_status"],
+                    "status": r["status"],
+                    "zone": r["zone"],
+                    "police_station": r["police_station"],
+                }
+                for r in rows
+            ],
+        }
+
+
+@router.get("", response_model=list[CameraOut])
 @router.get("/", response_model=list[CameraOut])
 async def list_cameras(
     q: str | None = Query(None, min_length=1, max_length=100),
     department: str | None = None, status: str | None = None,
     health_status: str | None = None, camera_type: str | None = None,
+    zone: str | None = None,
     vendor_id: uuid.UUID | None = None, model_id: uuid.UUID | None = None,
     limit: int = Query(250, ge=1, le=500), offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
-    """Registry read model.  It is the only camera metadata source for UI/GIS."""
+    """Registry read model. It is the only camera metadata source for UI/GIS."""
     stmt = select(Camera).where(Camera.status != 'deleted')
     if q:
         term = f"%{q.strip()}%"
         stmt = stmt.where(or_(Camera.name.ilike(term), Camera.location.ilike(term),
                               Camera.department.ilike(term), Camera.owner_organization.ilike(term),
                               Camera.status.ilike(term), Camera.health_status.ilike(term),
-                              Camera.camera_type.ilike(term),
+                              Camera.camera_type.ilike(term), Camera.zone.ilike(term),
                               Camera.stream_id.cast(String).ilike(term)))
     for column, value in ((Camera.department, department), (Camera.status, status),
-                          (Camera.health_status, health_status), (Camera.camera_type, camera_type)):
+                          (Camera.health_status, health_status), (Camera.camera_type, camera_type),
+                          (Camera.zone, zone)):
         if value:
             stmt = stmt.where(column.ilike(value))
     if vendor_id: stmt = stmt.where(Camera.vendor_id == vendor_id)
@@ -105,6 +411,7 @@ async def list_cameras(
     return result.scalars().all()
 
 
+@router.post("", response_model=CameraOut, status_code=201)
 @router.post("/", response_model=CameraOut, status_code=201)
 @router.post("/onboard", response_model=CameraOut, status_code=201)
 async def onboard_camera(body: CameraCreate, principal: Principal = Depends(require_permission("camera:write")), db: AsyncSession = Depends(get_db)):

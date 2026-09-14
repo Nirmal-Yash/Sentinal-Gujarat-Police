@@ -12,9 +12,9 @@ log = logging.getLogger("yolo_worker")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 YOLO_MODEL = os.getenv("YOLO_MODEL", "yolov8n.pt")
 CONF = float(os.getenv("DETECTION_CONF", "0.4"))
-FRAME_SKIP = max(1, int(os.getenv("FRAME_SKIP", "3")))
-ANPR_DISPATCH_INTERVAL = max(0.2, float(os.getenv("ANPR_DISPATCH_INTERVAL_SECS", "0.8")))
 TEST_MODE = os.getenv("TEST_MODE", "false").lower() == "true"
+FRAME_SKIP = 1 if TEST_MODE else max(1, int(os.getenv("FRAME_SKIP", "3")))
+ANPR_DISPATCH_INTERVAL = 0.2 if TEST_MODE else max(0.2, float(os.getenv("ANPR_DISPATCH_INTERVAL_SECS", "0.8")))
 PREFIX = "test:" if TEST_MODE else ""
 GROUP = "test_ai_workers" if TEST_MODE else "ai_workers"
 IN_STREAM = f"{PREFIX}raw_frames"
@@ -26,7 +26,7 @@ CONFIRMED_KEY_PREFIX = f"{PREFIX}anpr_confirmed:"
 OUT_MAX = 5000
 INFER_SIZE = int(os.getenv("INFER_SIZE", "416"))
 TRACK_MAX_AGE = max(5, int(os.getenv("TRACK_MAX_AGE", "30")))
-TRACK_N_INIT = max(1, int(os.getenv("TRACK_N_INIT", "3")))
+TRACK_N_INIT = 1 if TEST_MODE else max(1, int(os.getenv("TRACK_N_INIT", "3")))
 TARGET_CLS = {0: "person", 2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
 VEHICLE_TYPES = {"car", "motorcycle", "bus", "truck"}
 
@@ -130,7 +130,7 @@ def run():
                     track_key = f"{TRACK_HASH_PREFIX}{cam_id}"
                     now = time.monotonic()
                     for track in tracks:
-                        if not track.is_confirmed():
+                        if not (track.is_confirmed() or (TEST_MODE and track.time_since_update == 0)):
                             continue
                         l, t, r2, b = [int(v) for v in track.to_ltrb()]
                         etype = track.det_class or "person"

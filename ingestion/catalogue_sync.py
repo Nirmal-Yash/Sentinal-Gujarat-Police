@@ -83,7 +83,13 @@ class CctvSession:
     """Password-only CCTV session. Credentials remain inside ingestion."""
     def __init__(self):
         self.session = requests.Session()
-        self.session.headers.update({"User-Agent": "Sentinel-Ingestion/1.0"})
+        self.session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": f"{CCTV_BASE_URL}/",
+            "Origin": CCTV_BASE_URL,
+        })
 
     def login(self) -> None:
         if not CCTV_EMAIL:

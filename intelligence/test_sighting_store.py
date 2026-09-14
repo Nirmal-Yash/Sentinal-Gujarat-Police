@@ -27,6 +27,18 @@ def _truthy(data, name):
     return _value(data, name).strip().lower() in {"1", "true", "yes"}
 
 
+def _has_consensus(data, name):
+    val = _value(data, name).strip()
+    if not val:
+        return False
+    if val.lower() in {"1", "true", "yes"}:
+        return True
+    try:
+        return float(val) > 0.0
+    except (ValueError, TypeError):
+        return False
+
+
 def _embedding_array(value):
     if isinstance(value, str):
         return np.asarray([float(x) for x in value.strip("[]").split(",") if x.strip()], dtype=np.float32)
@@ -141,7 +153,7 @@ def persist(data: dict):
                             alert_type = 'watchlist_match'
                             alert_priority = wl_priority or "HIGH"
 
-            if kind == "plate" and plate and _truthy(data, "plate_validated") and _truthy(data, "anpr_consensus"):
+            if plate and (kind in ("plate", "vehicle_sighting") or _value(data, "plate_text")) and (_truthy(data, "plate_validated") or _has_consensus(data, "anpr_consensus")):
                 cur.execute("""SELECT id,name,description,alert_priority FROM test_watchlists
                     WHERE session_id=%s::uuid AND is_active=TRUE AND plate_number IS NOT NULL
                     AND regexp_replace(upper(plate_number),'[^A-Z0-9]','','g')=%s LIMIT 1""", (session_id, plate))

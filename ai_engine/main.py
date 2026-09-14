@@ -66,7 +66,7 @@ def _preload_models(load_anpr: bool) -> None:
 
 
 def spawn(target, name, args=()):
-    p = Process(target=target, args=args, name=name, daemon=True)
+    p = Process(target=target, args=args, name=name, daemon=False)
     started = time.time()
     p.start()
     log.info("Spawned %s (pid %s)", name, p.pid)

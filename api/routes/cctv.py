@@ -75,12 +75,17 @@ def _cookie_proxy_url(asset_path: str) -> str:
 
 
 def _rewrite_manifest(body: str, manifest_path: str, token: str | None) -> str:
-    base_dir = "/" + manifest_path.rsplit("/", 1)[0].strip("/") + "/"
+    camera_dir = manifest_path.rsplit("/", 1)[0].strip("/")
+    base_dir = "/" + camera_dir + "/"
 
     def rewrite_uri(value: str) -> str:
         value = value.strip()
         if not value or value.startswith("#"):
             return value
+        # Special case: encryption key
+        if value.lstrip("/").lower() == "enc.key":
+            resolved = f"{camera_dir}/enc.key"
+            return _proxy_url(resolved, token) if token else _cookie_proxy_url(resolved)
         absolute = urlparse(value)
         if absolute.scheme in {"http", "https"}:
             path = absolute.path.lstrip("/")
@@ -102,7 +107,7 @@ def _rewrite_manifest(body: str, manifest_path: str, token: str | None) -> str:
 
 
 @router.get("/token/{camera_ref}")
-async def issue_playback_token(camera_ref: str, _: Principal = Depends(require_authenticated), db: AsyncSession = Depends(get_db)):
+async def issue_playback_token(camera_ref: str, _: Principal = Depends(require_permission("camera:read")), db: AsyncSession = Depends(get_db)):
     """Issue a short-lived token for one registered camera's HLS assets."""
     camera_id = _camera_id(camera_ref)
     number = int(camera_id[3:])
@@ -135,7 +140,32 @@ async def _authorize_playback(request: Request, camera_id: str, access_token: st
 
 @router.get("/{asset_path:path}")
 async def proxy_cctv_asset(asset_path: str, request: Request, access_token: str | None = Query(default=None, min_length=1), credentials: HTTPAuthorizationCredentials | None = Depends(security), db: AsyncSession = Depends(get_db)):
-    match = re.fullmatch(r"(cam\d{2})/(.+)", asset_path, re.IGNORECASE)
+    clean_path = asset_path.strip().lstrip("/")
+    # Handle direct encryption key request
+    if clean_path.lower() == "enc.key" or clean_path.lower().endswith("/enc.key"):
+        cam_match = re.match(r"(cam\d{2})", clean_path, re.IGNORECASE)
+        camera_id = _camera_id(cam_match.group(1)) if cam_match else "cam01"
+        await _authorize_playback(request, camera_id, access_token, credentials, db)
+        await db.close()
+        gateway = get_cctv_gateway()
+        if not gateway.configured:
+            raise HTTPException(503, "CCTV_PASSWORD is not configured on the server")
+        try:
+            key_bytes = await asyncio.to_thread(gateway.get_cached_key, "/enc.key")
+        except Exception as exc:
+            raise HTTPException(502, f"CCTV encryption key unavailable: {exc}") from exc
+        return Response(
+            key_bytes,
+            media_type="application/octet-stream",
+            headers={
+                **_cors_headers(request),
+                "Cache-Control": "public, max-age=3600",
+                "X-Content-Type-Options": "nosniff",
+                "Vary": "Authorization, Cookie, Origin",
+            },
+        )
+
+    match = re.fullmatch(r"(cam\d{2})/(.+)", clean_path, re.IGNORECASE)
     if not match:
         raise HTTPException(400, "Invalid CCTV asset path")
     camera_id = _camera_id(match.group(1))

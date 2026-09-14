@@ -9,5 +9,20 @@ export default defineConfig({
       '/ws':  { target: 'ws://api:8000',  ws: true, rewrite: p => p.replace(/^\/ws/, '/ws') }
     }
   },
-  build: { outDir: 'dist', sourcemap: false }
+  build: {
+    outDir: 'dist',
+    sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('hls.js')) return 'vendor-hls'
+            if (id.includes('leaflet')) return 'vendor-leaflet'
+            if (id.includes('react') || id.includes('scheduler')) return 'vendor-react'
+            return 'vendor'
+          }
+        }
+      }
+    }
+  }
 })

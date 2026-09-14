@@ -12,7 +12,13 @@ TEST_MODE = os.getenv("TEST_MODE", "false").lower() == "true"
 
 
 def _is_true(value):
-    return str(value or "").strip().lower() in {"1", "true", "yes"}
+    s = str(value or "").strip()
+    if s.lower() in {"1", "true", "yes"}:
+        return True
+    try:
+        return float(s) > 0.0
+    except (ValueError, TypeError):
+        return False
 
 
 def _event_bbox(data):

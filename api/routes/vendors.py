@@ -1,5 +1,6 @@
 """Normalized vendor/model registry; separate from camera facts and fully lifecycle-managed."""
 import json
+import re
 import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
@@ -22,8 +23,42 @@ class VendorInput(BaseModel):
 
     @field_validator("name")
     @classmethod
-    def normalize_name(cls, value: str) -> str:
-        return " ".join(value.strip().split())
+    def validate_name(cls, value: str) -> str:
+        cleaned = " ".join(value.strip().split())
+        if len(cleaned) < 2:
+            raise ValueError("Vendor name must be at least 2 characters")
+        return cleaned
+
+    @field_validator("contact_email")
+    @classmethod
+    def validate_email(cls, value: str | None) -> str | None:
+        if not value or not value.strip():
+            return None
+        cleaned = value.strip()
+        if not re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", cleaned):
+            raise ValueError("Invalid email format")
+        return cleaned
+
+    @field_validator("contact_phone")
+    @classmethod
+    def validate_phone(cls, value: str | None) -> str | None:
+        if not value or not value.strip():
+            return None
+        cleaned = value.strip()
+        if not re.match(r"^\+?[0-9\s\-()]{7,20}$", cleaned):
+            raise ValueError("Invalid phone number format")
+        return cleaned
+
+    @field_validator("support_url")
+    @classmethod
+    def validate_url(cls, value: str | None) -> str | None:
+        if not value or not value.strip():
+            return None
+        cleaned = value.strip()
+        if not re.match(r"^https?:\/\/.+", cleaned):
+            raise ValueError("Invalid URL format: must begin with http:// or https://")
+        return cleaned
+
 
 class ModelInput(BaseModel):
     name: str = Field(min_length=1, max_length=255)

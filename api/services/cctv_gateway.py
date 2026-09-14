@@ -26,10 +26,17 @@ class CctvGateway:
         self.catalogue_path = os.getenv("CCTV_CATALOGUE_PATH", CATALOGUE_PATH)
         self.timeout = timeout
         self._session = requests.Session()
-        self._session.headers.update({"User-Agent": "Sentinel-CCTV-Gateway/1.0"})
+        self._session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": f"{self.base_url}/",
+            "Origin": self.base_url,
+        })
         self._lock = threading.RLock()
         self._authenticated_at = 0.0
         self._last_login_error: Optional[str] = None
+        self._key_cache: dict[str, tuple[float, bytes]] = {}
 
     @property
     def configured(self) -> bool:
@@ -145,6 +152,23 @@ class CctvGateway:
         if parsed.scheme or parsed.netloc:
             raise ValueError("Absolute URLs are not allowed in CCTV proxy asset paths")
         return self.request(path, stream=True)
+
+    def get_cached_key(self, key_path: str = "/enc.key") -> bytes:
+        now = time.monotonic()
+        with self._lock:
+            cached = self._key_cache.get(key_path)
+            if cached and (now - cached[0]) < 600:
+                return cached[1]
+        resp = self.request(key_path)
+        try:
+            if resp.status_code != 200:
+                raise RuntimeError(f"Failed to fetch encryption key: HTTP {resp.status_code}")
+            key_bytes = resp.content
+            with self._lock:
+                self._key_cache[key_path] = (now, key_bytes)
+            return key_bytes
+        finally:
+            resp.close()
 
 
 _gateway: Optional[CctvGateway] = None

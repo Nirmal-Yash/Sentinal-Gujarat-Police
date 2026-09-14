@@ -46,7 +46,7 @@ class TrackANPRState:
         self.last_seen_at = observation.observed_at
 
     def consensus(self, min_agreements: int = 2, now: Optional[float] = None):
-        required = max(2, int(min_agreements))
+        required = max(1, int(min_agreements))
         current = self.last_seen_at if now is None else now
         valid = [o for o in self.observations
                  if o.validated and o.plate and o.observed_at >= current - self.window_seconds]

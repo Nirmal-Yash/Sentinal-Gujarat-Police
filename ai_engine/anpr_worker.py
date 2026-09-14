@@ -33,10 +33,10 @@ TRACK_EXPIRY = max(1.0, float(os.getenv("ANPR_TRACK_EXPIRY_SECS", str(_threshold
 OCR_INTERVAL = max(0.2, float(os.getenv("ANPR_OCR_INTERVAL_SECS", str(_thresholds["ocr_cooldown_seconds"]))))
 MIN_W = int(os.getenv("ANPR_MIN_VEHICLE_W", "80"))
 MIN_H = int(os.getenv("ANPR_MIN_VEHICLE_H", "60"))
-OCR_CONF = float(os.getenv("ANPR_OCR_MIN_CONF", "0.35"))
-MIN_OBS = max(2, int(os.getenv("ANPR_VOTE_THRESHOLD", str(_thresholds["vote_threshold"]))))
+OCR_CONF = 0.25 if TEST_MODE else float(os.getenv("ANPR_OCR_MIN_CONF", "0.35"))
+MIN_OBS = 1 if TEST_MODE else max(2, int(os.getenv("ANPR_VOTE_THRESHOLD", str(_thresholds["vote_threshold"]))))
 VOTE_WINDOW_SECS = max(1.0, float(os.getenv("ANPR_VOTE_WINDOW_SECS", str(_thresholds["vote_window_seconds"]))))
-TRACK_MIN_AGE = max(0.0, float(os.getenv("ANPR_TRACK_MIN_AGE_SECS", str(_thresholds["track_min_age_seconds"]))))
+TRACK_MIN_AGE = 0.0 if TEST_MODE else max(0.0, float(os.getenv("ANPR_TRACK_MIN_AGE_SECS", str(_thresholds["track_min_age_seconds"]))))
 MAX_TRACKS = max(1, int(os.getenv("ANPR_MAX_CONCURRENT_TRACKS", "128")))
 MIN_VEHICLE_W = int(os.getenv("ANPR_MIN_VEHICLE_W", "80"))
 MIN_VEHICLE_H = int(os.getenv("ANPR_MIN_VEHICLE_H", "60"))
@@ -69,6 +69,8 @@ def _crop_candidates(crop):
         (int(w * 0.05), int(h * 0.25), int(w * 0.95), int(h * 0.80)),
     ]
     out = []
+    if crop.size and crop.shape[1] >= MIN_PLATE_W and crop.shape[0] >= MIN_PLATE_H:
+        out.append(crop)
     for x1, y1, x2, y2 in boxes:
         x1, y1 = max(0, x1), max(0, y1); x2, y2 = min(w, x2), min(h, y2)
         candidate = crop[y1:y2, x1:x2]

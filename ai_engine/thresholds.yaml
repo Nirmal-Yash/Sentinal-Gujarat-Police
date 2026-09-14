@@ -1,17 +1,40 @@
 anpr:
   vote_threshold: 4
   vote_window_seconds: 8.0
+  min_character_confidence: 0.60
+  min_plate_confidence: 0.70
   track_min_age_seconds: 1.5
   ocr_cooldown_seconds: 1.5
   track_expiry_seconds: 3.0
+  min_plate_pixels: 40
   min_plate_width: 40
   min_plate_height: 12
+  enforce_indian_format: true
   max_pending_jobs: 20
   ocr_workers: 4
   preprocessing:
     clahe_clip_limit: 2.0
     clahe_grid_size: 8
     unsharp_amount: 0.35
+
+crowd_detection:
+  min_crowd_size: 8
+  deviation_threshold_std: 2.5
+  persistence_frames: 8
+  cooldown_seconds: 300
+
+running_crowd:
+  min_running_fraction: 0.40
+  persistence_frames: 6
+  cooldown_seconds: 180
+
+face_detection:
+  presence_confidence_threshold: 0.50
+  match_threshold: 0.45
+
+watchlist:
+  person_match_cooldown_seconds: 900
+  plate_hit_cooldown_seconds: 1800
 
 face:
   detection_confidence: 0.40

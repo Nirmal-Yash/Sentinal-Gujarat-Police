@@ -22,6 +22,7 @@ async def _publish_watchlist_update(action: str, entry_id) -> None:
         pass
 
 
+@router.get("", response_model=list[WatchlistOut])
 @router.get("/", response_model=list[WatchlistOut])
 async def list_watchlist(active_only: bool = True, db: AsyncSession = Depends(get_db)):
     q = select(WatchlistEntry).order_by(WatchlistEntry.created_at.desc())
