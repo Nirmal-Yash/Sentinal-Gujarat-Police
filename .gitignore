@@ -15,3 +15,4 @@ secrets/
 *.key
 *.pem
 /bridge/
+dashboard/node_modules/

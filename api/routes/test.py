@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from auth import ROLE_ORDER, Principal, current_principal, require_role
 from database import get_db
 from plate_normalise import normalize_plate
+from demo_route import geo_for_stream, seed_demo_route_data
 
 router = APIRouter(prefix="/test", tags=["test"])
 RUNTIME_MODE_KEY = "sentinel:runtime:mode"
@@ -76,17 +77,6 @@ def _find_upload_dir() -> Path:
 VIDEO_DIR, UPLOAD_DIR = _find_video_dir(), _find_upload_dir()
 MAX_UPLOAD_BYTES = int(os.getenv("TEST_MAX_UPLOAD_BYTES", str(2 * 1024 * 1024 * 1024)))
 ALLOWED_SUFFIXES = {".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v"}
-
-TEST_CAMERA_GEODATA = [
-    {"lat": 23.2156, "lng": 72.6369, "location": "CH Road Junction, Gandhinagar", "department": "Traffic Control Unit", "camera_type": "fixed", "zone": "North Zone"},
-    {"lat": 23.0338, "lng": 72.5072, "location": "SG Highway Flyover, Ahmedabad", "department": "City Surveillance Division", "camera_type": "anpr", "zone": "West Zone"},
-    {"lat": 21.1702, "lng": 72.8311, "location": "Ring Road Toll Gate, Surat", "department": "Highway Patrol", "camera_type": "anpr", "zone": "South Zone"},
-    {"lat": 22.3072, "lng": 73.1812, "location": "Express Highway Exit, Vadodara", "department": "Traffic Police", "camera_type": "fixed", "zone": "Central Zone"},
-    {"lat": 22.3039, "lng": 70.8022, "location": "Kalawad Road, Rajkot", "department": "Urban Surveillance", "camera_type": "fixed", "zone": "Saurashtra Zone"},
-    {"lat": 21.7645, "lng": 72.1519, "location": "Port Access Road, Bhavnagar", "department": "Port Security", "camera_type": "ptz", "zone": "Coastal Zone"},
-    {"lat": 22.4707, "lng": 70.0577, "location": "Airport Junction, Jamnagar", "department": "City Police", "camera_type": "fixed", "zone": "West Zone"},
-    {"lat": 23.5880, "lng": 72.3693, "location": "State Highway 41, Mehsana", "department": "Highway Division", "camera_type": "anpr", "zone": "North Zone"},
-]
 
 def enabled():
     if os.getenv("TEST_ENDPOINT_ENABLED", "false").lower() != "true": raise HTTPException(404, "Video test mode is disabled")
@@ -449,8 +439,7 @@ async def session_cameras(session_id: uuid.UUID, _: Principal = Depends(require_
     if not rows: raise HTTPException(404, "Test session not found")
     res = []
     for row in rows:
-        idx = (int(row["stream_id"]) - 1) % len(TEST_CAMERA_GEODATA)
-        geo = TEST_CAMERA_GEODATA[idx]
+        geo = geo_for_stream(int(row["stream_id"]))
         res.append({
             "id": f"test-{row['id']}",
             "camera_id": f"cam{int(row['stream_id']):02d}",
@@ -578,6 +567,17 @@ async def delete_session(session_id: uuid.UUID, _: Principal = Depends(require_r
     return {"status": "cleared", "production_data_affected": False}
 
 
+@router.post("/sessions/{session_id}/seed-demo-route")
+async def seed_demo_route(session_id: uuid.UUID, _: Principal = Depends(require_role("ADMIN")), db: AsyncSession = Depends(get_db)):
+    enabled()
+    await _validate_test_session(session_id, db)
+    try:
+        result = await seed_demo_route_data(session_id, db)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {**result, "production_data_affected": False}
+
+
 @router.get("/sessions/{session_id}/plate/{plate}/journey")
 async def test_plate_journey(session_id: uuid.UUID, plate: str, _: Principal = Depends(require_role("VIEWER")), db: AsyncSession = Depends(get_db)):
     enabled()
@@ -596,7 +596,7 @@ async def test_plate_journey(session_id: uuid.UUID, plate: str, _: Principal = D
     sightings = []
     for row in rows:
         item = dict(row)
-        geo = TEST_CAMERA_GEODATA[(int(item["stream_id"]) - 1) % len(TEST_CAMERA_GEODATA)]
+        geo = geo_for_stream(int(item["stream_id"]))
         item["cam_id"] = f"test-{session_id}-{item['stream_id']}"
         item["location"] = geo["location"]
         item["lat"] = geo["lat"]

@@ -57,11 +57,18 @@ export default function TestFeedManager({ session, cameras = [], onClose, onChan
   }
 
   const add = async () => {
-    if (!session?.id || !selected) return
-    const labelMsg = cameraLabelValidationMessage(label)
-    if (labelMsg) {
-      setError(labelMsg)
+    if (!session?.id) return
+    if (!selected) {
+      setError('Select a test video first.')
       return
+    }
+    const trimmedLabel = label.trim()
+    if (trimmedLabel) {
+      const labelMsg = cameraLabelValidationMessage(trimmedLabel)
+      if (labelMsg) {
+        setError(labelMsg)
+        return
+      }
     }
     if (cameras.filter(camera => camera?.is_test).length >= MAX_FEEDS) {
       setError(`A Test Mode session can contain at most ${MAX_FEEDS} live feeds.`)
@@ -72,7 +79,7 @@ export default function TestFeedManager({ session, cameras = [], onClose, onChan
     try {
       await api.addTestFeed(session.id, {
         asset_id: selected,
-        camera_label: label.trim(),
+        camera_label: trimmedLabel,
         loop,
       })
       setLabel('')
@@ -120,7 +127,7 @@ export default function TestFeedManager({ session, cameras = [], onClose, onChan
             <input value={label} onChange={event => setLabel(event.target.value)} maxLength={255} placeholder="Optional camera label" disabled={busy} style={input}/>
             <label style={check}><input type="checkbox" checked={loop} onChange={event => setLoop(event.target.checked)} disabled={busy}/> Loop video</label>
           </div>
-          <div style={row}><label style={uploadLabel}>Upload test video <input type="file" accept="video/*,.mkv,.avi,.m4v" multiple disabled={busy} onChange={upload}/></label><button type="button" onClick={add} disabled={busy || cameras.filter(camera => camera?.is_test).length >= MAX_FEEDS} style={primary}>{busy ? 'Working…' : '+ Add Live Feed'}</button></div>
+          <div style={row}><label style={uploadLabel}>Upload test video <input type="file" accept="video/*,.mkv,.avi,.m4v" multiple disabled={busy} onChange={upload}/></label><button type="button" onClick={add} disabled={busy || !selected || !available.length || cameras.filter(camera => camera?.is_test).length >= MAX_FEEDS} style={primary}>{busy ? 'Working…' : '+ Add Live Feed'}</button></div>
         </section>
         <section>
           <div style={{...row, marginBottom:8}}><b>Test asset library</b><span style={hint}>{assets.length} asset{assets.length===1?'':'s'}</span></div>

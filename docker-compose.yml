@@ -343,6 +343,7 @@ services:
       - ./videos:/videos:ro
       - test_videos:/test_videos
       - evidence_data:/evidence:ro
+      - ./config/test_vehicle_route.json:/app/config/test_vehicle_route.json:ro
 
   mediamtx:
     image: bluenviron/mediamtx:1.11.3

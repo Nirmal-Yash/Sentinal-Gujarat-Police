@@ -6,6 +6,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': { target: 'http://api:8000', rewrite: p => p.replace(/^\/api/, '') },
+      '/test-hls': { target: 'http://mediamtx:8888', rewrite: p => p.replace(/^\/test-hls/, '') },
       '/ws':  { target: 'ws://api:8000',  ws: true, rewrite: p => p.replace(/^\/ws/, '/ws') }
     }
   },

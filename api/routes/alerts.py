@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import uuid, os, json, logging
 import redis as redis_lib
+from alert_filters import alert_type_filter_clause
 
 log = logging.getLogger(__name__)
 EVIDENCE_ROOT = Path(os.getenv("EVIDENCE_STORAGE_PATH", "/evidence"))
@@ -111,8 +112,10 @@ async def list_alerts(
         clauses.append("a.priority = upper(:priority)")
         params["priority"] = priority
     if alert_type:
-        clauses.append("a.alert_type ILIKE '%' || :alert_type || '%'")
-        params["alert_type"] = alert_type
+        type_clause, type_params = alert_type_filter_clause(alert_type)
+        if type_clause:
+            clauses.append(type_clause)
+            params.update(type_params)
     if cam_id:
         clauses.append("a.cam_id = CAST(:cam_id AS uuid)")
         params["cam_id"] = str(cam_id)

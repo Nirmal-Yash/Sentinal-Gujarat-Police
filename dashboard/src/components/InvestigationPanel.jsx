@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api/client'
 import { isValidIndianPlate, plateValidationMessage } from '../lib/validators'
+import { sortSightingsChronologically } from '../lib/routeSightings'
 import { Input } from './ui/input'
 import { Button } from './ui/button'
 
@@ -169,7 +170,7 @@ export default function InvestigationPanel({ onClose, onLocateRoute, init, testM
       if(testMode&&testSession&&row.plate_text){const r=await api.getTestPlateJourney(testSession.id,row.plate_text); sightings=(r.sightings||[]).filter(s=>s.lat!=null&&s.lng!=null)}
       else if(testMode&&testSession){const r=await api.getTestResults(testSession.id,{limit:500}); sightings=(r.detections||[]).filter(d=>String(d.track_id||'')===String(row.track_id||track)).sort((a,b)=>new Date(a.event_at||a.timestamp)-new Date(b.event_at||b.timestamp)).map(d=>({...d,lat:d.lat,lng:d.lng}))}
       else{const r=await api.searchTrack(track); sightings=r.sightings||[]}
-      onLocateRoute?.(sightings)
+      onLocateRoute?.(sortSightingsChronologically(sightings))
     }catch(err){setError(err.message||'Journey lookup failed')}
     finally{setJourneyLoading(null)}
   }
@@ -187,8 +188,8 @@ export default function InvestigationPanel({ onClose, onLocateRoute, init, testM
         const r=await api.searchPlateJourney(plate)
         sightings=(r.journeys||[]).flatMap(j=>j.sightings||[]).concat(results?.detections||[]).filter(s=>s.lat!=null&&s.lng!=null)
       }
-      if(sightings.length<2){setError('Need at least two GPS-located sightings for a route.');return}
-      onLocateRoute?.(sightings)
+      if(!sightings.length){setError('No GPS-located sightings found for this plate.');return}
+      onLocateRoute?.(sortSightingsChronologically(sightings))
     }catch(err){setError(err.message||'Journey route lookup failed')}
     finally{setJourneyRouteLoading(false)}
   }

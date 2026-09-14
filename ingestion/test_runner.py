@@ -1,7 +1,9 @@
 """Supervisor and subprocess for the isolated video-test raw-frame stream."""
-import argparse, base64, os, signal, subprocess, sys, time
+import argparse, base64, logging, os, signal, subprocess, sys, time
 from datetime import datetime, timezone
 import cv2, imageio_ffmpeg, psycopg2, redis
+
+log = logging.getLogger("test_runner")
 
 DB_URL, REDIS_URL = os.getenv("DATABASE_URL", ""), os.getenv("REDIS_URL", "redis://localhost:6379")
 FRAME_FPS = max(1, float(os.getenv("TEST_FRAME_FPS", "3"))); RTSP_BASE = os.getenv("TEST_RTSP_BASE", "rtsp://mediamtx:8554"); running = True
@@ -246,12 +248,18 @@ def supervise():
                             cur.execute("UPDATE test_video_assets SET width=%s,height=%s,fps=%s,duration_seconds=%s WHERE id=%s::uuid", (width or None,height or None,fps or None,(frames / fps) if fps and frames else None,str(asset_id)))
                         cap.release()
                     last_catalogue_refresh = time.monotonic()
-                cur.execute("SELECT id FROM test_sessions WHERE status='starting' AND runner_pid IS NULL ORDER BY created_at LIMIT 1"); row = cur.fetchone()
+                cur.execute("""
+                    SELECT id FROM test_sessions
+                    WHERE status IN ('starting', 'active') AND runner_pid IS NULL
+                    ORDER BY created_at LIMIT 1
+                """)
+                row = cur.fetchone()
                 if row:
                     session_id = str(row[0])
                     runner_script = "/app/test_runner.py" if os.path.exists("/app/test_runner.py") else os.path.abspath(__file__)
                     process = subprocess.Popen([sys.executable, runner_script, "--session-id", session_id], start_new_session=True)
                     cur.execute("UPDATE test_sessions SET runner_pid=%s WHERE id=%s::uuid", (process.pid, session_id))
+                    log.info("Started test runner pid=%s for session %s", process.pid, session_id)
                 cur.execute("SELECT id, runner_pid FROM test_sessions WHERE status='active' AND runner_pid IS NOT NULL")
                 for active_id, pid in cur.fetchall():
                     try:
@@ -259,7 +267,8 @@ def supervise():
                     except (OSError, ValueError):
                         cur.execute("UPDATE test_sessions SET status='error', error='Runner process died unexpectedly' WHERE id=%s::uuid", (str(active_id),))
             conn.close()
-        except Exception: pass
+        except Exception as exc:
+            log.warning("Test session supervisor loop failed: %s", exc)
         time.sleep(2)
 
 if __name__ == "__main__":

@@ -6,6 +6,8 @@ import AlertStatusBadge from './alerts/AlertStatusBadge'
 import AlertTypeBadge from './alerts/AlertTypeBadge'
 import AlertDateFilter from './alerts/AlertDateFilter'
 import { notifyToast } from './alerts/toast'
+import { sortSightingsChronologically } from '../lib/routeSightings'
+import { alertTimestamp, buildAlertQueryParams, canonicalAlertType } from '../lib/alertFilters'
 import './alerts/alerts.css'
 
 const STATUS_OPTIONS = ['ALL', 'NEW', 'ACKNOWLEDGED', 'INVESTIGATING', 'RESOLVED', 'CLOSED']
@@ -24,10 +26,10 @@ const severityFor = a => {
   const p = String(a?.priority || 'MEDIUM').toUpperCase()
   return SEVERITY_STYLES[p] ? p : 'MEDIUM'
 }
-const formatTime = v => {
-  if (!v) return '—'
-  const d = typeof v === 'number' ? new Date(v * 1000) : new Date(v)
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString('en-IN', { hour12: false })
+const formatTime = alert => {
+  const ts = alertTimestamp(alert)
+  if (!ts) return '—'
+  return new Date(ts).toLocaleString('en-IN', { hour12: false })
 }
 const entityLabel = alert => {
   const plate = alert?.details?.plate_text
@@ -37,12 +39,6 @@ const entityLabel = alert => {
   const entity = alert?.details?.entity_type || alert?.entity_type
   return entity ? String(entity).replace(/_/g, ' ') : '—'
 }
-const hasGeo = alert => {
-  const lat = alert?.lat ?? alert?.details?.lat
-  const lng = alert?.lng ?? alert?.details?.lng
-  return lat != null && lng != null
-}
-
 function ActionButton({ children, onClick, disabled = false }) {
   return (
     <motion.button
@@ -157,13 +153,14 @@ export default function AlertWorkspace({
   })
   const [plateError, setPlateError] = useState('')
   const [sort, setSort] = useState({ key: 'time', dir: 'desc' })
+  const [routeLoading, setRouteLoading] = useState(false)
   const [showTechnical, setShowTechnical] = useState(false)
   const [actionPending, setActionPending] = useState(null)
   const [error, setError] = useState('')
   const controllerRef = useRef(null)
   const requestIdRef = useRef(0)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (silent = false) => {
     if (filters.plate && !isValidPlateFilter(filters.plate)) {
       setPlateError(plateValidationMessage(filters.plate) || 'Invalid plate filter')
       return
@@ -173,19 +170,9 @@ export default function AlertWorkspace({
     const controller = new AbortController()
     controllerRef.current = controller
     const rid = ++requestIdRef.current
-    setLoading(true)
+    if (!silent) setLoading(true)
     setError('')
-    const d = filters.date || {}
-    const shared = {
-      limit: 300,
-      ...(filters.priority !== 'ALL' ? { priority: filters.priority } : {}),
-      ...(filters.status !== 'ALL' ? { status: filters.status } : {}),
-      ...(filters.alertType !== 'ALL' ? { alert_type: filters.alertType } : {}),
-      ...(filters.camera ? { camera: filters.camera } : {}),
-      ...(filters.plate ? { plate: filters.plate } : {}),
-      ...(d.from ? { from: d.from } : {}),
-      ...(d.to ? { to: d.to } : {}),
-    }
+    const shared = buildAlertQueryParams(filters)
     try {
       const result = testMode && testSession?.id
         ? await api.getTestAlerts(testSession.id, shared, { signal: controller.signal })
@@ -194,15 +181,21 @@ export default function AlertWorkspace({
     } catch (e) {
       if (e?.name !== 'AbortError' && !controller.signal.aborted && rid === requestIdRef.current) {
         setError(e?.message || 'Failed to load alerts')
-        notifyToast(e?.message || 'Failed to load alerts', 'error')
+        if (!silent) notifyToast(e?.message || 'Failed to load alerts', 'error')
       }
     } finally {
-      if (!controller.signal.aborted && rid === requestIdRef.current) setLoading(false)
+      if (!controller.signal.aborted && rid === requestIdRef.current && !silent) setLoading(false)
     }
   }, [filters, testMode, testSession])
 
-  useEffect(() => { setAlerts(mergeCanonicalAlerts(initialAlerts || [])) }, [initialAlerts])
-  useEffect(() => { load(); return () => controllerRef.current?.abort() }, [load])
+  useEffect(() => {
+    load()
+    const timer = setInterval(() => load(true), testMode ? 2500 : 15000)
+    return () => {
+      clearInterval(timer)
+      controllerRef.current?.abort()
+    }
+  }, [load, testMode])
 
   const toggleSort = key => {
     setSort(current => current.key === key
@@ -213,24 +206,27 @@ export default function AlertWorkspace({
   const sorted = useMemo(() => {
     const rows = [...alerts]
     const dir = sort.dir === 'asc' ? 1 : -1
+    const compareId = (a, b) => String(a.id || a.alert_id || '').localeCompare(String(b.id || b.alert_id || ''))
     rows.sort((a, b) => {
       if (sort.key === 'time') {
-        const ta = new Date(a.created_at || a.event_at || 0).getTime()
-        const tb = new Date(b.created_at || b.event_at || 0).getTime()
-        return (ta - tb) * dir
+        const delta = (alertTimestamp(a) - alertTimestamp(b)) * dir
+        return delta !== 0 ? delta : compareId(a, b)
       }
       if (sort.key === 'severity') {
         const sa = SEVERITY_ORDER[severityFor(a)] ?? 9
         const sb = SEVERITY_ORDER[severityFor(b)] ?? 9
-        return (sa - sb) * dir
+        const delta = (sa - sb) * dir
+        return delta !== 0 ? delta : (alertTimestamp(b) - alertTimestamp(a))
       }
       if (sort.key === 'status') {
         const sa = STATUS_ORDER[String(a.status || 'NEW').toUpperCase()] ?? 9
         const sb = STATUS_ORDER[String(b.status || 'NEW').toUpperCase()] ?? 9
-        return (sa - sb) * dir
+        const delta = (sa - sb) * dir
+        return delta !== 0 ? delta : (alertTimestamp(b) - alertTimestamp(a))
       }
       if (sort.key === 'type') {
-        return String(a.alert_type || '').localeCompare(String(b.alert_type || '')) * dir
+        const delta = canonicalAlertType(a.alert_type).localeCompare(canonicalAlertType(b.alert_type)) * dir
+        return delta !== 0 ? delta : (alertTimestamp(b) - alertTimestamp(a))
       }
       return 0
     })
@@ -253,17 +249,42 @@ export default function AlertWorkspace({
     }
   }, [onTransition])
 
-  const viewRoute = alert => {
+  const viewRoute = useCallback(async alert => {
     const plate = alert?.details?.plate_text
     if (!plate || !onLocateRoute) return
-    onLocateRoute([{
-      plate_text: plate,
-      cam_name: alert.cam_name || alert.camera_label,
-      lat: alert.lat ?? alert.details?.lat,
-      lng: alert.lng ?? alert.details?.lng,
-      timestamp: alert.created_at || alert.event_at,
-    }])
-  }
+    setRouteLoading(true)
+    try {
+      let sightings = []
+      if (testMode && testSession) {
+        const r = await api.getTestPlateJourney(testSession.id, plate)
+        sightings = (r.sightings || []).filter(s => s.lat != null && s.lng != null)
+      } else {
+        const r = await api.searchPlateJourney(plate)
+        sightings = (r.journeys || []).flatMap(j => j.sightings || []).filter(s => s.lat != null && s.lng != null)
+      }
+      if (!sightings.length) {
+        const lat = alert.lat ?? alert.details?.lat
+        const lng = alert.lng ?? alert.details?.lng
+        if (lat != null && lng != null) {
+          sightings = [{
+            cam_name: alert.cam_name || alert.camera_label,
+            lat,
+            lng,
+            timestamp: alert.created_at || alert.event_at,
+          }]
+        }
+      }
+      if (!sightings.length) {
+        notifyToast('No GPS-located sightings found for this plate.', 'error')
+        return
+      }
+      onLocateRoute(sortSightingsChronologically(sightings))
+    } catch (e) {
+      notifyToast(e?.message || 'Route lookup failed', 'error')
+    } finally {
+      setRouteLoading(false)
+    }
+  }, [onLocateRoute, testMode, testSession])
 
   const fresh = sorted.filter(a => (a.status || 'NEW') === 'NEW').length
   const critical = sorted.filter(a => severityFor(a) === 'CRITICAL').length
@@ -284,7 +305,7 @@ export default function AlertWorkspace({
           {critical > 0 && <span className="summary-critical">{critical} Critical</span>}
           {high > 0 && <span className="summary-high">{high} High</span>}
           {fresh > 0 && <span className="summary-new">{fresh} New</span>}
-          <ActionButton disabled={loading} onClick={load}>{loading ? 'Refreshing…' : 'Refresh'}</ActionButton>
+          <ActionButton disabled={loading} onClick={() => load()}>{loading ? 'Refreshing…' : 'Refresh'}</ActionButton>
         </div>
         <div className="alerts-filters">
           <select value={filters.priority} onChange={e => setFilters(f => ({ ...f, priority: e.target.value }))}>
@@ -342,7 +363,7 @@ export default function AlertWorkspace({
                   <span className="alert-camera" title={location || ''}>{camLabel}{location ? ` · ${location}` : ''}</span>
                   <span className="alert-reasoning">{alert.human_summary || '—'}</span>
                   <span><AlertStatusBadge status={alert.status || 'NEW'} /></span>
-                  <span className="alert-time">{formatTime(alert.created_at || alert.event_at)}</span>
+                  <span className="alert-time">{formatTime(alert)}</span>
                 </motion.button>
               )
             })}
@@ -364,7 +385,7 @@ export default function AlertWorkspace({
                 <div>
                   <div className="alert-drawer-title">{String(selected.alert_type || 'Alert').replace(/_/g, ' ')}</div>
                   <div className="alerts-subtitle">
-                    {selected.cam_name || selected.camera_label || 'Camera'} · {formatTime(selected.created_at || selected.event_at)}
+                    {selected.cam_name || selected.camera_label || 'Camera'} · {formatTime(selected)}
                   </div>
                 </div>
                 <button type="button" onClick={() => setSelected(null)} className="alert-close">×</button>
@@ -402,8 +423,8 @@ export default function AlertWorkspace({
                   {selected.details?.plate_text && (
                     <ActionButton onClick={() => onOpenInvestigation?.({ tab: 'plate', query: selected.details.plate_text })}>Investigate Plate</ActionButton>
                   )}
-                  {selected.details?.plate_text && hasGeo(selected) && onLocateRoute && (
-                    <ActionButton onClick={() => viewRoute(selected)}>View Route on Map</ActionButton>
+                  {selected.details?.plate_text && onLocateRoute && (
+                    <ActionButton disabled={routeLoading} onClick={() => viewRoute(selected)}>{routeLoading ? 'Loading Route…' : 'View Route on Map'}</ActionButton>
                   )}
                 </div>
               </div>

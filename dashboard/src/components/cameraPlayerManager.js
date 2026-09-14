@@ -1,14 +1,12 @@
 import { useEffect, useState } from 'react'
 
-const MAX_PLAYERS = 6
-const KEEP_ALIVE_SLOTS = 2
-const OFFSCREEN_DELAY = 1200
+const MAX_PLAYERS = 16
+const OFFSCREEN_DELAY = 15000
 const entries = new Map()
 const elementToId = new WeakMap()
 let observer = null
 let pageHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden'
 let memoryLimit = MAX_PLAYERS
-const keepAliveIds = new Set()
 
 function ensureObserver() {
   if (observer || typeof IntersectionObserver === 'undefined') return
@@ -22,18 +20,18 @@ function ensureObserver() {
         clearTimeout(item.suspendTimer)
         item.suspendTimer = null
         scheduleBudget()
-      } else if (!item.pageSuspended && !keepAliveIds.has(item.id)) {
+      } else if (!item.pageSuspended) {
         clearTimeout(item.suspendTimer)
         item.suspendTimer = setTimeout(() => {
           const current = entries.get(item.id)
-          if (current && !current.visible && !current.pageSuspended && !keepAliveIds.has(current.id)) {
+          if (current && !current.visible && !current.pageSuspended) {
             current.setActive(false)
             current.suspended = true
           }
         }, OFFSCREEN_DELAY)
       }
     }
-  }, { root: null, rootMargin: '40px 0px', threshold: [0, 0.1] })
+  }, { root: null, rootMargin: '320px 0px', threshold: [0, 0.01, 0.1] })
 }
 
 function distanceFromViewportCenter(item) {
@@ -44,11 +42,8 @@ function distanceFromViewportCenter(item) {
 
 let budgetTimer = null
 function scheduleBudget() {
-  if (budgetTimer) return
-  budgetTimer = requestAnimationFrame(() => {
-    budgetTimer = null
-    recompute(false)
-  })
+  clearTimeout(budgetTimer)
+  budgetTimer = setTimeout(() => recompute(false), 0)
 }
 
 function recompute(stagger) {
@@ -61,7 +56,7 @@ function recompute(stagger) {
     clearTimeout(item.activationTimer)
     if (wanted.has(item.id)) {
       if (item.active) return
-      const delay = stagger ? (index < 4 ? 0 : Math.floor((index - 2) / 2) * 500) : 0
+      const delay = stagger && eligible.length > 10 ? Math.min(400, Math.floor(index / 4) * 120) : 0
       item.activationTimer = setTimeout(() => {
         const current = entries.get(item.id)
         if (current && current.visible && !pageHidden) current.setActive(true)
@@ -71,26 +66,7 @@ function recompute(stagger) {
     }
   })
   entries.forEach(item => {
-    if (!item.visible && !keepAliveIds.has(item.id)) item.setActive(false)
-  })
-}
-
-function updateKeepAlive() {
-  keepAliveIds.clear()
-  if (!pageHidden) {
-    entries.forEach(item => {
-      item.pagePaused = false
-    })
-    return
-  }
-  const candidates = [...entries.values()]
-    .filter(item => item.visible || item.active)
-    .sort((a, b) => distanceFromViewportCenter(a) - distanceFromViewportCenter(b))
-    .slice(0, KEEP_ALIVE_SLOTS)
-  candidates.forEach(item => {
-    keepAliveIds.add(item.id)
-    item.pagePaused = true
-    item.setActive(true)
+    if (!item.visible) item.setActive(false)
   })
 }
 
@@ -100,16 +76,11 @@ function onVisibilityChange() {
     entries.forEach(item => {
       item.pageSuspended = item.visible || item.active
       clearTimeout(item.suspendTimer)
-    })
-    updateKeepAlive()
-    entries.forEach(item => {
-      if (!keepAliveIds.has(item.id)) item.setActive(false)
+      item.setActive(false)
     })
   } else {
-    keepAliveIds.clear()
     entries.forEach(item => {
-      item.pageSuspended = false
-      item.pagePaused = false
+      if (item.pageSuspended) item.pageSuspended = false
     })
     recompute(true)
   }
@@ -118,19 +89,18 @@ function onVisibilityChange() {
 if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibilityChange)
 if (typeof window !== 'undefined') {
   window.addEventListener('resize', () => recompute(false), { passive: true })
-  window.addEventListener('scroll', () => scheduleBudget(), { passive: true, capture: true })
+  window.addEventListener('scroll', () => scheduleBudget(), { passive: true })
 }
 if (typeof performance !== 'undefined' && performance.memory) {
   setInterval(() => {
     const ratio = performance.memory.usedJSHeapSize / Math.max(1, performance.memory.jsHeapSizeLimit)
-    memoryLimit = ratio > 0.8 ? 4 : MAX_PLAYERS
-    recompute(false)
+    memoryLimit = ratio > 0.8 ? 8 : MAX_PLAYERS
+    if (memoryLimit < MAX_PLAYERS) recompute(false)
   }, 5000)
 }
 
 export function useCameraPlayerSlot(id, elementRef) {
   const [active, setActive] = useState(false)
-  const [pagePaused, setPagePaused] = useState(false)
 
   useEffect(() => {
     ensureObserver()
@@ -148,7 +118,6 @@ export function useCameraPlayerSlot(id, elementRef) {
       active: false,
       visible: false,
       pageSuspended: false,
-      pagePaused: false,
       suspended: false,
       suspendTimer: null,
       activationTimer: null,
@@ -162,21 +131,14 @@ export function useCameraPlayerSlot(id, elementRef) {
       clearTimeout(item.activationTimer)
       observer.unobserve(element)
       entries.delete(key)
-      keepAliveIds.delete(key)
       setActive(false)
-      setPagePaused(false)
     }
   }, [id, elementRef])
 
   useEffect(() => {
     const item = entries.get(String(id))
-    if (!item) return undefined
-    item.active = active
-    const syncPaused = () => setPagePaused(Boolean(item.pagePaused && keepAliveIds.has(String(id))))
-    syncPaused()
-    const timer = setInterval(syncPaused, 250)
-    return () => clearInterval(timer)
+    if (item) item.active = active
   }, [id, active])
 
-  return { active, pagePaused }
+  return active
 }

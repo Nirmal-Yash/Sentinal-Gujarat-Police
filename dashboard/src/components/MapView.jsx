@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import { sortSightingsChronologically, sightingTimestamp } from '../lib/routeSightings'
 
 const GUJARAT_BOUNDS = L.latLngBounds([20.08, 68.08], [24.55, 74.55])
 const VIEW_KEY = 'sentinel.map.viewport.session.v1'
@@ -40,9 +41,45 @@ function popupForRegistryCamera(cam) {
   return `<div style="font-family:system-ui;font-size:12px;min-width:210px"><b>${displayId} · ${cam.name}</b><br/><span style="color:#555">${cam.location || 'Location not registered'}</span><br/><span style="color:#555">${cam.department || 'Unassigned'} · ${cam.camera_type || 'fixed'}</span><br/><span style="font-size:11px;color:#777">${accurateMetadata(cam)}</span><br/><span style="font-size:11px;color:${statusColor(cam)};font-weight:700">${(cam.health_status || cam.status || 'unknown').toUpperCase()}</span>${review}</div>`
 }
 function alertPopup(alert) {
-  const plate = alert.details?.plate_text ? `<br/><b>Plate:</b> ${alert.details.plate_text}` : ''
   const status = alert.status || 'NEW'
-  return `<div style="font-family:system-ui;font-size:12px;min-width:200px"><b>${String(alert.alert_type || 'Alert').replace(/_/g, ' ')}</b><br/><b>Priority:</b> ${alert.priority || 'MEDIUM'}<br/><b>Status:</b> ${status}${plate}<br/><span style="color:#666">${alert.details?.watchlist_name || alert.details?.message || ''}</span></div>`
+  return `<div style="font-family:system-ui;font-size:12px;min-width:200px"><b>${String(alert.alert_type || 'Alert').replace(/_/g, ' ')}</b><br/><b>Priority:</b> ${alert.priority || 'MEDIUM'}<br/><b>Status:</b> ${status}<br/><span style="color:#666">${alert.details?.watchlist_name || alert.details?.message || ''}</span></div>`
+}
+
+function routeStepIcon(index, total) {
+  const isStart = index === 0
+  const isEnd = index === total - 1
+  const bg = isStart ? '#22c55e' : isEnd ? '#ef4444' : '#58a6ff'
+  return L.divIcon({
+    className: '',
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+    popupAnchor: [0, -14],
+    html: `<div style="width:28px;height:28px;border-radius:50%;background:${bg};color:#fff;border:2px solid #fff;display:grid;place-items:center;font:800 12px system-ui;box-shadow:0 2px 10px rgba(0,0,0,.5)">${index + 1}</div>`,
+  })
+}
+
+function segmentBearing(from, to) {
+  const lat1 = Number(from.lat) * Math.PI / 180
+  const lat2 = Number(to.lat) * Math.PI / 180
+  const dLng = (Number(to.lng) - Number(from.lng)) * Math.PI / 180
+  const y = Math.sin(dLng) * Math.cos(lat2)
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng)
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360
+}
+
+function routeArrowIcon(bearing) {
+  return L.divIcon({
+    className: '',
+    iconSize: [18, 18],
+    iconAnchor: [9, 9],
+    html: `<div style="width:18px;height:18px;display:grid;place-items:center;transform:rotate(${bearing}deg);color:#7cc7ff;font-size:15px;line-height:1;text-shadow:0 1px 3px rgba(0,0,0,.8)">▶</div>`,
+  })
+}
+
+function formatRouteStamp(sighting) {
+  const ts = sightingTimestamp(sighting)
+  if (!ts) return 'Unknown time'
+  return new Date(ts).toLocaleString('en-IN', { hour12: false })
 }
 
 export default function MapView({ cameras, alerts = [], compact = false, focusCameraId, focusNonce = 0, route = [], routeFocusNonce = 0 }) {
@@ -70,7 +107,7 @@ export default function MapView({ cameras, alerts = [], compact = false, focusCa
     if (!map || !selected) return false
     selectedRef.current = cameraId; sessionStorage.setItem(SELECTED_KEY, cameraId)
     Object.values(markersRef.current).forEach(item => item.marker.setIcon(camIcon(item.camera, item.camera.id === cameraId)))
-    if (focus) { map.flyTo(selected.marker.getLatLng(), Math.max(map.getZoom(), 15), { duration: 1.5 }); selected.marker.openPopup() }
+    if (focus) { map.setView(selected.marker.getLatLng(), Math.max(map.getZoom(), 14), { animate: false }); selected.marker.openPopup() }
     return true
   }
 
@@ -144,16 +181,26 @@ export default function MapView({ cameras, alerts = [], compact = false, focusCa
     const layer = routeLayerRef.current, map = mapRef.current
     if (!layer) return
     layer.clearLayers()
-    const valid = route.filter(hasCoordinates)
+    const valid = sortSightingsChronologically(route.filter(hasCoordinates))
     const points = valid.map(s => [Number(s.lat), Number(s.lng)])
     if (!points.length) return
-    layer.addLayer(L.polyline(points, { color: '#58a6ff', weight: 4, opacity: .85 }))
+    layer.addLayer(L.polyline(points, { color: '#58a6ff', weight: 5, opacity: 0.92, lineJoin: 'round', lineCap: 'round' }))
+    for (let index = 0; index < valid.length - 1; index += 1) {
+      const from = valid[index], to = valid[index + 1]
+      const midLat = (Number(from.lat) + Number(to.lat)) / 2
+      const midLng = (Number(from.lng) + Number(to.lng)) / 2
+      layer.addLayer(L.marker([midLat, midLng], { icon: routeArrowIcon(segmentBearing(from, to)), interactive: false }))
+    }
     valid.forEach((sighting, index) => {
-      const marker = L.circleMarker([Number(sighting.lat), Number(sighting.lng)], { radius: index === 0 || index === valid.length - 1 ? 7 : 5, color: '#58a6ff', fillColor: '#102a43', fillOpacity: .95, weight: 2 })
-      const stamp = sighting.timestamp ? new Date(sighting.timestamp).toLocaleString('en-IN') : 'Unknown time'
-      marker.bindPopup(`<div style="font:12px system-ui"><b>${index + 1}. ${sighting.cam_name || 'Camera'}</b><br/>${stamp}<br/>Plate: ${sighting.plate_text || '—'}<br/>Confidence: ${sighting.confidence != null ? `${(Number(sighting.confidence) * 100).toFixed(0)}%` : '—'}</div>`); layer.addLayer(marker)
+      const marker = L.marker([Number(sighting.lat), Number(sighting.lng)], { icon: routeStepIcon(index, valid.length) })
+      const confidence = sighting.confidence != null ? `${(Number(sighting.confidence) * 100).toFixed(0)}%` : '—'
+      marker.bindPopup(`<div style="font:12px system-ui;min-width:190px"><b>Stop ${index + 1}: ${sighting.cam_name || 'Camera'}</b><br/>${sighting.location || 'Location unavailable'}<br/>${formatRouteStamp(sighting)}<br/>Confidence: ${confidence}</div>`)
+      layer.addLayer(marker)
     })
-    if (routeFocusNonce && map) { if (points.length === 1) map.setView(points[0], Math.max(map.getZoom(), 15), { animate: true }); else map.fitBounds(L.latLngBounds(points).pad(0.2), { maxZoom: 15, animate: true }) }
+    if (routeFocusNonce && map) {
+      if (points.length === 1) map.setView(points[0], Math.max(map.getZoom(), 8), { animate: false })
+      else map.fitBounds(L.latLngBounds(points).pad(0.18), { maxZoom: 9, animate: false })
+    }
   }, [route, routeFocusNonce])
 
   useEffect(() => {

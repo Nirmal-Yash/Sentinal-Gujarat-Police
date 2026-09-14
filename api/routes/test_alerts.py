@@ -7,8 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from auth import Principal, require_permission
 from database import get_db
 from plate_normalise import normalize_plate
-from test_geo import test_geo_for_stream
+from demo_route import geo_for_stream
 from alert_summary import build_human_summary
+from alert_filters import alert_type_filter_clause, alert_sort_expression
 
 router = APIRouter(prefix="/test/sessions", tags=["test-alerts"])
 VALID = {"NEW": {"ACKNOWLEDGED"}, "ACKNOWLEDGED": {"INVESTIGATING", "RESOLVED"}, "INVESTIGATING": {"RESOLVED"}, "RESOLVED": {"CLOSED"}, "CLOSED": set()}
@@ -19,7 +20,7 @@ async def _test_alert_public(row):
     stream_id = row.get("stream_id")
     cam_name = row.get("cam_name") or (f"Test Camera {stream_id}" if stream_id is not None else None)
     if stream_id is not None:
-        geo = test_geo_for_stream(int(stream_id))
+        geo = geo_for_stream(int(stream_id))
         camera = {
             "id": f"test-{row['session_id']}-{stream_id}",
             "name": cam_name,
@@ -41,7 +42,8 @@ async def _test_alert_public(row):
         "details": details,
         "acknowledged": bool(row["acknowledged"]),
         "status": row["status"] or ("ACKNOWLEDGED" if row["acknowledged"] else "NEW"),
-        "created_at": row["created_at"],
+        "event_at": row.get("event_at") or row["created_at"],
+        "created_at": row.get("event_at") or row["created_at"],
         "updated_at": row["updated_at"],
         "acknowledged_at": row["acknowledged_at"],
         "acknowledged_by": row["acknowledged_by"],
@@ -84,8 +86,10 @@ async def list_test_alerts(
         clauses.append("a.priority = upper(:priority)")
         params["priority"] = priority
     if alert_type:
-        clauses.append("a.alert_type ILIKE '%' || :alert_type || '%'")
-        params["alert_type"] = alert_type
+        type_clause, type_params = alert_type_filter_clause(alert_type)
+        if type_clause:
+            clauses.append(type_clause)
+            params.update(type_params)
     if status:
         clauses.append("COALESCE(a.status, CASE WHEN a.acknowledged THEN 'ACKNOWLEDGED' ELSE 'NEW' END) = upper(:status)")
         params["status"] = status
@@ -105,14 +109,14 @@ async def list_test_alerts(
     sql = f"""SELECT a.id, a.session_id, a.alert_type, a.priority,
         COALESCE(d.detection_type, a.details->>'entity_type', 'unknown') AS entity_type,
         a.details, a.acknowledged, a.status,
-        a.created_at, a.updated_at, a.acknowledged_at, a.acknowledged_by,
+        a.event_at, a.created_at, a.updated_at, a.acknowledged_at, a.acknowledged_by,
         a.resolved_at, a.resolved_by, a.closed_at, a.closed_by,
         COALESCE(d.stream_id, (a.details->>'stream_id')::int) AS stream_id,
         COALESCE(d.camera_label, a.details->>'camera_label') AS cam_name
         FROM test_alerts a
         LEFT JOIN test_detections d ON d.id = a.detection_id
         WHERE {" AND ".join(clauses)}
-        ORDER BY a.created_at DESC LIMIT :limit"""
+        ORDER BY {alert_sort_expression(test_mode=True)} LIMIT :limit"""
 
     rows = await db.execute(text(sql), params)
     return [await _test_alert_public(row) for row in rows.mappings().all()]

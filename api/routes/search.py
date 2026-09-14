@@ -5,6 +5,7 @@ from database import get_db
 from rate_limit import rate_limit
 from plate_normalise import normalize_plate
 from validators import is_valid_indian_plate
+from demo_route import geo_index_for_stream
 from test_geo import test_geo_for_stream
 import os, base64, json, time, uuid, asyncio
 from sqlalchemy import text
@@ -75,7 +76,8 @@ async def search_plate(q: str = Query(..., min_length=1, max_length=100), x_test
                 try: raw_bbox = json.loads(raw_bbox)
                 except Exception: raw_bbox = {}
             r['bbox'] = raw_bbox
-            geo = test_geo_for_stream(int(r.get('cam_id') or r.get('stream_id') or 1))
+            stream_id = int(r.get('cam_id') or r.get('stream_id') or 1)
+            geo = test_geo_for_stream(stream_id, geo_index_for_stream(stream_id))
             r['location'] = geo['location']
             r['lat'] = geo['lat']
             r['lng'] = geo['lng']

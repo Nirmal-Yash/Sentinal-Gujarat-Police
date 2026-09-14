@@ -6,7 +6,7 @@ from database import get_db
 from models import PlateInvestigateRequest
 from plate_normalise import normalize_plate
 from validators import require_valid_plate
-from test_geo import test_geo_for_stream
+from demo_route import geo_for_stream
 import json, uuid
 
 router = APIRouter(prefix="/investigate", tags=["investigate"], dependencies=[Depends(require_authenticated)])
@@ -42,7 +42,7 @@ def _enrich_test_rows(rows: list[dict]) -> list[dict]:
         r["bbox"] = raw_bbox or {}
         stream_id = r.get("stream_id") or r.get("cam_id")
         if stream_id is not None:
-            geo = test_geo_for_stream(int(stream_id))
+            geo = geo_for_stream(int(stream_id))
             r["stream_id"] = int(stream_id)
             r["location"] = geo.get("location")
             r["lat"] = geo.get("lat")
