@@ -523,7 +523,9 @@ html[data-theme="light"] .ui-button-default:hover { color: #ffffff !important; }
   min-width:0;
   max-width:100%;
   box-sizing:border-box;
-  overflow:hidden;
+  overflow:visible !important;
+  z-index:1000 !important;
+  position:relative;
 }
 .sentinel-topbar-title,
 .sentinel-search-wrap,
@@ -553,15 +555,10 @@ html[data-theme="light"] .ui-button-default:hover { color: #ffffff !important; }
 
 .ui-sidebar[data-state="collapsed"]{width:72px !important;flex-basis:72px !important}
 .ui-sidebar[data-state="collapsed"] .sentinel-menu-label{display:none !important}
-.ui-sidebar[data-state="collapsed"] .sentinel-menu-icon{margin:0 auto !important;width:26px !important;height:26px !important;flex:0 0 26px !important;color:var(--text) !important}
+.ui-sidebar[data-state="collapsed"] .sentinel-menu-icon{margin:0 auto !important;width:26px !important;height:26px !important;flex:0 0 26px !important}
 .ui-sidebar[data-state="collapsed"] .sentinel-menu-icon svg{width:21px !important;height:21px !important;flex:0 0 21px !important}
 .ui-sidebar[data-state="collapsed"] .ui-sidebar-menu-button{justify-content:center !important;padding:0 !important;width:46px !important;height:46px !important;min-height:46px !important;margin:3px auto !important;border-radius:10px !important}
 .ui-sidebar[data-state="collapsed"] .ui-sidebar-menu-button.is-active .sentinel-menu-icon{color:var(--on-accent) !important}
-
-html[data-theme="light"] .ui-sidebar[data-state="collapsed"] .sentinel-menu-icon{color:#0B0F19 !important}
-html[data-theme="light"] .ui-sidebar[data-state="collapsed"] .ui-sidebar-menu-button.is-active .sentinel-menu-icon{color:#FFFFFF !important}
-html[data-theme="dark"] .ui-sidebar[data-state="collapsed"] .sentinel-menu-icon{color:#FFFFFF !important}
-html[data-theme="dark"] .ui-sidebar[data-state="collapsed"] .ui-sidebar-menu-button.is-active .sentinel-menu-icon{color:#0B0F19 !important}
 
 .sentinel-sidebar-toggle{width:38px !important;height:38px !important;min-width:38px !important;min-height:38px !important;border-radius:9px !important;border:1px solid var(--border-strong) !important;background:var(--surface2) !important;color:var(--text) !important;display:grid !important;place-items:center !important;cursor:pointer !important;transition:all .16s ease !important;box-shadow:0 2px 6px rgba(0,0,0,.08) !important}
 .sentinel-sidebar-toggle:hover,.sentinel-sidebar-toggle:focus-visible{border-color:var(--accent-border) !important;background:var(--surface3) !important;color:var(--accent-strong) !important;box-shadow:0 0 0 3px var(--accent-soft) !important}

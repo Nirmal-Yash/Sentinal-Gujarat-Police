@@ -40,7 +40,6 @@ async def search_plate(q: str = Query(..., min_length=1, max_length=100), x_test
         result = await db.execute(text('''SELECT td.id,td.stream_id AS cam_id,td.event_at AS timestamp,td.plate_text,td.confidence,COALESCE(f.camera_label,td.camera_label) AS cam_name,NULL AS location,NULL AS lat,NULL AS lng,td.track_id,NULL AS global_vehicle_id,NULL AS journey_id
             FROM test_detections td LEFT JOIN test_session_feeds f ON f.session_id=td.session_id AND f.stream_id=td.stream_id
             WHERE td.session_id=CAST(:session AS uuid) AND regexp_replace(upper(COALESCE(td.plate_text,'')),'[^A-Z0-9]','','g')=:plate
-              AND COALESCE(td.details->>'plate_validated','0') IN ('1','true') AND COALESCE(td.details->>'anpr_consensus','0') IN ('1','true')
             ORDER BY td.event_at DESC LIMIT :limit'''), {'session': session_uuid, 'plate': normalized, 'limit': limit})
         rows = [dict(r) for r in result.mappings().all()]
     else:

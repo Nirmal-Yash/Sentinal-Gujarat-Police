@@ -225,6 +225,7 @@ class CameraWorker:
         self.interval = CATEGORY_INTERVALS[self.processing_category]
         self.prev_thumb = None
         self.last_alive = 0.0
+        self.last_sample = 0.0
         self.last_forwarded = 0.0
 
     def _open(self):
@@ -267,12 +268,15 @@ class CameraWorker:
             self.last_alive = time.monotonic()
 
     def _should_forward(self, frame):
-        activity = self._scene_activity(frame) if FRAME_GATE_ENABLED else 255.0
-        elapsed = time.monotonic() - self.last_forwarded
-        if elapsed < self.interval:
+        now = time.monotonic()
+        elapsed_sample = now - self.last_sample
+        if elapsed_sample < self.interval:
             return False
-        if not FRAME_GATE_ENABLED or activity >= MOTION_THRESHOLD or elapsed >= IDLE_MAX_SECS:
-            self.last_forwarded = time.monotonic()
+        self.last_sample = now
+        elapsed_forward = now - self.last_forwarded
+        activity = self._scene_activity(frame) if FRAME_GATE_ENABLED else 255.0
+        if not FRAME_GATE_ENABLED or activity >= MOTION_THRESHOLD or elapsed_forward >= IDLE_MAX_SECS:
+            self.last_forwarded = now
             return True
         return False
 
@@ -340,8 +344,30 @@ class CameraWorker:
                     published_frames = 0
                     last_health_write = 0.0
 
+                now = time.monotonic()
+                elapsed = now - self.last_sample
+
+                if elapsed < self.interval:
+                    grabbed = cap.grab()
+                    if not grabbed:
+                        fail_streak += 1
+                        if fail_streak == 1:
+                            increment_decode_failure(self.cam_id, pool=self.pool)
+                        if fail_streak >= 15:
+                            log.warning("%s: 15 consecutive frame-grab failures; reconnecting", self.name)
+                            cap.release()
+                            cap = None
+                            set_status(self.cam_id, "reconnecting", pool=self.pool)
+                        time.sleep(0.05)
+                        continue
+                    fail_streak = 0
+                    observed_frames += 1
+                    self._camera_alive()
+                    time.sleep(min(0.04, max(0.01, self.interval - elapsed)))
+                    continue
+
                 ret, frame = cap.read()
-                if not ret:
+                if not ret or frame is None:
                     fail_streak += 1
                     if fail_streak == 1:
                         increment_decode_failure(self.cam_id, pool=self.pool)

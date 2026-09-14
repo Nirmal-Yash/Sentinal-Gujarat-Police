@@ -41,6 +41,10 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      - OPENCV_FFMPEG_CAPTURE_OPTIONS=rtsp_transport;tcp|threads;1|stimeout;10000000
+      - OMP_NUM_THREADS=1
+      - OPENBLAS_NUM_THREADS=1
+      - MKL_NUM_THREADS=1
       - REDIS_URL=${REDIS_URL:-redis://redis:6379}
       - DATABASE_URL=postgresql://sentinel:${POSTGRES_PASSWORD}@postgres:5432/sentinel
       - CCTV_BASE_URL=${CCTV_BASE_URL:-https://cctv.corp8.cloud}

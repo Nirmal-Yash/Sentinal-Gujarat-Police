@@ -173,7 +173,14 @@ def test_main():
     except redis.exceptions.ResponseError: pass
     consumer = f"test-intel-{uuid.uuid4().hex[:8]}"; log.info("Test intelligence ready — isolated streams only")
     while True:
-        messages = r.xreadgroup(group, consumer, {stream: ">"}, count=20, block=500)
+        try:
+            messages = r.xreadgroup(group, consumer, {stream: ">"}, count=20, block=500)
+        except redis.exceptions.ResponseError as exc:
+            if "NOGROUP" in str(exc) or "no such key" in str(exc).lower():
+                try: r.xgroup_create(stream, group, id="0", mkstream=True)
+                except Exception: pass
+                continue
+            raise
         for _, entries in messages:
             for message_id, data in entries:
                 try:

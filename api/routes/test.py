@@ -1,6 +1,7 @@
 """Video-backed test mode. It is deliberately isolated from operational data."""
-import base64, csv, io, mimetypes, os, signal, uuid
+import base64, csv, io, mimetypes, os, signal, uuid, json
 import numpy as np
+import redis
 from datetime import datetime
 from pathlib import Path
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -10,6 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from auth import ROLE_ORDER, Principal, current_principal, require_role
 from database import get_db
+from plate_normalise import normalize_plate
 
 router = APIRouter(prefix="/test", tags=["test"])
 
@@ -268,6 +270,55 @@ async def add_test_watchlist(session_id:uuid.UUID,body:TestWatchlistCreate,_:Pri
     row=(await db.execute(text("""INSERT INTO test_watchlists(session_id,name,entity_type,description,plate_number,alert_priority,is_active)
       VALUES(CAST(:session AS uuid),:name,:entity_type,:description,:plate,:priority,TRUE)
       RETURNING id,name,entity_type,description,plate_number,alert_priority,is_active,created_at"""),{"session":str(session_id),"name":body.name.strip(),"entity_type":body.entity_type,"description":body.description.strip(),"plate":plate,"priority":body.alert_priority.upper()})).mappings().one()
+    if plate and body.entity_type == "vehicle":
+        norm_plate = normalize_plate(plate) or plate
+        recent_sighting = (await db.execute(text("""
+            SELECT id, camera_label, stream_id, event_at, track_id
+            FROM test_detections
+            WHERE session_id=CAST(:session AS uuid)
+              AND regexp_replace(upper(COALESCE(plate_text,'')),'[^A-Z0-9]','','g') = :norm_plate
+            ORDER BY event_at DESC LIMIT 1
+        """), {"session": str(session_id), "norm_plate": norm_plate})).mappings().first()
+        if recent_sighting:
+            existing_alert = await db.scalar(text("""
+                SELECT 1 FROM test_alerts
+                WHERE session_id=CAST(:session AS uuid) AND alert_type='watchlist_match'
+                  AND details->>'watchlist_id' = :wl_id
+            """), {"session": str(session_id), "wl_id": str(row["id"])})
+            if not existing_alert:
+                details = {
+                    "plate_text": norm_plate,
+                    "camera_label": recent_sighting["camera_label"] or f"Camera {recent_sighting['stream_id']}",
+                    "watchlist_id": str(row["id"]),
+                    "watchlist_name": body.name.strip(),
+                    "description": body.description.strip() or "",
+                    "track_id": recent_sighting["track_id"],
+                    "test": True,
+                }
+                alert_row = (await db.execute(text("""
+                    INSERT INTO test_alerts(session_id, detection_id, alert_type, priority, event_at, details)
+                    VALUES(CAST(:session AS uuid), CAST(:det_id AS uuid), 'watchlist_match', :priority, :event_at, CAST(:details AS jsonb))
+                    RETURNING id
+                """), {
+                    "session": str(session_id),
+                    "det_id": str(recent_sighting["id"]),
+                    "priority": body.alert_priority.upper(),
+                    "event_at": recent_sighting["event_at"],
+                    "details": json.dumps(details),
+                })).mappings().first()
+                try:
+                    r = redis.from_url(os.getenv("REDIS_URL", "redis://redis:6379"), decode_responses=False)
+                    r.xadd("test:alerts", {
+                        b"alert_id": str(alert_row["id"]).encode(),
+                        b"session_id": str(session_id).encode(),
+                        b"detection_id": str(recent_sighting["id"]).encode(),
+                        b"camera_label": (recent_sighting["camera_label"] or "Camera").encode(),
+                        b"priority": body.alert_priority.upper().encode(),
+                        b"alert_type": b"watchlist_match",
+                        b"test": b"true"
+                    }, maxlen=5000, approximate=True)
+                except Exception:
+                    pass
     await db.commit(); return {**_public_test_watchlist(row),"production_data_affected":False}
 
 
@@ -323,6 +374,18 @@ async def create_session(body: TestSessionCreate, principal: Principal = Depends
             label = f"Test Camera 1 — {asset['display_name']}"
             await db.execute(text("""INSERT INTO test_session_feeds(session_id,asset_id,stream_id,camera_label,rtsp_path,hls_path,loop,width,height,fps)
               VALUES(CAST(:session AS uuid),CAST(:asset AS uuid),1,:label,:rtsp,:hls,TRUE,:width,:height,:fps)"""), {"session": session_id,"asset": str(asset["id"]),"label": label,"rtsp": f"rtsp://mediamtx:8554/test/{session_id}/cam1","hls": f"/test-hls/test/{session_id}/cam1/index.m3u8","width": asset["width"],"height": asset["height"],"fps": asset["fps"]})
+    # Inherit active watchlist entries from prior test sessions so watchlist is persistent
+    await db.execute(text("""
+        INSERT INTO test_watchlists(session_id, name, entity_type, description, plate_number, embedding, alert_priority, is_active)
+        SELECT CAST(:session AS uuid), w.name, w.entity_type, w.description, w.plate_number, w.embedding, w.alert_priority, TRUE
+        FROM (
+            SELECT DISTINCT ON (entity_type, COALESCE(plate_number, name))
+                   name, entity_type, description, plate_number, embedding, alert_priority
+            FROM test_watchlists
+            WHERE is_active = TRUE AND session_id != CAST(:session AS uuid)
+            ORDER BY COALESCE(plate_number, name), entity_type, created_at DESC
+        ) w
+    """), {"session": session_id})
     await db.commit(); return {**dict(session), "id": session_id, "session_id": session_id, "runner_pid": None, "production_data_affected": False}
 
 

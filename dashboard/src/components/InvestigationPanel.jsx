@@ -10,6 +10,18 @@ export default function InvestigationPanel({onClose,onLocateRoute,init,testMode=
  useEffect(()=>{if(init?.tab)setTab(init.tab);if(init?.query){setQuery(init.query);setSubmitted(init.query)}},[init])
  useEffect(()=>{const urls=personFiles.map(file=>URL.createObjectURL(file));setPreviewUrls(urls);return()=>urls.forEach(URL.revokeObjectURL)},[personFiles])
  useEffect(()=>{let cancelled=false;if(!personFiles.length){setPersonValidation({});setPersonChecking(false);setPersonResults(null);return}setPersonChecking(true);setPersonResults(null);Promise.all(personFiles.map(async(file,index)=>{try{return[index,await api.validatePersonPhoto(file,testMode&&testSession?.id?testSession.id:undefined)]}catch(err){return[index,{valid:false,message:err.message||'Validation failed',face_count:0}]}})).then(entries=>{if(!cancelled){setPersonValidation(Object.fromEntries(entries));setPersonChecking(false)}});return()=>{cancelled=true}},[personFiles])
+ useEffect(()=>{
+   if(tab!=='plate'||!submitted||submitted.length<3)return;
+   let active=true;
+   const poll=async()=>{
+     try{
+       const r=await api.searchPlate(submitted,testMode&&testSession?{testSessionId:testSession.id}:{});
+       if(active) setResults(r);
+     }catch{}
+   };
+   const timer=setInterval(poll,3000);
+   return()=>{active=false;clearInterval(timer)};
+ },[tab,submitted,testMode,testSession?.id])
  const executePlate=async()=>{const value=query.trim();if(value.length<3){setError('Enter at least 3 characters before investigating.');return}controllerRef.current?.abort();setSubmitted(value);setLoading(true);setError('');try{const r=await api.searchPlate(value,testMode&&testSession?{testSessionId:testSession.id}:{});setResults(r)}catch(err){setResults(null);setError(err.message||'Investigation failed')}finally{setLoading(false)}}
  const showJourney=async row=>{const track=row.global_vehicle_id||row.track_id;if(!track)return;setJourneyLoading(row.id);try{let sightings=[];if(testMode&&testSession){const r=await api.getTestResults(testSession.id,{limit:500});sightings=(r.detections||[]).filter(d=>String(d.track_id||'')===String(row.track_id||track)).sort((a,b)=>new Date(a.event_at||a.timestamp)-new Date(b.event_at||b.timestamp))}else{const r=await api.searchTrack(track);sightings=r.sightings||[]}onLocateRoute?.(sightings)}catch(err){setError(err.message||'Journey lookup failed')}finally{setJourneyLoading(null)}}
  const showFullJourneyRoute=async()=>{const plate=submitted||query;if(!plate||plate.length<3)return;setJourneyRouteLoading(true);setError('');try{const r=await api.searchPlateJourney(plate);const allSightings=(r.journeys||[]).flatMap(j=>j.journey_id?[j]:results?.detections||[]).filter(s=>s.lat!=null&&s.lng!=null);if(!allSightings.length){setError('No GPS-located sightings found for this plate. Cameras may not have coordinates yet.');return}onLocateRoute?.(allSightings)}catch(err){setError(err.message||'Journey route lookup failed')}finally{setJourneyRouteLoading(false)}}
